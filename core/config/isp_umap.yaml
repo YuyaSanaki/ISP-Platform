@@ -1,0 +1,46 @@
+# =============================================================================
+# ISP UMAP Generator Configuration (standalone service)
+# Also auto-invoked by run_isp.py / pipeline when perturbation.genes_to_perturb is set.
+# Path: /app/core/config/isp_umap.yaml
+# =============================================================================
+
+paths:
+  # Path to tokenized HuggingFace dataset
+  dataset: /app/data/smoke_mouse/tokenized_dataset/smoke_mouse_0.dataset
+  geneformer_model: /app/models/mouse-Geneformer/
+
+umap:
+  # Random seed for robust/reproducible UMAP plotting (and PCA when enabled)
+  seed: 42
+  # UMAP parameters
+  n_neighbors: 15
+  min_dist: 0.1
+  # 0 = direct UMAP on embeddings (default); 50 = Fig.2/3/4-style PCA(50)→UMAP
+  pca_components: 0
+  # Draw Start -> Perturbed arrows on the UMAP scatter (navy; white L-axes)
+  show_trajectory_arrows: true
+  # How many trajectories to draw when show_trajectory_arrows is true
+  num_trajectory_arrows: 100
+  # Maximum cells to extract per state to prevent memory limits
+  max_cells_per_state: 2000
+
+perturbation:
+  # One or more genes perturbed together (group KD or OE). Symbols or Ensembl IDs.
+  genes_to_perturb:
+    - Igfbp2
+  # Legacy single-gene key (still accepted): gene_to_perturb: Igfbp2
+  # Perturbation type: delete (KD) or overexpress (length-preserving OE, Fig.3-style)
+  type: delete
+  
+  # Dataset column specifying the cell condition
+  state_key: disease
+  # The starting cell condition (the one being perturbed)
+  start_state: AD
+  # The goal/target condition (the one to compare against)
+  end_state: WT
+
+runtime:
+  # Number of labels output by the finetuned Sequence Classification model
+  num_classes: 2
+  # Batch size for dataset mapping processes
+  batch_size: 100

@@ -1,0 +1,40 @@
+# 1w mouse study — mouse data + mouse Geneformer (baseline)
+# Run: docker compose run --rm pipeline
+#      PIPELINE_CONFIG=/app/core/config/pipeline_1w_mouse.yaml docker compose run --rm pipeline
+
+data:
+  input_type: single-cell
+  input_dir: "/app/data/1w/"
+  output_prefix: "1w"
+
+paths:
+  output_root: /app/output/1w_mouse
+
+species:
+  model_organism: mouse
+  model: mouse_geneformer
+  mouse_variant: base
+
+runtime:
+  nproc: 4
+  max_cells: 300000
+  forward_batch_size: 50
+
+perturbation:
+  type: delete
+  state_key: disease
+  start_state: AD
+  end_state: WT
+  genes_to_perturb: ["Igfbp2"]
+
+stages:
+  finetune:
+    training:
+      epochs: 1
+      warmup_ratio: 0.05
+    runtime:
+      dataloader_num_workers: 0
+      batch_size: 4
+    metadata:
+      add_columns:
+        organ_major: brain

@@ -1,0 +1,37 @@
+# Data and model outputs (not versioned in Platform repo)
+/data/
+/models/*
+!/models/README.md
+/output/
+/figures/
+/notebooks/
+/mlruns/
+mlflow.db
+*.db
+
+# Local operator notes
+/GEMINI.md
+/docs/HANDOFF.md
+/ToDo.txt
+
+# Local git worktrees
+.worktrees/
+
+# Local Docker / Compose overrides
+.env
+
+# Python
+__pycache__/
+.numba_cache/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.venv/
+.venv-*/
+
+# Large dictionary files (README placeholders + small curated/fly maps only)
+/core/geneformer/dicts/**
+!/core/geneformer/dicts/**/
+!/core/geneformer/dicts/**/README.md
+!/core/geneformer/dicts/orthologs/*_curated.tsv
+!/core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv

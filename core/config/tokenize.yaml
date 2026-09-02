@@ -1,0 +1,56 @@
+# =============================================================================
+# Tokenization Pipeline Configuration — config/tokenize.yaml
+# =============================================================================
+
+data:
+  # "single-cell" (barcodes/features/matrix) or "loom"
+  input_type: "single-cell"
+
+  # Study root: /data/ExperimentName/ with subfolders Time-Condition-Replicate/*.gz
+  # (or /data/ for multiple ExperimentName children). See data_input_layout.py.
+  input_dir: "/app/data/smoke_mouse/"
+
+  # Intermediate directory for .loom files if starting from single-cell
+  loom_temp_dir: "/app/data/smoke_mouse/loom_files/"
+
+  # Final tokenized dataset output
+  output_dir: "/app/data/smoke_mouse/tokenized_dataset/"
+  output_prefix: "smoke_mouse"
+
+species:
+  model_organism: mouse
+  model: mouse_geneformer
+  mouse_variant: base
+  human_variant: v2_104m
+
+tokenizer:
+  # Standalone tokenize defaults; E2E pipeline overrides via config/pipeline.yaml runtime.*
+  nproc: 16
+  max_cells: 300000  # cap cells tokenized; large studies can need 32GB+ RAM at default
+  # Pre-tokenize ortholog summary (JSON + TSV). Defaults true whenever ortholog conversion applies.
+  # report_conversion: false
+  # Ortholog loss gate (Pass/Warn/Block). Defaults on when ortholog_audit is set and conversion applies.
+  # ortholog_loss_gate: true
+  # ortholog_audit: /path/to/analysis_manifest.yaml
+  # ortholog_approval_record: null
+  # Map metadata from loom column attributes to dataset columns
+  custom_attr_name_dict:
+    time: "time"
+    genotype: "genotype"
+    replicate: "replicate"
+    disease: "disease"
+    sample_id: "sample_id"
+
+    # need to accept more flexibility using metadata, not folder name
+
+# Settings for single-cell (barcodes/features/matrix) format
+single_cell_settings:
+  # If true, try to extract metadata (time-genotype-replicate) from folder names
+  extract_metadata_from_path: true
+
+# Provenance and reproducibility settings
+provenance:
+  # Whether to compute content fingerprints of input data
+  enable_input_fingerprint: true
+  # If true, use fast metadata-based fingerprinting for large datasets
+  fingerprint_fast: true

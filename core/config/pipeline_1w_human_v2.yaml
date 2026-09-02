@@ -1,0 +1,45 @@
+# 1w mouse study — mouse data + Human Geneformer V2-104M (ortholog conversion)
+# Run: PIPELINE_CONFIG=/app/core/config/pipeline_1w_human_v2.yaml docker compose run --rm pipeline
+
+data:
+  input_type: single-cell
+  input_dir: "/app/data/1w/"
+  output_prefix: "1w"
+
+paths:
+  output_root: /app/output/1w_human_v2
+
+species:
+  model_organism: mouse
+  model: human_geneformer
+  human_variant: v2_104m
+
+runtime:
+  nproc: 4
+  max_cells: 300000
+  forward_batch_size: 25
+
+perturbation:
+  type: delete
+  state_key: disease
+  start_state: AD
+  end_state: WT
+  genes_to_perturb: ["Igfbp2"]
+
+stages:
+  finetune:
+    model:
+      max_input_size: 4096
+    training:
+      epochs: 1
+      batch_size: 2
+      eval_batch_size: 1
+      warmup_ratio: 0.05
+    runtime:
+      dataloader_num_workers: 0
+    metadata:
+      add_columns:
+        organ_major: brain
+  isp:
+    runtime:
+      forward_batch_size: 25

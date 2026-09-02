@@ -1,0 +1,59 @@
+# =============================================================================
+# Sequential ISP — chain group OE and/or KD on start-state cells
+# Default path: /app/core/config/sequential_isp.yaml
+# CLI: python3 core/run_sequential_isp.py --config …
+# Docker: docker compose run --rm sequential_isp
+# WebUI: Run type "Sequential ISP"
+# =============================================================================
+
+paths:
+  dataset: /app/data/smoke_mouse/tokenized_dataset/smoke_mouse_0.dataset
+  geneformer_model: /app/models/mouse-Geneformer/
+  output_root: /app/output
+  output_time_subdir: true
+  output_date_subdir: true
+
+species:
+  model_organism: mouse
+  model: mouse_geneformer
+  mouse_variant: base
+  human_variant: v2_104m
+  ortholog_policy: one2one
+
+perturbation:
+  state_key: disease
+  start_state: AD
+  end_state: WT
+  alt_states: []
+
+model:
+  type: CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 2000
+  emb_layer: 0
+
+sequential:
+  # Ordered steps; each is a group perturbation applied on the previous encoding.
+  # type: overexpress (OE, length-preserving move-to-front) | delete (KD)
+  # genes: symbols or Ensembl IDs
+  save_intermediate_datasets: false
+  steps:
+    - name: oskm4
+      type: overexpress
+      genes:
+        - Pou5f1
+        - Sox2
+        - Klf4
+        - Myc
+    - name: followup_kd
+      type: delete
+      genes:
+        - Igfbp2
+
+runtime:
+  # Sequential scoring runs original + perturbed forwards. Auto uses a separate
+  # dual-forward probe (not the genome-wide ISP cache) to avoid OOM.
+  forward_batch_size: auto
+  nproc: 8

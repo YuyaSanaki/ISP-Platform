@@ -1,0 +1,43 @@
+data:
+  input_type: single-cell
+  input_dir: /app/data/streamlit_workspace/_url_e2e/url_e2e_smoke
+  output_prefix: url_e2e_smoke
+paths:
+  output_root: /app/output/url_data_smoke
+species:
+  model_organism: mouse
+  model: mouse_geneformer
+  mouse_variant: base
+runtime:
+  nproc: 2
+  max_cells: 5000
+  forward_batch_size: 8
+perturbation:
+  type: delete
+  state_key: disease
+  start_state: AD
+  end_state: WT
+  genes_to_perturb:
+  - Igfbp2
+stages:
+  tokenize:
+    report_conversion: false
+  finetune:
+    training:
+      epochs: 1
+      warmup_ratio: 0.05
+      batch_size: 4
+      eval_batch_size: 1
+      num_runs: 1
+    runtime:
+      dataloader_num_workers: 0
+    metadata:
+      add_columns:
+        organ_major: brain
+    umap:
+      enabled: false
+  isp:
+    runtime:
+      forward_batch_size: 8
+    umap:
+      enabled: false

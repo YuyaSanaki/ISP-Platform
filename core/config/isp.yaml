@@ -1,0 +1,84 @@
+# =============================================================================
+# In-silico perturbation — run_isp.py
+# Default path in Docker: /app/core/config/isp.yaml  (override: --config or ISP_CONFIG)
+# =============================================================================
+
+paths:
+  # Tokenized HuggingFace dataset directory (.dataset)
+  dataset: /app/data/smoke_mouse/tokenized_dataset/smoke_mouse_0.dataset
+  geneformer_model: /app/models/mouse-Geneformer/
+  # Per run: {output_root}/{YYYYMMDD}/[run_<UTC time>/]isp_results and .../ispstats_results
+  output_root: /app/output
+  output_time_subdir: true
+  # output_subdir: my_label  # optional fixed name under DATE (overrides time folder)
+
+species:
+  model_organism: mouse
+  model: mouse_geneformer
+  mouse_variant: base
+  human_variant: v2_104m
+  # Cross-species only (ignored if model_organism matches the model). See pipeline.yaml.
+  # one2one=default/safe | best_of_n=keep highest expressor | legacy_sum=old sum behavior
+  ortholog_policy: one2one
+
+perturbation:
+  type: delete # delete | overexpress | inhibit | activate
+    # "delete": delete gene from rank value encoding
+    # "overexpress": move gene to front of rank value encoding
+    #   (absent genes: insert at front + drop lowest-ranked tokens to preserve length)
+    # "inhibit": move gene to lower quartile of rank value encoding
+    # "activate": move gene to higher quartile of rank value encoding
+  organ_data: AD # output filename prefix
+  # Dataset column for cell state labels (start / goal / alt values below refer to this column).
+  state_key: disease
+  start_state: AD
+  end_state: WT
+  alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
+  genes_to_perturb: []
+
+model:
+  type: CellClassifier #Pretrained # Pretrained | GeneClassifier | CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 2000
+  emb_layer: 0 # 0 = last layer; -1 = second-to-last (see Geneformer docs)
+  emb_mode: cell # cell | cell_and_gene
+  cell_emb_style: mean_pool
+  combos: 0
+  anchor_gene: null
+  perturb_rank_shift: null
+  perturb_rank_direct_shift: null
+  filter_data: null # if you want to ristrict cell tyep to perturb, specify like { "cell_type": ["cardiomyocyte"] }
+
+stats:
+  mode: goal_state_shift # goal_state_shift | vs_null | mixture_model | aggregate_data
+
+# Post-stats plots + CSV tables (isp_analysis.py). Figures: {output_root}/{date}/figures/
+analysis:
+  enabled: true
+
+# Per-cell UMAP trajectories (run_isp_umap.py). Auto-runs when genes_to_perturb is non-empty.
+umap:
+  enabled: true
+  seed: 42
+  n_neighbors: 15
+  min_dist: 0.1
+  show_trajectory_arrows: true
+  num_trajectory_arrows: 100
+  max_cells_per_state: 2000
+  batch_size: 100
+
+# Provenance and reproducibility settings
+provenance:
+  # Whether to compute content fingerprints of input data
+  enable_input_fingerprint: true
+  # If true, use fast metadata-based fingerprinting for large datasets
+  fingerprint_fast: true
+
+runtime:
+  # Standalone ISP defaults; E2E pipeline overrides via config/pipeline.yaml runtime.*
+  # auto = measure this GPU at startup (~1 min) and pick the batch size; or set a number.
+  # Species-aware static defaults apply when auto is omitted / CUDA unavailable.
+  forward_batch_size: auto
+  nproc: 16

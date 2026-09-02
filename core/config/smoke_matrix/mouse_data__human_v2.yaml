@@ -1,0 +1,45 @@
+data:
+  input_type: single-cell
+  input_dir: /app/data/smoke_mouse
+  output_prefix: smoke
+paths:
+  output_root: /app/output/smoke_matrix/mouse_data__human_v2
+species:
+  model_organism: mouse
+  model: human_geneformer
+  human_variant: v2_104m
+runtime:
+  nproc: 2
+  max_cells: 5000
+  forward_batch_size: 4
+perturbation:
+  type: delete
+  state_key: disease
+  start_state: AD
+  end_state: WT
+  genes_to_perturb:
+  - Igfbp2
+stages:
+  tokenize:
+    report_conversion: true
+  finetune:
+    training:
+      epochs: 1
+      warmup_ratio: 0.05
+      batch_size: 2
+      eval_batch_size: 1
+      num_runs: 1
+    runtime:
+      dataloader_num_workers: 0
+    metadata:
+      add_columns:
+        organ_major: brain
+    umap:
+      enabled: false
+    model:
+      max_input_size: 4096
+  isp:
+    runtime:
+      forward_batch_size: 4
+    umap:
+      enabled: false

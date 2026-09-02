@@ -1,0 +1,36 @@
+# =============================================================================
+# Fine-tune train_batch_size calibration (no training)
+# Web UI Run type: "FT batch size (calibrate)"
+# CLI: python3 /app/core/run_ft_batch_calibrate.py --config this file
+# =============================================================================
+#
+# Measures this GPU and prints a recommended `runtime.train_batch_size` for
+# Pipeline (E2E). Copy that integer into the Pipeline form and keep it fixed —
+# changing FT batch size later changes optimization dynamics / results.
+#
+# Study data is optional for the probe (synthetic tensors). The Web UI still
+# keeps your uploaded study in session so you can switch back to Pipeline.
+
+paths:
+  # null = resolve from species.model / mouse_variant / human_variant
+  geneformer_model: null
+  output_root: /app/output
+
+# Kept so Web UI can share Study name / Data input with Pipeline (E2E).
+data:
+  input_type: single-cell
+  input_dir: "/app/data/MyExperiment/"
+  output_prefix: null
+
+species:
+  model_organism: mouse
+  model: mouse_geneformer
+  mouse_variant: base
+  human_variant: v2_104m
+
+training:
+  fp16: true
+  # Classification head size for the probe only (does not need real labels).
+  probe_num_labels: 2
+
+runtime: {}
