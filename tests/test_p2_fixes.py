@@ -7,6 +7,8 @@ import types
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent.parent
 for _p in (ROOT / "core", ROOT / "contracts", ROOT / "webui"):
     _s = str(_p)

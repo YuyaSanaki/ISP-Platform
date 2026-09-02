@@ -304,6 +304,7 @@ class TestAutoBatchSize(unittest.TestCase):
 
             sc = types.ModuleType("geneformer.species_context")
             sc.default_isp_forward_batch_size = lambda mis: 25 if int(mis) > 2048 else 100
+            sc.should_convert = lambda *a, **k: False
             sys.modules["geneformer.species_context"] = sc
             geneformer_pkg.species_context = sc
 
