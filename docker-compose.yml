@@ -25,6 +25,13 @@
 #   Place files under ./models (or dicts) on the host to override the baked copies.
 #   Skip seeding: SKIP_MODEL_SEED=1. Build without downloads: --build-arg DOWNLOAD_MODELS=none.
 
+# Mapping form so service-level `environment` blocks can merge via `<<:` (list form replaces).
+x-geneformer-env: &geneformer-env
+  LD_PRELOAD: ${LD_PRELOAD:-}
+  PYTHONPATH: /app/core:/app/contracts:/app/webui
+  SKIP_MODEL_SEED: ${SKIP_MODEL_SEED:-0}
+  GENEFORMER_IMAGE_ASSETS: ${GENEFORMER_IMAGE_ASSETS:-/opt/geneformer-assets}
+
 x-geneformer-base: &geneformer-base
   image: ${GENEFORMER_PLATFORM_IMAGE:-geneformer-platform:v1.0.0}
   user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
@@ -33,10 +40,7 @@ x-geneformer-base: &geneformer-base
     - /var/run/docker.sock:/var/run/docker.sock
   # Optional: set LD_PRELOAD in .env to override the entrypoint’s aarch64 default.
   environment:
-    - LD_PRELOAD=${LD_PRELOAD:-}
-    - PYTHONPATH=/app/core:/app/contracts:/app/webui
-    - SKIP_MODEL_SEED=${SKIP_MODEL_SEED:-0}
-    - GENEFORMER_IMAGE_ASSETS=${GENEFORMER_IMAGE_ASSETS:-/opt/geneformer-assets}
+    <<: *geneformer-env
   ipc: host
   working_dir: /app
 
@@ -88,12 +92,11 @@ services:
     ports:
       - "8502:8501"
     environment:
-      - WEBUI_ROOT=/app
-      - PYTHONPATH=/app/core:/app/contracts:/app/webui
-      - WANDB_DISABLED=true
+      <<: *geneformer-env
+      WEBUI_ROOT: /app
+      WANDB_DISABLED: "true"
       # Megabytes; overrides default 200 MB cap on st.file_uploader (see .streamlit/config.toml).
-      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1024000
-      - LD_PRELOAD=${LD_PRELOAD:-}
+      STREAMLIT_SERVER_MAX_UPLOAD_SIZE: "1024000"
     command:
       - streamlit
       - run
@@ -109,6 +112,9 @@ services:
   isp:
     <<: *geneformer-gpu
     container_name: geneformer_platform_isp
+    environment:
+      <<: *geneformer-env
+      ISP_NUM_GPUS: ${ISP_NUM_GPUS:-1}
     command:
       - accelerate
       - launch
@@ -123,9 +129,8 @@ services:
     <<: *geneformer-base
     container_name: geneformer_platform_tokenize
     environment:
-      - TOKENIZE_CONFIG=/app/core/config/tokenize.yaml
-      - PYTHONPATH=/app/core:/app/contracts:/app/webui
-      - LD_PRELOAD=${LD_PRELOAD:-}
+      <<: *geneformer-env
+      TOKENIZE_CONFIG: /app/core/config/tokenize.yaml
     command:
       - python3
       - /app/core/execute_tokenizer_pipeline.py
@@ -135,10 +140,9 @@ services:
     <<: *geneformer-gpu
     container_name: geneformer_platform_finetune
     environment:
-      - LD_PRELOAD=${LD_PRELOAD:-}
-      - FINETUNE_CONFIG=/app/core/config/finetune.yaml
-      - WANDB_DISABLED=true
-      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+      <<: *geneformer-env
+      FINETUNE_CONFIG: /app/core/config/finetune.yaml
+      WANDB_DISABLED: "true"
     command:
       - python3
       - /app/core/run_finetune.py
@@ -150,11 +154,10 @@ services:
     <<: *geneformer-gpu
     container_name: geneformer_platform_pipeline
     environment:
-      - PIPELINE_CONFIG=/app/core/config/pipeline.yaml
-      - WANDB_DISABLED=true
-      - ISP_NUM_GPUS=${ISP_NUM_GPUS:-1}
-      - LD_PRELOAD=${LD_PRELOAD:-}
-      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+      <<: *geneformer-env
+      PIPELINE_CONFIG: /app/core/config/pipeline.yaml
+      WANDB_DISABLED: "true"
+      ISP_NUM_GPUS: ${ISP_NUM_GPUS:-1}
     command:
       - python3
       - /app/core/run_pipeline.py
@@ -166,9 +169,8 @@ services:
     <<: *geneformer-gpu
     container_name: geneformer_platform_isp_umap
     environment:
-      - ISP_UMAP_CONFIG=/app/core/config/isp_umap.yaml
-      - PYTHONPATH=/app/core:/app/contracts:/app/webui
-      - LD_PRELOAD=${LD_PRELOAD:-}
+      <<: *geneformer-env
+      ISP_UMAP_CONFIG: /app/core/config/isp_umap.yaml
     command:
       - python3
       - /app/core/run_isp_umap.py
@@ -180,9 +182,8 @@ services:
     <<: *geneformer-gpu
     container_name: geneformer_platform_sequential_isp
     environment:
-      - SEQUENTIAL_ISP_CONFIG=/app/core/config/sequential_isp.yaml
-      - PYTHONPATH=/app/core:/app/contracts:/app/webui
-      - LD_PRELOAD=${LD_PRELOAD:-}
+      <<: *geneformer-env
+      SEQUENTIAL_ISP_CONFIG: /app/core/config/sequential_isp.yaml
     command:
       - python3
       - /app/core/run_sequential_isp.py
