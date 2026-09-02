@@ -1,0 +1,9 @@
+# Exclude large data files from Docker build context
+data/
+models/
+output/
+.git/
+*.pkl
+__pycache__/
+.ipynb_checkpoints/
+*.pyc

@@ -1,0 +1,4 @@
+# Streamlit defaults to maxUploadSize = 200 (MB). Raise for large single-cell zips / matrices.
+# Value is megabytes. 1_024_000 ≈ 1 TB (decimal MB). Increase further if needed.
+[server]
+maxUploadSize = 1024000

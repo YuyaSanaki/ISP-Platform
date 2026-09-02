@@ -1,0 +1,94 @@
+# =============================================================================
+# End-to-end pipeline: Tokenize → Fine-tune → ISP
+# Run: docker compose run --rm pipeline
+# Override: PIPELINE_CONFIG=/path/to/pipeline.yaml
+# =============================================================================
+#
+# Layout: /data/ExperimentName/Time-Condition-Replicate/barcodes.tsv.gz (+ features, matrix)
+# data.input_dir = /app/data/ExperimentName/ (one experiment) or /app/data/ (many).
+# Paths below are derived under {paths.output_root}/{YYYYMMDD}/pipeline_<UTC>/:
+#   tokenized_dataset/{study_name}_0.dataset
+#   finetune/all_run1/          (checkpoint for ISP)
+#   isp_results/                (ISP outputs directly under the pipeline run folder)
+#
+# Optional: override any section via stages.tokenize / finetune / isp
+# (merged onto config/tokenize.yaml, finetune.yaml, isp.yaml).
+
+data:
+  # "single-cell" (barcodes/features/matrix) or "loom"
+  input_type: single-cell 
+  input_dir: "/app/data/MyExperiment/"
+  # null = basename of input_dir (e.g. example_mouse_study)
+  output_prefix: null
+
+paths:
+  output_root: /app/output
+  # Optional override; default resolves from species.model below
+  # pretrained_model: /app/models/mouse-Geneformer/
+
+species:
+  model_organism: mouse           # mouse | human | drosophila (Beta — unvalidated) — input data species
+  model: mouse_geneformer         # mouse_geneformer | human_geneformer
+  mouse_variant: base             # base (6L) | 12l_e20 (12L large; same 2048 vocab)
+  human_variant: v2_104m          # v2_104m (Phase 2 target) | v2_316m (optional, heavier)
+  #
+  # ortholog_policy — ONLY matters for cross-species (e.g. mouse data + human_geneformer).
+  # Same-species runs ignore this field.
+  # Web UI: Species / model section → shown only when input species ≠ model species.
+  #
+  #   one2one     = DEFAULT. Keep clear 1:1 orthologs only. Safest for Geneformer ranks.
+  #   best_of_n   = Keep more genes: if several map to one, pick highest-median expression.
+  #   legacy_sum  = Old behavior (sum counts). Use only to reproduce older results.
+  ortholog_policy: one2one
+  # Optional project-scoped curated bridge overlay (does NOT edit core/*_curated.tsv).
+  # File path, or directory containing curated_bridge_{pair}.tsv
+  # (e.g. curated_bridge_human_to_mouse.tsv). Also: env GENEFORMER_ORTHOLOG_CURATED_OVERLAY
+  # or CLI --ortholog-curated-overlay.
+  # ortholog_curated_overlay: null
+  #
+  # Cross-species tokenize can enable ortholog_loss_gate via stages.tokenize:
+  #   stages.tokenize.tokenizer.ortholog_audit: /path/to/analysis_manifest.yaml
+  #   stages.tokenize.tokenizer.ortholog_approval_record: null
+  # Block = critical gene present in input but dropped by mapping policy (not absent-from-input).
+
+# Applied to tokenize, fine-tune, and ISP stage configs (overrides config/*.yaml defaults).
+runtime:
+  nproc: 16
+  max_cells: 300000              # tokenize: tokenizer.max_cells (large values need ample RAM)
+  forward_batch_size: auto       # ISP: "auto" = measure GPU at startup; or set an int
+  # Fine-tune: set an integer from Web UI "FT batch size (calibrate)", then keep it fixed.
+  # Changing train_batch_size changes optimization dynamics / results — do not retune casually.
+  # train_batch_size: 6
+
+# ISP perturbation (copied into stage ISP config; same as config/isp.yaml)
+perturbation:
+  type: delete  # delete | overexpress | inhibit | activate
+  # "delete": delete gene from rank value encoding
+  # "overexpress": move gene to front of rank value encoding
+  # "inhibit": move gene to lower quartile of rank value encoding
+  # "activate": move gene to higher quartile of rank value encoding
+  organ_data: null
+  state_key: disease
+  start_state: Disease
+  end_state: WT
+  alt_states: []
+  genes_to_perturb: []
+
+# Per-stage overrides (optional; merged onto default stage YAML templates).
+# Web UI (Pipeline E2E) writes common knobs here when you change the form:
+#   perturbation.{type,state_key,genes_to_perturb,start_state,end_state}
+#   stages.finetune.finetune.{task_type,label_column}
+#   stages.finetune.training.{epochs,learning_rate,num_runs}
+#   runtime.max_cells
+#   stages.isp.isp.max_ncells / stages.isp.stats.mode
+#   stages.isp.umap.enabled / stages.isp.analysis.enabled
+stages:
+  tokenize: {}
+  finetune:
+    # Fine-tune eval-split UMAP under {run}/finetune/figures/ (OOM risk on large eval sets).
+    umap:
+      enabled: true
+  isp:
+    # Per-cell trajectory UMAP is a separate Web UI run type (ISP UMAP), not E2E.
+    umap:
+      enabled: false

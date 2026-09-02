@@ -1,0 +1,190 @@
+# Compose v2+ (no top-level `version` key required)
+#
+# Run as host UID/GID so files under the bind-mounted project (e.g. output/) are
+# owned by your user, not root. Override if needed: DOCKER_UID=$(id -u) DOCKER_GID=$(id -g)
+# docker compose run --rm isp   or set DOCKER_UID/DOCKER_GID in a .env file.
+#
+# GPU / CPU arch: same NVIDIA + nvidia-container-toolkit flow on x86_64 (amd64) and
+# aarch64 (ARM64, e.g. DGX Spark). Docker pulls the matching image arch. LD_PRELOAD for
+# the OpenMP workaround is set inside the container only when uname -m is aarch64
+# (scripts/container-entrypoint.sh). Override with env LD_PRELOAD if needed.
+#
+# Layout: core/ (jobs + geneformer), webui/ (Streamlit), contracts/ (shared layout rules).
+# WebUI → core is subprocess + YAML only; see docs/architecture.md.
+#
+# GPU policy (resource-aware):
+#   - tokenize: CPU only (no idle GPU claim)
+#   - platform_webui: 1 GPU (Streamlit itself is CPU; Run job = in-container subprocess needing CUDA)
+#   - pipeline / finetune / isp / isp_umap / sequential_isp: all GPUs (one-shot jobs)
+# No Jupyter service — use CLI / Web UI (same as Mouse-Geneformer-WebUI).
+#
+# Models / volumes:
+#   `.:/app` bind-mounts the project (live code + data/output). Pretrained weights are
+#   downloaded at *image build* into /opt/geneformer-assets; the entrypoint seeds them
+#   into /app/models and /app/core/geneformer/dicts when those host paths are empty.
+#   Place files under ./models (or dicts) on the host to override the baked copies.
+#   Skip seeding: SKIP_MODEL_SEED=1. Build without downloads: --build-arg DOWNLOAD_MODELS=none.
+
+x-geneformer-base: &geneformer-base
+  image: ${GENEFORMER_PLATFORM_IMAGE:-geneformer-platform:v1.0.0}
+  user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+  volumes:
+    - .:/app
+    - /var/run/docker.sock:/var/run/docker.sock
+  # Optional: set LD_PRELOAD in .env to override the entrypoint’s aarch64 default.
+  environment:
+    - LD_PRELOAD=${LD_PRELOAD:-}
+    - PYTHONPATH=/app/core:/app/contracts:/app/webui
+    - SKIP_MODEL_SEED=${SKIP_MODEL_SEED:-0}
+    - GENEFORMER_IMAGE_ASSETS=${GENEFORMER_IMAGE_ASSETS:-/opt/geneformer-assets}
+  ipc: host
+  working_dir: /app
+
+x-geneformer-gpu: &geneformer-gpu
+  <<: *geneformer-base
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+# WebUI launches FT/ISP via subprocess.Popen in the same container, so it needs CUDA,
+# but not every GPU on a multi-GPU host while the UI is mostly idle.
+x-geneformer-gpu-single: &geneformer-gpu-single
+  <<: *geneformer-base
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+services:
+  # Image build + ad-hoc CLI (CPU). Hidden from default `compose up` (same pattern as
+  # Mouse-Geneformer-WebUI). No Jupyter.
+  #   docker compose build geneformer-platform
+  #   DOWNLOAD_MODELS=minimal docker compose build geneformer-platform
+  #   docker compose --profile build run --rm --no-deps geneformer-platform python3 ...
+  geneformer-platform:
+    <<: *geneformer-base
+    build:
+      context: .
+      args:
+        DOWNLOAD_MODELS: ${DOWNLOAD_MODELS:-default}
+        HF_TOKEN: ${HF_TOKEN:-}
+        SKIP_ORTHOLOGS: ${SKIP_ORTHOLOGS:-0}
+    profiles: ["build"]
+
+  # Streamlit Web UI (same image, jobs = subprocess to core runners):
+  #   docker compose up -d platform_webui
+  #   http://localhost:8502  (host 8502 → container Streamlit on 8501)
+  # Service name is platform_webui so it does not collide with Mouse-Geneformer-WebUI's `webui`.
+  platform_webui:
+    <<: *geneformer-gpu-single
+    container_name: geneformer_platform_webui
+    ports:
+      - "8502:8501"
+    environment:
+      - WEBUI_ROOT=/app
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+      - WANDB_DISABLED=true
+      # Megabytes; overrides default 200 MB cap on st.file_uploader (see .streamlit/config.toml).
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=1024000
+      - LD_PRELOAD=${LD_PRELOAD:-}
+    command:
+      - streamlit
+      - run
+      - /app/webui/streamlit_app/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.maxUploadSize
+      - "1024000"
+      - --browser.gatherUsageStats=false
+
+  # One-shot ISP run: docker compose run --rm isp
+  # (build first: docker compose build geneformer-platform)
+  isp:
+    <<: *geneformer-gpu
+    container_name: geneformer_platform_isp
+    command:
+      - accelerate
+      - launch
+      - --num_processes
+      - "${ISP_NUM_GPUS:-1}"
+      - /app/core/run_isp.py
+      - --config
+      - /app/core/config/isp.yaml
+
+  # Tokenization pipeline: docker compose run --rm tokenize
+  tokenize:
+    <<: *geneformer-base
+    container_name: geneformer_platform_tokenize
+    environment:
+      - TOKENIZE_CONFIG=/app/core/config/tokenize.yaml
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+      - LD_PRELOAD=${LD_PRELOAD:-}
+    command:
+      - python3
+      - /app/core/execute_tokenizer_pipeline.py
+
+  # Fine-tuning: docker compose run --rm finetune
+  finetune:
+    <<: *geneformer-gpu
+    container_name: geneformer_platform_finetune
+    environment:
+      - LD_PRELOAD=${LD_PRELOAD:-}
+      - FINETUNE_CONFIG=/app/core/config/finetune.yaml
+      - WANDB_DISABLED=true
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+    command:
+      - python3
+      - /app/core/run_finetune.py
+      - --config
+      - /app/core/config/finetune.yaml
+
+  # End-to-end Tokenize → Fine-tune → ISP: docker compose run --rm pipeline
+  pipeline:
+    <<: *geneformer-gpu
+    container_name: geneformer_platform_pipeline
+    environment:
+      - PIPELINE_CONFIG=/app/core/config/pipeline.yaml
+      - WANDB_DISABLED=true
+      - ISP_NUM_GPUS=${ISP_NUM_GPUS:-1}
+      - LD_PRELOAD=${LD_PRELOAD:-}
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+    command:
+      - python3
+      - /app/core/run_pipeline.py
+      - --config
+      - ${PIPELINE_CONFIG:-/app/core/config/pipeline.yaml}
+
+  # ISP UMAP Plot Generation: docker compose run --rm isp_umap
+  isp_umap:
+    <<: *geneformer-gpu
+    container_name: geneformer_platform_isp_umap
+    environment:
+      - ISP_UMAP_CONFIG=/app/core/config/isp_umap.yaml
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+      - LD_PRELOAD=${LD_PRELOAD:-}
+    command:
+      - python3
+      - /app/core/run_isp_umap.py
+      - --config
+      - /app/core/config/isp_umap.yaml
+
+  # Sequential ISP (OE and/or KD chain): docker compose run --rm sequential_isp
+  sequential_isp:
+    <<: *geneformer-gpu
+    container_name: geneformer_platform_sequential_isp
+    environment:
+      - SEQUENTIAL_ISP_CONFIG=/app/core/config/sequential_isp.yaml
+      - PYTHONPATH=/app/core:/app/contracts:/app/webui
+      - LD_PRELOAD=${LD_PRELOAD:-}
+    command:
+      - python3
+      - /app/core/run_sequential_isp.py
+      - --config
+      - /app/core/config/sequential_isp.yaml

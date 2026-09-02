@@ -1,0 +1,18 @@
+---
+description: Keep the Geneformer Platform logo at the top of README.md
+globs: README.md
+alwaysApply: false
+---
+
+# README logo
+
+`README.md` must start with the centered logo from `docs/logo.png`. Never drop it when rewriting or reordering sections.
+
+```html
+<!-- Keep this logo. Source: docs/logo.png. Do not remove when editing README.md. -->
+<p align="center">
+  <img src="docs/logo.png" alt="Geneformer Platform" width="280">
+</p>
+```
+
+Do not replace this block with a heading-only title. Do not point the `src` anywhere except `docs/logo.png`.
