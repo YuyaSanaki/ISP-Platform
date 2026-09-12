@@ -16,53 +16,101 @@ AI tools (Cursor and Antigravity) assisted with code and documentation. The auth
 
 ## Platform scheme
 
-Two Geneformer backends plus **ortholog-based gene-name conversion**, **sequential multi-gene ISP**, and **End-to-End Pipeline** are integrated in a **CLI/WebUI**. Cross-species / sequential experiments can be run from one interface. 
-
-Iwill Put screenshot here/Brief description what it can do
-
+Two Geneformer backends plus **ortholog-based gene-name conversion**, **sequential multi-gene ISP**, and **End-to-End Pipeline** are integrated in a **CLI/WebUI**. Cross-species / sequential experiments can be run from one interface.
 
 | Backend              | Source                                                                                         | Role                                                                                                                                                                                             |
 | -------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Human Geneformer** | [ctheodoris/Geneformer](https://huggingface.co/ctheodoris/Geneformer)                          | Human foundation model: fine-tuning, embeddings, and ISP. Checkpoints **V2-104M** (default here) and **V2-316M**. Native human vocabulary.                                                       |
 | **Mouse Geneformer** | [MPRG/Mouse-Geneformer](https://github.com/machine-perception-robotics-group/Mouse-Geneformer) | Mouse scRNA-seq foundation model and token dicts. Checkpoints **base (6L)** and **12L-E20**. Native mouse vocabulary; original workflows were mouse-only notebooks (tokenize / fine-tune / ISP). |
 
+### Cross-species / native paths to ISP
+
+```mermaid
+flowchart TD
+  DATA["Human/Mouse scRNAseq Data"]
+  MODEL["Human/Mouse Geneformer Model"]
+  DATA --- J(( ))
+  MODEL --- J
+  J --> NATIVE
+  J --> CROSS
+
+  NATIVE["Native model"]
+  DIRECT["Direct Tokenization"]
+  NATIVE --> DIRECT
+
+  CROSS["Cross-species"]
+  ORTH["Bidirectional Orthology Conversion"]
+  ADAPT["Dictionary & Length Adaptation<br/>4,096 ↔ 2,048"]
+  CROSS --> ORTH --> ADAPT
+
+  DIRECT --> ISP
+  ADAPT --> ISP
+  ISP["In Silico Perturbation (ISP)"]
+
+  classDef input fill:#fff,stroke:#d4a017,stroke-width:2px,color:#222
+  classDef native fill:#4a5568,stroke:#4a5568,color:#fff
+  classDef nativeStep fill:#fff,stroke:#4a5568,stroke-width:2px,color:#222
+  classDef cross fill:#ed8936,stroke:#ed8936,color:#fff
+  classDef crossStep fill:#fff,stroke:#ed8936,stroke-width:2px,color:#222
+  classDef isp fill:#2b6cb0,stroke:#2b6cb0,color:#fff
+  classDef junction fill:transparent,stroke:transparent
+
+  class DATA,MODEL input
+  class NATIVE native
+  class DIRECT nativeStep
+  class CROSS cross
+  class ORTH,ADAPT crossStep
+  class ISP isp
+  class J junction
+```
+
+### Conventional vs sequential multi-gene ISP
 
 ```mermaid
 flowchart LR
-  subgraph inputs [Inputs]
-    M[Mouse scRNA-seq]
-    H[Human scRNA-seq]
-    F[Fly scRNA-seq]
+  subgraph CONV["Conventional: Simultaneous ISP"]
+    direction LR
+    C1["scRNAseq<br/>Original gene rank"]
+    C2["ISP OE or KD<br/>Gene Rank promotion/demotion"]
+    C3["Geneformer<br/>Single Forward Pass"]
+    C4["Single state shift prediction"]
+    C1 --> C2 --> C3 --> C4
   end
 
-  subgraph platform [ISP³ Platform]
-    CLI[CLI — docker compose]
-    WEB[Web UI — Streamlit]
-    ORTH[Ortholog gene conversion]
+  subgraph SEQ["New: Sequential & Multi-Gene ISP<br/>Token Length-Preserving, Flexible Combination of Overexpression/Knockdown"]
+    direction LR
+    S1["scRNAseq<br/>Original gene rank"]
+    S2["1st ISP OE or KD<br/>Gene Rank promotion or demotion"]
+    S3["Geneformer<br/>Pass 1"]
+    S4["Intermediate state shift prediction"]
+    S5["2nd ISP OE or KD<br/>Gene Rank promotion or demotion"]
+    S6["Geneformer<br/>Pass 2"]
+    S7["ISP chaining"]
+    S8["Final state shift prediction"]
+    TRAJ["Stepwise Trajectory<br/>Order-Aware Dynamics"]
+    S1 --> S2 --> S3 --> S4
+    S4 --> S5 --> S6 --> S7 --> S8
+    S8 -.-> TRAJ
   end
 
-  subgraph models [Models]
-    MG[Mouse Geneformer]
-    HG[Human Geneformer]
-  end
+  classDef grey fill:#f7fafc,stroke:#a0aec0,stroke-width:2px,color:#222
+  classDef blueLite fill:#ebf8ff,stroke:#63b3ed,stroke-width:2px,color:#222
+  classDef blueBox fill:#fff,stroke:#2b6cb0,stroke-width:2px,color:#2b6cb0
+  classDef blueSolid fill:#2b6cb0,stroke:#2b6cb0,color:#fff
+  classDef redLite fill:#fff5f5,stroke:#fc8181,stroke-width:2px,color:#c53030
+  classDef redBox fill:#fff,stroke:#e53e3e,stroke-width:2px,color:#c53030
+  classDef redSolid fill:#e53e3e,stroke:#e53e3e,color:#fff
+  classDef green fill:#f0fff4,stroke:#38a169,stroke-width:2px,color:#276749
 
-  M --> CLI
-  M --> WEB
-  H --> CLI
-  H --> WEB
-  F --> CLI
-  F --> WEB
-  CLI --> ORTH
-  WEB --> ORTH
-  ORTH --> MG
-  ORTH --> HG
-  MG --> OUT[Tokenize / Fine-tune / ISP / UMAP]
-  HG --> OUT
+  class C1,S1 grey
+  class C2,S2 blueLite
+  class C3,S3,S4 blueBox
+  class C4 blueSolid
+  class S5 redLite
+  class S6,S7 redBox
+  class S8 redSolid
+  class TRAJ green
 ```
-
-
-
-
 
 ## Status
 
@@ -150,7 +198,9 @@ Then open **[http://localhost:8502](http://localhost:8502)** locally. Or use the
 
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md).
 
-Iwill Put screenshot here
+<p align="center">
+  <img src="docs/WebUI.png" alt="ISP³ Platform Web UI" width="900">
+</p>
 
 ### Fine-tune batch size (keep fixed)
 

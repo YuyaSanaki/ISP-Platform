@@ -14,6 +14,9 @@ mlflow.db
 /docs/HANDOFF.md
 /ToDo.txt
 
+# Cursor IDE rules (local only)
+.cursor/
+
 # Local git worktrees
 .worktrees/
 

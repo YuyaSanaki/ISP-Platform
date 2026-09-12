@@ -4,6 +4,12 @@ All notable changes to **ISP³ Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Renamed from **Geneformer Platform** to **ISP³ Platform**. GitHub repo is now `ISP-Platform`; Docker image / Compose service is `isp-platform:v1.0.0` (env `ISP_PLATFORM_IMAGE`).
+
 ## [1.0.0] - 2026-09-02
 
 ### Added
