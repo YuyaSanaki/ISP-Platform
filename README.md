@@ -1,13 +1,13 @@
 <!-- Keep this logo. Source: docs/logo.png. Do not remove when editing README.md. -->
 <p align="center">
-  <img src="docs/logo.png" alt="Geneformer Platform" width="280">
+  <img src="docs/logo.png" alt="ISP³ Platform" width="280">
 </p>
 
-# Geneformer Platform
+# ISP³ Platform
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.0.0 · Docker image `geneformer-platform:v1.0.0`
+**Release:** v1.0.0 · Docker image `isp-platform:v1.0.0`
 
 
 Run tokenize, fine-tune, ISP, UMAP, and sequential multi-gene ISP (ordered perturbations, e.g. to mimic iPSC reprogramming steps) from the **CLI** or **Web UI**, both on Docker Compose and Streamlit.
@@ -35,7 +35,7 @@ flowchart LR
     F[Fly scRNA-seq]
   end
 
-  subgraph platform [Geneformer Platform]
+  subgraph platform [ISP³ Platform]
     CLI[CLI — docker compose]
     WEB[Web UI — Streamlit]
     ORTH[Ortholog gene conversion]
@@ -70,7 +70,7 @@ flowchart LR
 
 **Drosophila input is beta.** Remapping fly genes to human or mouse vocabularies typically drops about half of the input genes. Not biologically validated.
 
-All services share one Docker image (`geneformer-platform`) and the same workflows via **CLI** (`docker compose run …`) and **Web UI** (`docker compose up -d platform_webui` → [http://localhost:8502](http://localhost:8502)). Jupyter Lab is **not** shipped.
+All services share one Docker image (`isp-platform`) and the same workflows via **CLI** (`docker compose run …`) and **Web UI** (`docker compose up -d platform_webui` → [http://localhost:8502](http://localhost:8502)). Jupyter Lab is **not** shipped.
 
 ## Requirements
 
@@ -90,12 +90,12 @@ Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported.
 
 1. **Clone** and enter the repository:
   ```bash
-   git clone https://github.com/YuyaSanaki/Geneformer-Platform.git
-   cd Geneformer-Platform
+   git clone https://github.com/YuyaSanaki/ISP-Platform.git
+   cd ISP-Platform
   ```
 2. **Build the image** (downloads models + dictionaries during build — network required):
   ```bash
-   docker compose build geneformer-platform　#will download models automatically
+   docker compose build isp-platform　#will download models automatically
   ```
    After a successful build you can `docker compose up -d platform_webui` immediately; the entrypoint seeds baked weights into `./models` and `core/geneformer/dicts/` when those host paths are empty. Override the bake profile with an env var **before** `docker compose`, or with `--build-arg`:  Do **not** put `DOWNLOAD_MODELS=…` after the service name — Compose treats that as another service (`no such service: DOWNLOAD_MODELS=all`).
 
@@ -130,7 +130,7 @@ After [Install](#install), run the full **Tokenize → Fine-tune → ISP** pipel
 docker compose up -d platform_webui
 ```
 
-Open **[http://localhost:8502](http://localhost:8502)** (**Geneformer Platform Web UI**).
+Open **[http://localhost:8502](http://localhost:8502)** (**ISP³ Platform Web UI**).
 
 On a **remote GPU server**, `localhost` in your laptop browser does not reach the container. Use **SSH port forwarding** (keep the session open):
 
@@ -252,7 +252,7 @@ docker compose run --rm pipeline
 | ISP UMAP                      | `docker compose run --rm isp_umap`                                                               | [isp_umap.md](docs/isp_umap.md)                                                 |
 | Sequential ISP                | `docker compose run --rm sequential_isp`                                                         | [sequential_isp.md](docs/sequential_isp.md)                                     |
 | E2E pipeline                  | `docker compose run --rm pipeline`                                                               | [pipeline.md](docs/pipeline.md)                                                 |
-| Ad-hoc script (rare)          | `docker compose --profile build run --rm --no-deps geneformer-platform python3 /app/scripts/...` | —                                                                               |
+| Ad-hoc script (rare)          | `docker compose --profile build run --rm --no-deps isp-platform python3 /app/scripts/...` | —                                                                               |
 
 
 
@@ -265,7 +265,7 @@ docker compose run --rm pipeline
 | `platform_webui`                                                | Streamlit control panel (port **8502**; distinct from Mouse-Geneformer-WebUI’s `webui` on 8501) |
 | `pipeline`                                                      | Tokenize → Fine-tune → ISP                                                                      |
 | `tokenize` / `finetune` / `isp` / `isp_umap` / `sequential_isp` | Stage-only jobs                                                                                 |
-| `geneformer-platform` (`profiles: [build]`)                     | Image build + rare ad-hoc CLI; **not** started by `compose up`                                  |
+| `isp-platform` (`profiles: [build]`)                     | Image build + rare ad-hoc CLI; **not** started by `compose up`                                  |
 
 
 

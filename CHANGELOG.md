@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **Geneformer Platform** are documented here.
+All notable changes to **ISP³ Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
@@ -17,5 +17,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Notes
 
-- Private paper-specific workflows live in **Geneformer Platform Analysis** (separate repo).
-- Analysis repos should pin runtime to Docker image `geneformer-platform:v1.0.0`.
+- Private paper-specific workflows live in **ISP³ Platform Analysis** (separate repo).
+- Analysis repos should pin runtime to Docker image `isp-platform:v1.0.0`.

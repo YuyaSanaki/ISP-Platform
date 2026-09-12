@@ -271,7 +271,7 @@ def _cache_path() -> Path | None:
     if raw:
         return Path(raw)
     base = os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache")
-    return Path(base) / "geneformer-platform" / "batch_size.json"
+    return Path(base) / "isp-platform" / "batch_size.json"
 
 
 def _cache_key(fields: Mapping[str, Any]) -> str:

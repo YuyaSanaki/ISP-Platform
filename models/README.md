@@ -4,13 +4,13 @@ Large binaries are **not** committed (see `.gitignore` → `/models/`).
 
 ## Build then run (recommended)
 
-`docker compose build geneformer-platform` downloads weights + dictionaries into the image
+`docker compose build isp-platform` downloads weights + dictionaries into the image
 (`/opt/geneformer-assets`). On container start, `scripts/container-entrypoint.sh` seeds
 them into `./models` and `core/geneformer/dicts/` when those host paths are empty/incomplete.
 Host copies always win (local override).
 
 ```bash
-docker compose build geneformer-platform
+docker compose build isp-platform
 docker compose up -d platform_webui
 ```
 

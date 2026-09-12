@@ -28,7 +28,7 @@ DEFAULT_MAX_BYTES = 8 * 1024 * 1024 * 1024  # 8 GiB
 DEFAULT_TIMEOUT_S = 600
 
 _ProgressCb = Callable[[int, int | None], None]  # (downloaded, total_or_None)
-_USER_AGENT = "Geneformer-Platform/1.0 (+streamlit-remote-data)"
+_USER_AGENT = "ISP-Platform/1.0 (+streamlit-remote-data)"
 
 
 class RemoteDataError(ValueError):

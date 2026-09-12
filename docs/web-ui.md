@@ -1,4 +1,4 @@
-# Geneformer Platform Web UI
+# ISP³ Platform Web UI
 
 Streamlit control panel for this repository (CLI-equivalent jobs via subprocess + YAML).
 
@@ -15,7 +15,7 @@ There is **no Jupyter Lab** service in Compose. Use **CLI** (`docker compose run
 ## Start
 
 ```bash
-docker compose build geneformer-platform   # downloads models into the image by default
+docker compose build isp-platform   # downloads models into the image by default
 docker compose up -d platform_webui
 ```
 
@@ -243,6 +243,6 @@ Tokenize, fine-tune, and standalone ISP: use CLI (`docker compose run --rm token
 Ad-hoc one-off Python (rare; build profile):
 
 ```bash
-docker compose --profile build run --rm --no-deps geneformer-platform python3 /app/scripts/...
+docker compose --profile build run --rm --no-deps isp-platform python3 /app/scripts/...
 ```
 

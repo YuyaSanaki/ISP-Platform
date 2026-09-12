@@ -1,5 +1,5 @@
 """
-Model / organism registry for Geneformer Platform (P0).
+Model / organism registry for ISP³ Platform (P0).
 
 Resolves species.model_organism + species.model → checkpoint paths, dict paths,
 max_input_size, and whether ortholog gene conversion is required.

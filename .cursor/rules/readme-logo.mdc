@@ -1,5 +1,5 @@
 ---
-description: Keep the Geneformer Platform logo at the top of README.md
+description: Keep the ISP³ Platform logo at the top of README.md
 globs: README.md
 alwaysApply: false
 ---
@@ -11,7 +11,7 @@ alwaysApply: false
 ```html
 <!-- Keep this logo. Source: docs/logo.png. Do not remove when editing README.md. -->
 <p align="center">
-  <img src="docs/logo.png" alt="Geneformer Platform" width="280">
+  <img src="docs/logo.png" alt="ISP³ Platform" width="280">
 </p>
 ```
 

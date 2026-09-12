@@ -40,7 +40,7 @@ Before fine-tuning you need:
 
 2. **The pretrained model** — default: `/app/models/mouse-Geneformer/` (contains `config.json`, `pytorch_model.bin`).
 
-3. **Docker image built** — `docker compose build geneformer-platform`.
+3. **Docker image built** — `docker compose build isp-platform`.
 
 ### What if my dataset is missing columns?
 

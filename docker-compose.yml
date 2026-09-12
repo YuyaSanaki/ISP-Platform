@@ -33,7 +33,7 @@ x-geneformer-env: &geneformer-env
   GENEFORMER_IMAGE_ASSETS: ${GENEFORMER_IMAGE_ASSETS:-/opt/geneformer-assets}
 
 x-geneformer-base: &geneformer-base
-  image: ${GENEFORMER_PLATFORM_IMAGE:-geneformer-platform:v1.0.0}
+  image: ${ISP_PLATFORM_IMAGE:-isp-platform:v1.0.0}
   user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
   volumes:
     - .:/app
@@ -69,10 +69,10 @@ x-geneformer-gpu-single: &geneformer-gpu-single
 services:
   # Image build + ad-hoc CLI (CPU). Hidden from default `compose up` (same pattern as
   # Mouse-Geneformer-WebUI). No Jupyter.
-  #   docker compose build geneformer-platform
-  #   DOWNLOAD_MODELS=minimal docker compose build geneformer-platform
-  #   docker compose --profile build run --rm --no-deps geneformer-platform python3 ...
-  geneformer-platform:
+  #   docker compose build isp-platform
+  #   DOWNLOAD_MODELS=minimal docker compose build isp-platform
+  #   docker compose --profile build run --rm --no-deps isp-platform python3 ...
+  isp-platform:
     <<: *geneformer-base
     build:
       context: .
@@ -88,7 +88,7 @@ services:
   # Service name is platform_webui so it does not collide with Mouse-Geneformer-WebUI's `webui`.
   platform_webui:
     <<: *geneformer-gpu-single
-    container_name: geneformer_platform_webui
+    container_name: isp_platform_webui
     ports:
       - "8502:8501"
     environment:
@@ -108,10 +108,10 @@ services:
       - --browser.gatherUsageStats=false
 
   # One-shot ISP run: docker compose run --rm isp
-  # (build first: docker compose build geneformer-platform)
+  # (build first: docker compose build isp-platform)
   isp:
     <<: *geneformer-gpu
-    container_name: geneformer_platform_isp
+    container_name: isp_platform_isp
     environment:
       <<: *geneformer-env
       ISP_NUM_GPUS: ${ISP_NUM_GPUS:-1}
@@ -127,7 +127,7 @@ services:
   # Tokenization pipeline: docker compose run --rm tokenize
   tokenize:
     <<: *geneformer-base
-    container_name: geneformer_platform_tokenize
+    container_name: isp_platform_tokenize
     environment:
       <<: *geneformer-env
       TOKENIZE_CONFIG: /app/core/config/tokenize.yaml
@@ -138,7 +138,7 @@ services:
   # Fine-tuning: docker compose run --rm finetune
   finetune:
     <<: *geneformer-gpu
-    container_name: geneformer_platform_finetune
+    container_name: isp_platform_finetune
     environment:
       <<: *geneformer-env
       FINETUNE_CONFIG: /app/core/config/finetune.yaml
@@ -152,7 +152,7 @@ services:
   # End-to-end Tokenize → Fine-tune → ISP: docker compose run --rm pipeline
   pipeline:
     <<: *geneformer-gpu
-    container_name: geneformer_platform_pipeline
+    container_name: isp_platform_pipeline
     environment:
       <<: *geneformer-env
       PIPELINE_CONFIG: /app/core/config/pipeline.yaml
@@ -167,7 +167,7 @@ services:
   # ISP UMAP Plot Generation: docker compose run --rm isp_umap
   isp_umap:
     <<: *geneformer-gpu
-    container_name: geneformer_platform_isp_umap
+    container_name: isp_platform_isp_umap
     environment:
       <<: *geneformer-env
       ISP_UMAP_CONFIG: /app/core/config/isp_umap.yaml
@@ -180,7 +180,7 @@ services:
   # Sequential ISP (OE and/or KD chain): docker compose run --rm sequential_isp
   sequential_isp:
     <<: *geneformer-gpu
-    container_name: geneformer_platform_sequential_isp
+    container_name: isp_platform_sequential_isp
     environment:
       <<: *geneformer-env
       SEQUENTIAL_ISP_CONFIG: /app/core/config/sequential_isp.yaml

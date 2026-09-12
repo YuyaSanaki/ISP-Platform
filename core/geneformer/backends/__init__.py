@@ -1,4 +1,4 @@
-"""Species and model backend registry for Geneformer Platform."""
+"""Species and model backend registry for ISP³ Platform."""
 
 from .registry import (
     BackendSpec,

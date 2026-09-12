@@ -1,5 +1,5 @@
 """
-Mouse Geneformer — Streamlit control panel (Geneformer Platform Web UI; same image as CLI).
+Mouse Geneformer — Streamlit control panel (ISP³ Platform Web UI; same image as CLI).
 
 Monorepo: webui/ talks to core/ only through subprocess + YAML (see docs/architecture.md).
 
@@ -2764,7 +2764,7 @@ def _render_live_log(busy: bool) -> None:
     _render_log_body()
 
 
-WEBUI_REPO_URL = "https://github.com/YuyaSanaki/Geneformer-Platform"
+WEBUI_REPO_URL = "https://github.com/YuyaSanaki/ISP-Platform"
 
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 _OUTPUT_BROWSER_CSV_NAMES = (
@@ -3091,8 +3091,8 @@ def _render_output_browser() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Geneformer Platform", layout="wide")
-    st.title("Geneformer Platform")
+    st.set_page_config(page_title="ISP³ Platform", layout="wide")
+    st.title("ISP³ Platform")
     st.caption(
         "Tokenize → fine-tune → ISP for Mouse or Human Geneformer. "
         "Choose the **input data species** and the **model for FT/ISP** separately."
