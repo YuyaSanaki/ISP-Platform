@@ -211,7 +211,7 @@ traitlets==5.10.1
 transformers==4.33.3
 triton==2.0.0
 turn-python==0.0.1
-typing-extensions==4.5.0
+typing-extensions>=4.13.0
 tzdata==2023.3
 umap-learn==0.5.4
 urllib3==1.26.16

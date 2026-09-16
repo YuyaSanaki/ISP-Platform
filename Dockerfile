@@ -21,7 +21,9 @@ RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
     grep -v "^nvidia-" requirements.txt | grep -v "^torch" | grep -v "^tbb" | grep -v "^triton" | grep -v "^tensorflow" | grep -v "^keras" | \
     sed 's/==.*//' > req_filtered.txt && \
     uv pip install --system -r req_filtered.txt && \
-    uv pip install --system "transformers>=4.40,<5" gdown "huggingface_hub>=0.23"
+    # anndata>=0.12 / scverse-misc need typing_extensions.Format (added in 4.13).
+    # NGC base may already ship 4.12.x; force upgrade so imports do not break.
+    uv pip install --system "transformers>=4.40,<5" gdown "huggingface_hub>=0.23" "typing-extensions>=4.13"
 
 # Copy the rest of the project (models/ and *.pkl excluded via .dockerignore)
 COPY . .
