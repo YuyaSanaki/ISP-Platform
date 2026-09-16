@@ -1,3 +1,7 @@
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
+
 # Data and model outputs (not versioned in Platform repo)
 /data/
 /models/*

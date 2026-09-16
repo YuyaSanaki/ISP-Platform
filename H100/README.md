@@ -2,7 +2,7 @@
 
 Standalone guide for **Geneformer tokenize → fine-tune → ISP** on an **H100 (~80 GB)** machine: HPC cluster, cloud GPU instance, or bare metal.
 
-**Runtime:** native **conda + `python3`**. Do **not** use Docker, Apptainer, or Singularity.
+**Runtime:** native **conda +** `python3`.  **Not** using Docker, Apptainer, or Singularity.
 
 Site-specific details (MFA, queue names, filesystem layout) stay in your center’s docs. Scripts in this folder are scheduler-agnostic cores plus Slurm / PBS examples.
 
@@ -24,6 +24,7 @@ Observed Human Geneformer ISP peak VRAM: about **35–41 GiB** (fits one H100 
 
 ## Files in this folder
 
+
 | File | Role |
 | --- | --- |
 | [`env.sh`](env.sh) | Shared `ISP_ROOT` / conda activate |
@@ -34,18 +35,25 @@ Observed Human Geneformer ISP peak VRAM: about **35–41 GiB** (fits one H100 
 | [`job_slurm.sh`](job_slurm.sh) | Example Slurm job |
 | [`job_pbs.sh`](job_pbs.sh) | Example PBS-style job |
 
+Scripts are marked executable in git (`100755`). Prefer invoking with **`bash`** (portable on HPC); `./H100/….sh` also works after clone:
+
+```bash
+bash "$H100_DIR/setup_env.sh"
+# or: "$H100_DIR/setup_env.sh"
+```
+
 Suggested layouts on the H100 host (either works; `env.sh` auto-detects both):
 
-**A — toolkit shipped inside the clone (default if you pull this repo):**
+**A — toolkit inside the clone (recommended):**
 
 ```text
 $WORK/ISP-Platform/     # git clone
   H100/                 # this toolkit
-  core/ ...
+  core/
+  ...
 ```
 
 ```bash
-export WORK=...                                    # your choice
 export ISP_ROOT="$WORK/ISP-Platform"
 export H100_DIR="$ISP_ROOT/H100"
 ```
@@ -60,12 +68,10 @@ $WORK/
 ```
 
 ```bash
-export WORK=...
 export ISP_ROOT="$WORK/ISP-Platform"
 export H100_DIR="$WORK/H100"
 ```
 
-Set `ISP_ROOT` to the absolute path of `ISP-Platform` if auto-detect is ambiguous.  
 `$WORK` is any writable project directory (`$HOME/scratch`, `/work/$USER`, `/workspace`, …).
 
 ---
@@ -95,14 +101,20 @@ srun --gres=gpu:1 --time=01:00:00 --pty bash
 
 Avoid long `pip` installs and full ISP runs on shared login nodes if policy forbids it.
 
-### Step 2 — Clone the code
+### Step 2 — Clone the code and place this toolkit
 
 ```bash
 mkdir -p "$WORK" && cd "$WORK"
 git clone https://github.com/YuyaSanaki/ISP-Platform.git
+
+# Copy this H100/ directory next to the clone if it is not already on the machine
+# (e.g. rsync from your laptop, or include it in your project tree)
+```
+
+```bash
+export WORK=...                                    # your choice
 export ISP_ROOT="$WORK/ISP-Platform"
-export H100_DIR="$ISP_ROOT/H100"   # in-repo toolkit
-# Or, if you keep a sibling copy: export H100_DIR="$WORK/H100"
+export H100_DIR="$WORK/H100"
 ```
 
 ### Step 3 — Create the Python environment (once)
@@ -115,7 +127,7 @@ bash "$H100_DIR/setup_env.sh"
 bash "$H100_DIR/smoke_cuda.sh"
 ```
 
-This creates conda env **`isp`** (override with `CONDA_ENV=...`), installs CUDA-enabled **PyTorch**, then the rest of ISP Platform dependencies (pinned `torch` / `nvidia-*` lines in `requirements.txt` are skipped so they do not fight the CUDA wheel).
+This creates conda env `**isp**` (override with `CONDA_ENV=...`), installs CUDA-enabled **PyTorch**, then the rest of ISP Platform dependencies (pinned `torch` / `nvidia-`* lines in `requirements.txt` are skipped so they do not fight the CUDA wheel).
 
 Expect `smoke_cuda.sh` to print `cuda_available True` and an H100 device name.
 
@@ -134,9 +146,8 @@ ls "$ISP_ROOT/models/"
 ### Step 5 — Add data and write a config with **host paths**
 
 1. Put your study under `$ISP_ROOT/data/<study>/` (one folder per sample with the three 10x files).
-
-2. Create a pipeline YAML with **absolute paths on this machine**.  
-   Example configs under `core/config/` are templates; copy one and set paths to `$ISP_ROOT`:
+2. Create a pipeline YAML with **absolute paths on this machine**.
+  Example configs under `core/config/` are templates; copy one and set paths to `$ISP_ROOT`:
 
 ```bash
 cp "$ISP_ROOT/core/config/pipeline_1w_human_v2.yaml" \
@@ -163,14 +174,12 @@ perturbation:
   state_key: disease
   start_state: AD                # match your metadata
   end_state: WT
-  genes_to_perturb: ["Igfbp2"]   # [] = genome-wide (very long)
+  genes_to_perturb: []   # [] = genome-wide (very long) or specify gene like "Inr"
 ```
 
 Use real absolute paths (expand `$ISP_ROOT` yourself). Relative `/app/...` strings in the repo templates are leftovers from other deployments — **they will fail here**; always point at your checkout.
 
 ### Step 6 — Interactive test run
-
-`run_pipeline.sh` **requires** `PIPELINE_CONFIG` (or a path as `$1`). Stock YAMLs under `core/config/` still contain Docker `/app/...` paths and are rejected until you copy and edit them (Step 5).
 
 ```bash
 export ISP_ROOT="$WORK/ISP-Platform"
@@ -212,29 +221,32 @@ rsync -avz "$ISP_ROOT/output/"  your-laptop:~/isp-outputs/
 
 ## Environment variables
 
-| Variable | Meaning |
-| --- | --- |
-| `ISP_ROOT` | Absolute path to ISP-Platform (**required**) |
-| `CONDA_ENV` | Default `isp` |
-| `PIPELINE_CONFIG` | YAML for `run_pipeline.py` (**required**; host absolute paths, not `/app/...`) |
-| `DOWNLOAD_MODELS` | Default `default` for model download |
-| `HF_TOKEN` | Optional Hugging Face token |
-| `CUDA_MODULE` | Optional `module load` name |
-| `WANDB_DISABLED` | Default `true` |
-| `TORCH_INDEX_URL` | PyTorch wheel index (default cu121; try cu124 on newer drivers) |
+
+| Variable          | Meaning                                      |
+| ----------------- | -------------------------------------------- |
+| `ISP_ROOT`        | Absolute path to ISP-Platform (**required**) |
+| `CONDA_ENV`       | Default `isp`                                |
+| `PIPELINE_CONFIG` | YAML for `run_pipeline.py`                   |
+| `DOWNLOAD_MODELS` | Default `default` for model download         |
+| `HF_TOKEN`        | Optional Hugging Face token                  |
+| `CUDA_MODULE`     | Optional `module load` name                  |
+| `WANDB_DISABLED`  | Default `true`                               |
+| `TORCH_INDEX_URL` | PyTorch wheel index (default cu121)          |
+
 
 ---
 
 ## Troubleshooting
 
-| Symptom | What to check |
-| --- | --- |
-| `torch.cuda.is_available()` is False | GPU allocation? Driver? `CUDA_MODULE`? Correct conda env `isp`? |
-| OOM / killed on login node | Use a compute / GPU allocation for install and runs |
-| `No such file` under data/output | YAML still has wrong paths — use absolute `$ISP_ROOT/...` (Step 5) |
-| Config rejected for `/app/` paths | Stock templates are Docker-only; copy to `my_study.yaml` and rewrite paths |
-| Job hits walltime | Increase scheduler time; genome-wide ISP is long |
-| Broken `torch` after `pip install -r requirements.txt` | Use `setup_env.sh` (it filters conflicting pins) |
+
+| Symptom                                                | What to check                                                      |
+| ------------------------------------------------------ | ------------------------------------------------------------------ |
+| `torch.cuda.is_available()` is False                   | GPU allocation? Driver? `CUDA_MODULE`? Correct conda env `isp`?    |
+| OOM / killed on login node                             | Use a compute / GPU allocation for install and runs                |
+| `No such file` under data/output                       | YAML still has wrong paths — use absolute `$ISP_ROOT/...` (Step 5) |
+| Job hits walltime                                      | Increase scheduler time; genome-wide ISP is long                   |
+| Broken `torch` after `pip install -r requirements.txt` | Use `setup_env.sh` (it filters conflicting pins)                   |
+
 
 ---
 
@@ -243,5 +255,5 @@ rsync -avz "$ISP_ROOT/output/"  your-laptop:~/isp-outputs/
 - [ ] `nvidia-smi` shows H100 on the node you run on
 - [ ] `smoke_cuda.sh` → `True` + H100 name
 - [ ] Target checkpoint exists under `models/`
-- [ ] Your YAML uses absolute host paths (no `/app/`) and is set as `PIPELINE_CONFIG`
+- [ ] Your YAML uses absolute host paths
 - [ ] `run_pipeline.sh` (or a batch job) writes under `ISP-Platform/output/`
