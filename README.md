@@ -132,9 +132,13 @@ All services share one Docker image (`isp-platform`) and the same workflows via 
 
 Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported. Docker selects the matching image architecture.
 
+**H100 / bare-metal (no Docker):** for native conda + Slurm/PBS on an **H100 (x86_64)** node, see [`H100/README.md`](H100/README.md).
+
 **Not supported:** CPU-only, non-NVIDIA GPUs, or macOS GPU.
 
 ## Install
+
+### Docker (recommended for most hosts)
 
 1. **Clone** and enter the repository:
   ```bash
@@ -169,6 +173,10 @@ Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported.
    See `[models/README.md](models/README.md)`.
 
 **Compose volumes:** `.:/app` keeps code/data live on the host. Image-baked assets live under `/opt/geneformer-assets` and are copied into `/app/models` + `/app/core/geneformer/dicts` on start when missing. Host files always win; set `SKIP_MODEL_SEED=1` to disable copying.
+
+### H100 native (conda, no Docker)
+
+On an **H100 (x86_64)** HPC / cloud / bare-metal host without containers, follow [`H100/README.md`](H100/README.md) (`setup_env.sh` → `download_models.sh` → host-path YAML → `run_pipeline.sh` or Slurm/PBS).
 
 ## Quick start (Web UI — Pipeline E2E)
 
