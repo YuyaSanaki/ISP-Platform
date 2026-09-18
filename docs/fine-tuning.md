@@ -158,7 +158,8 @@ training:
   batch_size: 6
   eval_batch_size: 2
   lr_scheduler_type: linear   # linear | cosine | polynomial
-  warmup_steps: 500
+  warmup_ratio: null          # set 0.05 for classification-oriented FT (overrides warmup_steps)
+  warmup_steps: 500           # default: virtual genetic screen / ISP
   epochs: 10
   weight_decay: 0.001
   fp16: true
@@ -172,7 +173,8 @@ training:
 | `batch_size` | Per-device training batch size. Prefer a value from Web UI **FT batch size (calibrate)** / `run_ft_batch_calibrate.py`, then **keep it fixed** — changing it alters optimizer step counts and results |
 | `eval_batch_size` | Per-device eval batch size (can be larger than train batch) |
 | `lr_scheduler_type` | `linear` (standard), `cosine` (smooth decay), or `polynomial` |
-| `warmup_steps` | Steps of linear warmup before the scheduler kicks in |
+| `warmup_steps` | Steps of linear warmup before decay. **Default 500** (v1.1.0) — use for virtual genetic screens / ISP gene-effect size |
+| `warmup_ratio` | If set (e.g. `0.05`), overrides `warmup_steps`. Use **rate 0.05** when the fine-tune goal is classification, not per-gene ISP |
 | `epochs` | Training epochs (10 is typical; reduce for large datasets) |
 | `weight_decay` | L2 regularization strength |
 | `fp16` | Mixed-precision training (faster on NVIDIA GPUs) |

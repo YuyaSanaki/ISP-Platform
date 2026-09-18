@@ -6,9 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-18
+
 ### Changed
 
-- Renamed from **Geneformer Platform** to **ISP³ Platform**. GitHub repo is now `ISP-Platform`; Docker image / Compose service is `isp-platform:v1.0.0` (env `ISP_PLATFORM_IMAGE`).
+- Fine-tune default warmup is **500 steps** (`warmup_ratio: null`) so virtual genetic screens (ISP gene-effect size) match the Apr-22 Asano schedule. v1.0.0 used `warmup_ratio: 0.05`, which became ~2000 steps on a 10-epoch Asano-scale run and compressed ISP cosine shifts.
+- Web UI **Advanced options** can switch warmup between **500 steps** (virtual genetic screen) and **rate 0.05** (classification-oriented FT).
+- Docker image / Compose default tag is `isp-platform:v1.1.0`.
+- Short smoke-matrix configs still set `warmup_ratio: 0.05` so 1-epoch smoke FT is not dominated by a fixed 500-step warmup (the 10% cap still applies).
+
+### Notes
+
+- Pin analysis repos that need the previous schedule to branch **`ver1.0.0`** / image `isp-platform:v1.0.0`.
 
 ## [1.0.0] - 2026-09-02
 

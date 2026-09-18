@@ -69,8 +69,8 @@ training:
   batch_size: 6
   eval_batch_size: 2
   lr_scheduler_type: linear   # linear | cosine | polynomial
-  warmup_ratio: 0.05          # preferred; overrides warmup_steps when set
-  warmup_steps: 100           # fallback when warmup_ratio is omitted
+  warmup_ratio: null          # set 0.05 for classification-oriented FT (overrides warmup_steps)
+  warmup_steps: 500           # default: virtual genetic screen / ISP gene-effect size
   epochs: 10
   weight_decay: 0.001
   fp16: true

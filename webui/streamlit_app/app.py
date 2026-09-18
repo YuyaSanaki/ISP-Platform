@@ -64,6 +64,13 @@ _FT_TASK_TYPE_LABELS = {
 _DEFAULT_FT_EPOCHS = 10
 _DEFAULT_FT_LEARNING_RATE = 5e-5
 _DEFAULT_FT_NUM_RUNS = 1
+_FT_WARMUP_500_STEPS = "500_steps"
+_FT_WARMUP_RATIO_005 = "ratio_0.05"
+_DEFAULT_FT_WARMUP_MODE = _FT_WARMUP_500_STEPS
+_FT_WARMUP_MODE_LABELS = {
+    _FT_WARMUP_500_STEPS: "500 steps",
+    _FT_WARMUP_RATIO_005: "rate 0.05",
+}
 _DEFAULT_ISP_MAX_NCELLS = 2000
 _DEFAULT_STATS_MODE = "goal_state_shift"
 _DEFAULT_ISP_ANALYSIS_ENABLED = True
@@ -1726,6 +1733,7 @@ def _build_patched_pipeline_yaml(
     ft_epochs: int | None = None,
     ft_learning_rate: float | None = None,
     ft_num_runs: int | None = None,
+    ft_warmup_mode: str | None = None,
     isp_max_ncells: int | None = None,
     isp_stats_mode: str | None = None,
     isp_analysis_enabled: bool | None = None,
@@ -1813,12 +1821,18 @@ def _build_patched_pipeline_yaml(
         ft_epochs is not None
         or ft_learning_rate is not None
         or ft_num_runs is not None
+        or ft_warmup_mode is not None
         or ft_task_type is not None
         or ft_label_column is not None
     ):
         stages = cfg.setdefault("stages", {})
         finetune = stages.setdefault("finetune", {})
-        if ft_epochs is not None or ft_learning_rate is not None or ft_num_runs is not None:
+        if (
+            ft_epochs is not None
+            or ft_learning_rate is not None
+            or ft_num_runs is not None
+            or ft_warmup_mode is not None
+        ):
             training = finetune.setdefault("training", {})
             if ft_epochs is not None:
                 training["epochs"] = int(ft_epochs)
@@ -1826,6 +1840,13 @@ def _build_patched_pipeline_yaml(
                 training["learning_rate"] = float(ft_learning_rate)
             if ft_num_runs is not None:
                 training["num_runs"] = int(ft_num_runs)
+            if ft_warmup_mode is not None:
+                if str(ft_warmup_mode) == _FT_WARMUP_RATIO_005:
+                    training["warmup_ratio"] = 0.05
+                    training["warmup_steps"] = 500
+                else:
+                    training["warmup_ratio"] = None
+                    training["warmup_steps"] = 500
         if ft_task_type is not None or ft_label_column is not None:
             ft_block = finetune.setdefault("finetune", {})
             if ft_task_type is not None:
@@ -1871,6 +1892,7 @@ def _patch_pipeline_yaml(
     ft_epochs: int | None = None,
     ft_learning_rate: float | None = None,
     ft_num_runs: int | None = None,
+    ft_warmup_mode: str | None = None,
     isp_max_ncells: int | None = None,
     isp_stats_mode: str | None = None,
     isp_analysis_enabled: bool | None = None,
@@ -1900,6 +1922,7 @@ def _patch_pipeline_yaml(
         ft_epochs=ft_epochs,
         ft_learning_rate=ft_learning_rate,
         ft_num_runs=ft_num_runs,
+        ft_warmup_mode=ft_warmup_mode,
         isp_max_ncells=isp_max_ncells,
         isp_stats_mode=isp_stats_mode,
         isp_analysis_enabled=isp_analysis_enabled,
@@ -2038,11 +2061,25 @@ def _apply_species_to_yaml() -> None:
     )
 
 
+def _warmup_mode_from_training(ft_training: dict) -> str:
+    ratio = ft_training.get("warmup_ratio")
+    if ratio is not None:
+        try:
+            if float(ratio) > 0:
+                return _FT_WARMUP_RATIO_005
+        except (TypeError, ValueError):
+            pass
+    return _FT_WARMUP_500_STEPS
+
+
 def _ft_isp_advanced_kwargs_from_session() -> dict:
     return {
         "ft_epochs": st.session_state.get("pipeline_ft_epochs"),
         "ft_learning_rate": st.session_state.get("pipeline_ft_learning_rate"),
         "ft_num_runs": st.session_state.get("pipeline_ft_num_runs"),
+        "ft_warmup_mode": st.session_state.get(
+            "pipeline_ft_warmup_mode", _DEFAULT_FT_WARMUP_MODE
+        ),
         "isp_max_ncells": st.session_state.get("pipeline_isp_max_ncells"),
         "isp_stats_mode": st.session_state.get("pipeline_isp_stats_mode"),
         "isp_analysis_enabled": st.session_state.get("pipeline_isp_analysis_enabled"),
@@ -2103,6 +2140,8 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
     except (TypeError, ValueError):
         st.session_state.setdefault("pipeline_ft_learning_rate", _DEFAULT_FT_LEARNING_RATE)
     st.session_state.setdefault("pipeline_ft_num_runs", int(num_runs))
+    warmup_mode = _warmup_mode_from_training(ft_training)
+    st.session_state.setdefault("pipeline_ft_warmup_mode", warmup_mode)
     st.session_state.setdefault("pipeline_isp_max_ncells", int(max_ncells))
     mode = str(stats_mode) if stats_mode in _STATS_MODE_LABELS else _DEFAULT_STATS_MODE
     st.session_state.setdefault("pipeline_isp_stats_mode", mode)
@@ -2213,7 +2252,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
     with st.expander("Advanced options", expanded=False):
         st.markdown("**Fine-tune training**")
         st.caption(
-            "Writes `stages.finetune.training.*`. Changing epochs / LR / num_runs "
+            "Writes `stages.finetune.training.*`. Changing epochs / LR / num_runs / warmup "
             "changes the fine-tuned model and therefore ISP results."
         )
         c_ep, c_lr, c_runs = st.columns(3)
@@ -2248,6 +2287,19 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 on_change=_apply_ft_isp_advanced_to_yaml,
                 help="Independent fine-tune runs with different seeds (`training.num_runs`).",
             )
+        st.selectbox(
+            "warmup",
+            list(_FT_WARMUP_MODE_LABELS.keys()),
+            key="pipeline_ft_warmup_mode",
+            format_func=lambda v: _FT_WARMUP_MODE_LABELS.get(v, v),
+            on_change=_apply_ft_isp_advanced_to_yaml,
+            help=(
+                "Choose **500 steps** for a virtual genetic screen (ISP gene-effect size). "
+                "Choose **rate 0.05** when the fine-tune goal is classification "
+                "(cell type / disease accuracy), not per-gene ISP. "
+                "Writes `stages.finetune.training.warmup_steps` or `warmup_ratio`."
+            ),
+        )
 
         st.markdown("**Tokenize / ISP options**")
         st.caption(

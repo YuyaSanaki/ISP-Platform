@@ -82,6 +82,30 @@ class TestFinetuneWarmup(unittest.TestCase):
         self.assertLessEqual(warmup, 710)
         self.assertGreater(warmup, 0)
 
+    def test_default_warmup_steps_500_on_long_run(self):
+        warmup = training_schedule.resolve_warmup_steps(
+            {"warmup_ratio": None, "warmup_steps": 500},
+            steps_per_epoch=4728,
+            num_epochs=10,
+        )
+        self.assertEqual(warmup, 500)
+
+    def test_ratio_overrides_steps_on_long_run(self):
+        warmup = training_schedule.resolve_warmup_steps(
+            {"warmup_ratio": 0.05, "warmup_steps": 500},
+            steps_per_epoch=4728,
+            num_epochs=10,
+        )
+        self.assertEqual(warmup, int(4728 * 10 * 0.05))
+
+    def test_fixed_500_caps_on_short_run(self):
+        warmup = training_schedule.resolve_warmup_steps(
+            {"warmup_steps": 500},
+            steps_per_epoch=40,
+            num_epochs=1,
+        )
+        self.assertLessEqual(warmup, 4)
+
     def test_warmup_never_exceeds_total_minus_one(self):
         warmup = training_schedule.resolve_warmup_steps(
             {"warmup_steps": 9999},

@@ -149,7 +149,7 @@ def format_finetune_run_banner(cfg: dict[str, Any], extras: dict[str, Any]) -> s
         f"    batch_size:       {tr.get('batch_size', 6)}",
         f"    epochs:           {tr.get('epochs', 10)}",
         f"    lr_scheduler:     {tr.get('lr_scheduler_type', 'linear')}",
-        f"    warmup_steps:     {tr.get('warmup_steps', 100)}",
+        f"    warmup_steps:     {tr.get('warmup_steps', 500)}",
         f"    warmup_ratio:     {tr.get('warmup_ratio', '(not set)')}",
         f"    num_runs:         {tr.get('num_runs', 1)}",
         f"    seed:             {tr.get('seed', 42)}",

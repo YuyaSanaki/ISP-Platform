@@ -34,7 +34,8 @@ stages:
       epochs: 1
       batch_size: 2
       eval_batch_size: 1
-      warmup_ratio: 0.05
+      warmup_ratio: null
+      warmup_steps: 500
     runtime:
       dataloader_num_workers: 0
     metadata:

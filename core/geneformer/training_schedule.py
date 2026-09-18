@@ -15,12 +15,15 @@ def resolve_warmup_steps(
 
     ``warmup_ratio`` (if set) overrides ``warmup_steps``. The result is capped
     at 10% of total optimizer steps and at ``total_steps - 1``.
+
+    Platform default (v1.1.0) is ``warmup_steps: 500`` with ``warmup_ratio``
+    unset — use ratio 0.05 when the fine-tune goal is classification.
     """
     total_steps = max(1, steps_per_epoch * num_epochs)
     if training_cfg.get("warmup_ratio") is not None:
         warmup = int(total_steps * float(training_cfg["warmup_ratio"]))
     else:
-        warmup = int(training_cfg.get("warmup_steps", 100))
+        warmup = int(training_cfg.get("warmup_steps", 500))
     cap = max(1, total_steps // 10)
     warmup = min(warmup, cap, max(0, total_steps - 1))
     return max(0, warmup)

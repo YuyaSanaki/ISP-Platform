@@ -78,7 +78,7 @@ perturbation:
 # Web UI (Pipeline E2E) writes common knobs here when you change the form:
 #   perturbation.{type,state_key,genes_to_perturb,start_state,end_state}
 #   stages.finetune.finetune.{task_type,label_column}
-#   stages.finetune.training.{epochs,learning_rate,num_runs}
+#   stages.finetune.training.{epochs,learning_rate,num_runs,warmup_steps,warmup_ratio}
 #   runtime.max_cells
 #   stages.isp.isp.max_ncells / stages.isp.stats.mode
 #   stages.isp.umap.enabled / stages.isp.analysis.enabled
@@ -88,6 +88,11 @@ stages:
     # Fine-tune eval-split UMAP under {run}/finetune/figures/ (OOM risk on large eval sets).
     umap:
       enabled: true
+    training:
+      # v1.1.0 default: 500 steps (virtual genetic screen / ISP).
+      # Classification-oriented FT: warmup_ratio: 0.05 and warmup_steps unused.
+      warmup_ratio: null
+      warmup_steps: 500
   isp:
     # Per-cell trajectory UMAP is a separate Web UI run type (ISP UMAP), not E2E.
     umap:

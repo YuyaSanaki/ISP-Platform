@@ -215,6 +215,7 @@ Under **Advanced options** (collapsed by default):
 | UI                                | Writes                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------- |
 | epochs / learning_rate / num_runs | `stages.finetune.training.*`                                                    |
+| warmup                            | `training.warmup_steps: 500` (virtual genetic screen) or `warmup_ratio: 0.05` (classification) |
 | tokenize max_cells                | `runtime.max_cells`                                                             |
 | max_ncells                        | `stages.isp.isp.max_ncells` (default 2000; same idea as Mouse-Geneformer-WebUI) |
 | stats.mode                        | `stages.isp.stats.mode` (usual: `goal_state_shift`)                             |
@@ -236,7 +237,7 @@ Also on the main form (not under Advanced):
 | task_type / label_column                         | `stages.finetune.finetune.*` (`label_column` dropdown from sample-folder metadata + tokenizer attrs) |
 
 
-These merge onto `config/finetune.yaml` / `config/isp.yaml` at pipeline start. Changing epochs/LR/num_runs, `max_ncells` / `stats.mode`, perturbation type/genes, or FT labels changes results; analysis only toggles optional post-stats figures. Empty `genes_to_perturb` = all genes (slow); a short list (e.g. `Igfbp2`) enables targeted ISP (and optional auto UMAP if YAML `umap.enabled` is true).
+These merge onto `config/finetune.yaml` / `config/isp.yaml` at pipeline start. Changing epochs/LR/num_runs/warmup, `max_ncells` / `stats.mode`, perturbation type/genes, or FT labels changes results; analysis only toggles optional post-stats figures. Empty `genes_to_perturb` = all genes (slow); a short list (e.g. `Igfbp2`) enables targeted ISP (and optional auto UMAP if YAML `umap.enabled` is true). Default warmup is **500 steps** (virtual genetic screen). Choose **rate 0.05** in Advanced options when the fine-tune goal is classification.
 
 Tokenize, fine-tune, and standalone ISP: use CLI (`docker compose run --rm tokenize` / `finetune` / `isp`) — see [tokenization.md](tokenization.md), [fine-tuning.md](fine-tuning.md), [in-silico pertabation.md](in-silico%20pertabation.md).
 
