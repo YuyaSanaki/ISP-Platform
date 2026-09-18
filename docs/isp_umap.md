@@ -8,6 +8,8 @@ The **ISP UMAP** service calculates and visualizes how **each cell** moves when 
 
 **Note:** UMAP arrow length (`umap_shift_l2`) is the 2D L2 distance in the jointly fitted UMAP plane. It is **not** calibrated to ISP bar-chart `goal_state_shift` (Δ cosine to goal centroid); use UMAP for spatial intuition only.
 
+`max_cells_per_state` is applied **after** filtering start/end state. The cap is spread across `sample_id` in proportion to each sample’s cell count (tiny samples keep ≥1 cell when the budget allows), then shuffled. This avoids taking the first N tokenized cells, which would over-represent whichever loom/h5ad files were read first. Set `umap.sample_key` to `null` for an unstratified shuffle.
+
 ## Configuration
 
 The service is fully configured via [`core/config/isp_umap.yaml`](../core/config/isp_umap.yaml). You may modify this file to point to different datasets, fine-tuned models, or target genes.
@@ -20,7 +22,9 @@ Key configurations to note:
 | `paths.geneformer_model` | Path to your pre-trained or fine-tuned sequence classification model. |
 | `umap.show_trajectory_arrows` | Draw Start→Perturbed arrows (`true` / `false`). |
 | `umap.num_trajectory_arrows` | Approximate number of arrows when enabled (default `100`). |
-| `umap.seed` | Seed for UMAP (and PCA when enabled). Default `42`; use `0` with `pca_components: 50` for Fig.2/3/4. |
+| `umap.max_cells_per_state` | Cap cells per start/end state (default `2000`). Stratified by `sample_key`, not prefix-of-N. |
+| `umap.sample_key` | Column used to spread the cap across input samples (default `sample_id`). Empty/`null` = shuffle only. |
+| `umap.seed` | Seed for cell subsampling, UMAP (and PCA when enabled). Default `42`; use `0` with `pca_components: 50` for Fig.2/3/4. |
 | `umap.pca_components` | `0` = direct UMAP on embeddings (default). `50` = PCA(50)→UMAP (Fig.2/3/4 manuscript style). |
 | `perturbation.genes_to_perturb` | One or more gene symbols / Ensembl IDs perturbed **together** (group KD/OE). |
 | `perturbation.type` | `delete` (KD) or `overexpress` (length-preserving OE; Fig.3 OSKM4-style). |

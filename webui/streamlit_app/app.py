@@ -630,7 +630,54 @@ def _load_isp_stage_cfg(run_dir: Path) -> dict:
         cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return {}
-    return cfg if isinstance(cfg, dict) else {}
+    if not isinstance(cfg, dict):
+        return {}
+    return _remap_isp_stage_paths_to_run_dir(cfg, run_dir)
+
+
+def _resolve_path_under_pipeline_run(path: str | Path, run_dir: Path) -> Path:
+    """If a cluster absolute path is missing, map the suffix after pipeline_* onto run_dir."""
+    run_dir = Path(run_dir).expanduser().resolve()
+    original = Path(path)
+    if original.exists():
+        return original
+    parts = original.parts
+    if run_dir.name in parts:
+        idx = parts.index(run_dir.name)
+        candidate = run_dir.joinpath(*parts[idx + 1 :])
+        if candidate.exists():
+            return candidate
+    return original
+
+
+def _remap_isp_stage_paths_to_run_dir(cfg: dict, run_dir: Path) -> dict:
+    """Rewrite dataset/model paths from synced Pegasus absolute paths onto this host."""
+    out = dict(cfg)
+    paths = dict(out.get("paths") or {})
+    run_dir = Path(run_dir).expanduser().resolve()
+    for key in ("dataset", "geneformer_model", "output_root"):
+        raw = paths.get(key)
+        if not raw:
+            continue
+        paths[key] = str(_resolve_path_under_pipeline_run(raw, run_dir))
+    model = Path(str(paths.get("geneformer_model") or ""))
+    if paths.get("geneformer_model") and not model.is_dir():
+        guess = run_dir / "finetune" / "all_run1"
+        if guess.is_dir():
+            paths["geneformer_model"] = str(guess)
+    dataset = Path(str(paths.get("dataset") or ""))
+    if paths.get("dataset") and not dataset.exists():
+        by_name = run_dir / "tokenized_dataset" / Path(str(paths["dataset"])).name
+        if by_name.exists():
+            paths["dataset"] = str(by_name)
+        else:
+            candidates = sorted((run_dir / "tokenized_dataset").glob("*.dataset"))
+            if len(candidates) == 1:
+                paths["dataset"] = str(candidates[0])
+    if not paths.get("output_root") or not Path(str(paths["output_root"])).is_dir():
+        paths["output_root"] = str(run_dir)
+    out["paths"] = paths
+    return out
 
 
 def _isp_run_gene_suggestions(run_dir: Path, limit: int = 30) -> list[str]:
@@ -748,6 +795,7 @@ def _build_isp_umap_yaml_from_pipeline_run(
         "show_trajectory_arrows": show_arrows,
         "num_trajectory_arrows": max(0, num_arrows),
         "max_cells_per_state": int(umap_block.get("max_cells_per_state", 2000)),
+        "sample_key": umap_block.get("sample_key", "sample_id"),
     }
     pert_type = str(pert.get("type") or "delete")
     gene_label = "+".join(gene_list)

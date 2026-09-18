@@ -21,8 +21,11 @@ umap:
   show_trajectory_arrows: true
   # How many trajectories to draw when show_trajectory_arrows is true
   num_trajectory_arrows: 100
-  # Maximum cells to extract per state to prevent memory limits
+  # Maximum cells to extract per state to prevent memory limits.
+  # Cap is stratified by sample_key (proportional, ≥1 cell per sample when possible)
+  # then shuffled; not the first N cells of the tokenized dataset.
   max_cells_per_state: 2000
+  sample_key: sample_id
 
 perturbation:
   # One or more genes perturbed together (group KD or OE). Symbols or Ensembl IDs.

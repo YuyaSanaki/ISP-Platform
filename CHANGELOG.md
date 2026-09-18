@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- ISP UMAP `max_cells_per_state` now samples proportionally across `sample_id` (then shuffles) instead of taking the first N tokenized cells.
+- ISP UMAP / WebUI remap `stage_configs/isp.yaml` dataset and model paths onto the selected local `--run-dir` when cluster absolute paths (e.g. `/work/...`) are missing after sync.
+
 ## [1.1.0] - 2026-09-18
 
 ### Changed

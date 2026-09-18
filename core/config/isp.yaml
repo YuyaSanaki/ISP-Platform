@@ -67,6 +67,7 @@ umap:
   show_trajectory_arrows: true
   num_trajectory_arrows: 100
   max_cells_per_state: 2000
+  sample_key: sample_id
   batch_size: 100
 
 # Provenance and reproducibility settings

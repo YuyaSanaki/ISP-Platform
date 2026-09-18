@@ -35,8 +35,161 @@ DEFAULT_UMAP_CFG: dict[str, Any] = {
     "show_trajectory_arrows": True,
     "num_trajectory_arrows": 100,
     "max_cells_per_state": 2000,
+    # Stratify the per-state cap by this dataset column (tokenize writes sample_id).
+    # Set to null/empty for an unstratified shuffle. Prefix-of-N is not used.
+    "sample_key": "sample_id",
     "batch_size": 100,
 }
+
+
+def _hamilton_allocate(sizes: np.ndarray, total: int) -> np.ndarray:
+    """Largest-remainder (Hamilton) allocation, never exceeding group sizes."""
+    sizes = np.asarray(sizes, dtype=np.int64)
+    out = np.zeros_like(sizes)
+    n = int(sizes.sum())
+    total = int(max(0, min(int(total), n)))
+    if total == 0 or n == 0:
+        return out
+    raw = sizes * (total / n)
+    out = np.minimum(np.floor(raw).astype(np.int64), sizes)
+    remainder = total - int(out.sum())
+    if remainder <= 0:
+        return out
+    frac = raw - np.floor(raw)
+    remaining = sizes - out
+    order = np.lexsort((-remaining, -frac))
+    for i in order:
+        if remainder <= 0:
+            break
+        if remaining[i] > 0:
+            out[i] += 1
+            remaining[i] -= 1
+            remainder -= 1
+    if remainder > 0:
+        for i in np.argsort(-remaining):
+            if remainder <= 0:
+                break
+            take = min(int(remaining[i]), remainder)
+            if take <= 0:
+                continue
+            out[i] += take
+            remaining[i] -= take
+            remainder -= take
+    return out
+
+
+def allocate_stratified_counts(sizes: np.ndarray, total: int) -> np.ndarray:
+    """Proportional counts; if the budget can cover every group, bump zeros to 1.
+
+    Hamilton allocation keeps the sample mix. A later 1-cell rescue is applied only
+    to groups that would otherwise be dropped, stealing from the largest strata.
+    """
+    sizes = np.asarray(sizes, dtype=np.int64)
+    if sizes.size == 0:
+        return sizes
+    total = int(min(int(total), int(sizes.sum())))
+    if total <= 0:
+        return np.zeros_like(sizes)
+    out = _hamilton_allocate(sizes, total)
+    if sizes.size > total:
+        return out
+    zeros = np.flatnonzero((out == 0) & (sizes > 0))
+    if zeros.size == 0:
+        return out
+    donors = np.argsort(-out)
+    for z in zeros:
+        for d in donors:
+            if d == z:
+                continue
+            if out[d] > 1:
+                out[d] -= 1
+                out[z] += 1
+                break
+    return out
+
+
+def stratified_sample_indices(
+    labels: np.ndarray,
+    max_cells: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Sample up to max_cells indices, stratified by labels (no replacement)."""
+    labels = np.asarray(labels)
+    n = int(labels.shape[0])
+    max_cells = int(max_cells)
+    if n == 0 or max_cells <= 0:
+        return np.array([], dtype=np.int64)
+    if n <= max_cells:
+        return np.arange(n, dtype=np.int64)
+    _uniques, inverse, counts = np.unique(labels, return_inverse=True, return_counts=True)
+    alloc = allocate_stratified_counts(counts, max_cells)
+    chosen: list[np.ndarray] = []
+    for group_i, k in enumerate(alloc):
+        if k <= 0:
+            continue
+        members = np.flatnonzero(inverse == group_i)
+        pick = rng.choice(members, size=int(k), replace=False)
+        chosen.append(pick)
+    if not chosen:
+        return np.array([], dtype=np.int64)
+    return np.concatenate(chosen)
+
+
+def _umap_sample_key(umap_cfg: Mapping[str, Any]) -> str | None:
+    raw = umap_cfg.get("sample_key", DEFAULT_UMAP_CFG["sample_key"])
+    if raw is None:
+        return None
+    key = str(raw).strip()
+    return key or None
+
+
+def subsample_state_dataset(
+    dataset,
+    max_cells: int,
+    seed: int,
+    sample_key: str | None = "sample_id",
+):
+    """Cap a state-filtered dataset without tokenize-order bias.
+
+    When ``sample_key`` is present, allocate ``max_cells`` proportionally across
+    samples (each sample keeps ≥1 cell if it fits). Otherwise shuffle then take N.
+    The selected subset is shuffled so trajectory-arrow striding is not sample-blocked.
+    """
+    n = len(dataset)
+    max_cells = int(max_cells)
+    if max_cells <= 0:
+        return dataset.select([])
+    if n <= max_cells:
+        return dataset
+
+    rng = np.random.default_rng(int(seed))
+    columns = getattr(dataset, "column_names", [])
+    key = sample_key if sample_key and sample_key in columns else None
+    if key:
+        labels = np.asarray(dataset[key])
+        idx = stratified_sample_indices(labels, max_cells, rng)
+        n_kept_samples = len(np.unique(labels[idx])) if len(idx) else 0
+        logger.info(
+            "Stratified subsample on '%s': %d/%d cells from %d/%d samples (seed=%s)",
+            key,
+            len(idx),
+            n,
+            n_kept_samples,
+            len(np.unique(labels)),
+            seed,
+        )
+    else:
+        if sample_key:
+            logger.warning(
+                "UMAP sample_key %r not in dataset columns; using unstratified shuffle",
+                sample_key,
+            )
+        idx = rng.permutation(n)[:max_cells]
+        logger.info("Shuffle subsample: %d/%d cells (seed=%s)", len(idx), n, seed)
+
+    selected = dataset.select(np.sort(idx).tolist())
+    return selected.shuffle(seed=int(seed))
+
 
 # Locked Fig.2/3/4 manuscript UMAP preprocessing (Paper_idea_v2 §8.2).
 FIG_UMAP_PCA_COMPONENTS = 50
@@ -55,6 +208,68 @@ def _validate_local_model_path(model_path: str | Path) -> Path:
     return path
 
 
+def resolve_path_under_pipeline_run(path: str | Path, run_dir: Path) -> Path:
+    """Remap a missing absolute path (e.g. cluster ``/work/...``) under a local pipeline run.
+
+    Synced ``stage_configs/isp.yaml`` often keeps the host where the pipeline ran.
+    When that path is absent, reuse the suffix after ``pipeline_*`` under ``run_dir``.
+    """
+    run_dir = Path(run_dir).expanduser().resolve()
+    original = Path(path)
+    if original.exists():
+        return original
+    parts = original.parts
+    run_name = run_dir.name
+    if run_name in parts:
+        idx = parts.index(run_name)
+        candidate = run_dir.joinpath(*parts[idx + 1 :])
+        if candidate.exists():
+            return candidate
+    return original
+
+
+def remap_isp_cfg_paths_to_run_dir(cfg: Mapping[str, Any], run_dir: Path) -> dict[str, Any]:
+    """Rewrite ``paths.dataset`` / ``geneformer_model`` onto ``run_dir`` when needed."""
+    out = dict(cfg)
+    paths = dict(out.get("paths") or {})
+    run_dir = Path(run_dir).expanduser().resolve()
+
+    for key in ("dataset", "geneformer_model", "output_root"):
+        raw = paths.get(key)
+        if not raw:
+            continue
+        remapped = resolve_path_under_pipeline_run(raw, run_dir)
+        if remapped != Path(str(raw)):
+            logger.info("Remapped paths.%s → %s", key, remapped)
+        paths[key] = str(remapped)
+
+    model = Path(str(paths.get("geneformer_model") or ""))
+    if paths.get("geneformer_model") and not model.is_dir():
+        guess = run_dir / "finetune" / "all_run1"
+        if guess.is_dir():
+            logger.info("Falling back paths.geneformer_model → %s", guess)
+            paths["geneformer_model"] = str(guess)
+
+    dataset = Path(str(paths.get("dataset") or ""))
+    if paths.get("dataset") and not dataset.exists():
+        basename = Path(str(paths["dataset"])).name
+        by_name = run_dir / "tokenized_dataset" / basename
+        if by_name.exists():
+            logger.info("Falling back paths.dataset → %s", by_name)
+            paths["dataset"] = str(by_name)
+        else:
+            candidates = sorted((run_dir / "tokenized_dataset").glob("*.dataset"))
+            if len(candidates) == 1:
+                logger.info("Falling back paths.dataset → %s", candidates[0])
+                paths["dataset"] = str(candidates[0])
+
+    if not paths.get("output_root") or not Path(str(paths["output_root"])).is_dir():
+        paths["output_root"] = str(run_dir)
+
+    out["paths"] = paths
+    return out
+
+
 def load_isp_cfg_from_pipeline_run(run_dir: Path) -> dict[str, Any]:
     """Load ISP stage config written by run_pipeline.py under stage_configs/isp.yaml."""
     run_dir = run_dir.expanduser().resolve()
@@ -67,6 +282,7 @@ def load_isp_cfg_from_pipeline_run(run_dir: Path) -> dict[str, Any]:
         cfg = yaml.safe_load(f)
     if not isinstance(cfg, dict):
         raise ValueError(f"Invalid ISP config at {isp_cfg_path}")
+    cfg = remap_isp_cfg_paths_to_run_dir(cfg, run_dir)
     cfg.setdefault("umap", dict(DEFAULT_UMAP_CFG))
     cfg.setdefault("runtime", {})
     cfg["runtime"].setdefault("num_classes", (cfg.get("model") or {}).get("num_classes", 2))
@@ -510,18 +726,21 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
     end_state = pert["end_state"]
     umap_cfg = cfg.get("umap") or {}
     max_cells = int(umap_cfg.get("max_cells_per_state", DEFAULT_UMAP_CFG["max_cells_per_state"]))
+    umap_seed = int(umap_cfg.get("seed", DEFAULT_UMAP_CFG["seed"]))
+    sample_key = _umap_sample_key(umap_cfg)
 
     logger.info(
-        "Filtering up to %d '%s' and '%s' cells...",
+        "Filtering up to %d '%s' and '%s' cells (stratify=%s)...",
         max_cells,
         start_state,
         end_state,
+        sample_key or "shuffle",
     )
     start_dataset = dataset.filter(lambda x: x.get(state_key) == start_state)
     end_dataset = dataset.filter(lambda x: x.get(state_key) == end_state)
 
-    start_dataset = start_dataset.select(range(min(len(start_dataset), max_cells)))
-    end_dataset = end_dataset.select(range(min(len(end_dataset), max_cells)))
+    start_dataset = subsample_state_dataset(start_dataset, max_cells, umap_seed, sample_key)
+    end_dataset = subsample_state_dataset(end_dataset, max_cells, umap_seed, sample_key)
     logger.info(
         "Using %d %s cells and %d %s cells.",
         len(start_dataset),
@@ -550,7 +769,6 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
 
     all_embs = np.vstack([end_embs, start_embs, pert_start_embs])
     pert_label = f"{start_state}+ISP({gene_label})"
-    umap_seed = int(umap_cfg.get("seed", DEFAULT_UMAP_CFG["seed"]))
     umap_embs, umap_method = fit_umap_projection(all_embs, umap_cfg)
 
     per_cell_df = build_per_cell_shift_table(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -427,6 +428,96 @@ class TestIspUmapIntegration(unittest.TestCase):
         self.assertEqual(umap_cfg["perturbation"]["gene_label"], "Igfbp2+Brca2")
         self.assertEqual(umap_cfg["perturbation"]["type"], "overexpress")
         self.assertEqual(umap_cfg["umap"]["max_cells_per_state"], 500)
+        self.assertEqual(umap_cfg["umap"]["sample_key"], "sample_id")
+
+    def test_remap_isp_cfg_paths_from_cluster_absolute(self):
+        from run_isp_umap import remap_isp_cfg_paths_to_run_dir, resolve_path_under_pipeline_run
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "pipeline_042051_549377Z"
+            model = run_dir / "finetune" / "all_run1"
+            dataset = run_dir / "tokenized_dataset" / "Asano_mouse-mouse_0.dataset"
+            model.mkdir(parents=True)
+            (model / "config.json").write_text("{}", encoding="utf-8")
+            dataset.mkdir(parents=True)
+
+            cluster_model = (
+                "/work/LABGENPH/yuya_1/ISP-Platform/output/20260918/"
+                "pipeline_042051_549377Z/finetune/all_run1"
+            )
+            cluster_ds = (
+                "/work/LABGENPH/yuya_1/ISP-Platform/output/20260918/"
+                "pipeline_042051_549377Z/tokenized_dataset/Asano_mouse-mouse_0.dataset"
+            )
+            remapped = resolve_path_under_pipeline_run(cluster_model, run_dir)
+            self.assertEqual(remapped, model.resolve())
+
+            cfg = remap_isp_cfg_paths_to_run_dir(
+                {
+                    "paths": {
+                        "dataset": cluster_ds,
+                        "geneformer_model": cluster_model,
+                        "output_root": "/work/LABGENPH/yuya_1/ISP-Platform/output/20260918/pipeline_042051_549377Z",
+                    }
+                },
+                run_dir,
+            )
+            self.assertEqual(Path(cfg["paths"]["geneformer_model"]), model.resolve())
+            self.assertEqual(Path(cfg["paths"]["dataset"]), dataset.resolve())
+            self.assertEqual(Path(cfg["paths"]["output_root"]), run_dir.resolve())
+
+    def test_stratified_umap_sampling_avoids_prefix_bias(self):
+        from run_isp_umap import allocate_stratified_counts, stratified_sample_indices
+
+        # Equal groups: 40 cells from 80+80 must include both samples (prefix-of-N is all A).
+        labels = np.array(["A"] * 80 + ["B"] * 80)
+        idx = stratified_sample_indices(labels, 40, np.random.default_rng(0))
+        self.assertEqual(len(idx), 40)
+        self.assertEqual(len(np.unique(idx)), 40)
+        self.assertEqual(set(labels[idx]), {"A", "B"})
+        self.assertEqual(int(np.sum(labels[idx] == "A")), 20)
+        self.assertEqual(int(np.sum(labels[idx] == "B")), 20)
+
+        # Proportional: 90/10 mix kept; tiny sample still gets ≥1 cell.
+        prop = np.array(["A"] * 900 + ["B"] * 100)
+        prop_idx = stratified_sample_indices(prop, 100, np.random.default_rng(0))
+        self.assertEqual(int(np.sum(prop[prop_idx] == "A")), 90)
+        self.assertEqual(int(np.sum(prop[prop_idx] == "B")), 10)
+
+        tiny = np.array(["A"] * 1999 + ["B"] * 1)
+        tiny_idx = stratified_sample_indices(tiny, 200, np.random.default_rng(1))
+        self.assertIn("B", tiny[tiny_idx])
+
+        counts = allocate_stratified_counts(np.array([50, 50]), 100)
+        np.testing.assert_array_equal(counts, [50, 50])
+        np.testing.assert_array_equal(allocate_stratified_counts(np.array([900, 100]), 100), [90, 10])
+        np.testing.assert_array_equal(allocate_stratified_counts(np.array([1999, 1]), 200), [199, 1])
+
+        a = stratified_sample_indices(labels, 40, np.random.default_rng(7))
+        b = stratified_sample_indices(labels, 40, np.random.default_rng(7))
+        np.testing.assert_array_equal(a, b)
+
+    def test_subsample_state_dataset_stratifies_and_shuffles(self):
+        from datasets import Dataset
+        from run_isp_umap import subsample_state_dataset
+
+        sample_id = ["s1"] * 60 + ["s2"] * 60
+        ds = Dataset.from_dict(
+            {
+                "sample_id": sample_id,
+                "cell_id": [f"c{i}" for i in range(120)],
+            }
+        )
+        out = subsample_state_dataset(ds, max_cells=40, seed=42, sample_key="sample_id")
+        self.assertEqual(len(out), 40)
+        kept = list(out["sample_id"])
+        self.assertEqual(kept.count("s1"), 20)
+        self.assertEqual(kept.count("s2"), 20)
+        runs = 1 + sum(a != b for a, b in zip(kept, kept[1:]))
+        self.assertGreater(runs, 2)
+
+        shuffled = subsample_state_dataset(ds, max_cells=40, seed=42, sample_key=None)
+        self.assertEqual(len(shuffled), 40)
 
     def test_apply_group_delete_and_overexpress(self):
         from run_isp_umap import apply_group_delete, apply_group_overexpress
