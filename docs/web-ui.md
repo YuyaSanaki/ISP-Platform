@@ -226,7 +226,7 @@ Under **Advanced options** (collapsed by default):
 
 **Sequential ISP** (OE then KD, or any ordered chain): use Run type **Sequential ISP**. Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Writes under `{pipeline_run}/sequential_isp/`. See [sequential_isp.md](sequential_isp.md).
 
-Pipeline (E2E) additionally runs **TOP1 ISP UMAP** automatically once (same output directory). Full trajectory UMAP remains available via Run type **ISP UMAP**.
+Pipeline (E2E) additionally runs **TOP1 significant ISP UMAP** automatically once (same output directory; gene = top FDR-significant by shift toward goal). Full trajectory UMAP remains available via Run type **ISP UMAP**.
 
 Also on the main form (not under Advanced):
 

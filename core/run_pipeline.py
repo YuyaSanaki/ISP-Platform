@@ -98,6 +98,56 @@ def _num_classes_from_label_dict(model_dir: Path) -> int:
     return len(label_dict)
 
 
+def _gene_token_from_row(row: dict) -> str:
+    """Prefer Ensembl_ID for robust token resolution; fall back to Gene_name."""
+    return str(row.get("Ensembl_ID") or row.get("Gene_name") or "").strip()
+
+
+def pick_e2e_top1_significant_gene(ispstats_dir: Path) -> str | None:
+    """Pick TOP1 significant gene (max Shift_to_goal_end among Sig==1) for E2E UMAP.
+
+    Uses ``significant_genes.csv`` when present. Falls back to the ISP stats
+    parquet filtered to ``Sig==1``. Does **not** use ``top100_positive_shifters.csv``
+    (that table includes non-significant high-shift genes).
+    """
+    sig_csv = Path(ispstats_dir) / "significant_genes.csv"
+    if sig_csv.is_file():
+        try:
+            with open(sig_csv, "r", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            if rows and "Shift_to_goal_end" in rows[0]:
+                best_row = max(
+                    rows,
+                    key=lambda r: float(r.get("Shift_to_goal_end") or "-inf"),
+                )
+                gene = _gene_token_from_row(best_row)
+                if gene:
+                    return gene
+        except Exception:
+            pass
+
+    try:
+        parquets = sorted(Path(ispstats_dir).glob("*.parquet"))
+        if not parquets:
+            return None
+        import pandas as pd  # local import: avoid hard dependency at module import time
+
+        df = pd.read_parquet(parquets[0])
+        if df.empty or "Shift_to_goal_end" not in df.columns:
+            return None
+        if "Sig" in df.columns:
+            df = df[df["Sig"] == 1]
+        else:
+            return None
+        if df.empty:
+            return None
+        row = df.sort_values("Shift_to_goal_end", ascending=False).iloc[0]
+        gene = str(row.get("Ensembl_ID") or row.get("Gene_name") or "").strip()
+        return gene or None
+    except Exception:
+        return None
+
+
 def main() -> None:
     default_cfg = os.environ.get("PIPELINE_CONFIG", str(ROOT / "config" / "pipeline.yaml"))
     p = argparse.ArgumentParser(description="Run Tokenize → Fine-tune → ISP pipeline.")
@@ -353,59 +403,20 @@ def main() -> None:
             print("Skipping ISP (--skip-isp).")
 
         # ------------------------------------------------------------------
-        # E2E standard: add ISP TOP1 (by shift toward goal) ISP-UMAP
+        # E2E standard: TOP1 significant gene → ISP-UMAP
         # ------------------------------------------------------------------
         # We intentionally disable auto ISP UMAP in stages.isp.umap (handled via
         # Web UI "ISP UMAP" run type), but for Pipeline (E2E) we still want a
-        # quick "top hit" per run. Cost is small because it runs only one
-        # gene (single UMAP extraction for start/end + perturbed start).
+        # quick "top significant hit" per run. Cost is small because it runs
+        # only one gene (single UMAP extraction for start/end + perturbed start).
         if not args.skip_isp:
             run_dir_path = Path(resolved["pipeline_run_dir"])
             ispstats_dir = run_dir_path / "ispstats_results"
             isp_umap_dir = run_dir_path / "isp_umap"
             if not isp_umap_dir.is_dir() or not any(isp_umap_dir.glob("umap_*.png")):
-                top_gene = None
-                # Primary source: significant_genes.csv (written by isp_analysis.py)
-                for cand in (ispstats_dir / "significant_genes.csv", ispstats_dir / "top100_positive_shifters.csv"):
-                    if not cand.is_file():
-                        continue
-                    try:
-                        with open(cand, "r", encoding="utf-8") as f:
-                            rows = list(csv.DictReader(f))
-                        if not rows:
-                            continue
-                        shift_col = "Shift_to_goal_end" if "Shift_to_goal_end" in rows[0] else None
-                        if not shift_col:
-                            continue
-                        # Pick the maximum shift gene (TOP1 toward goal)
-                        best_row = max(
-                            rows,
-                            key=lambda r: float(r.get(shift_col) or "-inf"),
-                        )
-                        # Prefer Ensembl_ID when present (more robust token resolution).
-                        top_gene = (best_row.get("Ensembl_ID") or best_row.get("Gene_name") or "").strip()
-                        if top_gene:
-                            break
-                    except Exception:
-                        # Extraction should never fail the whole E2E run.
-                        top_gene = None
-
-                # Fallback: if ISP analysis was disabled, CSVs may be missing.
-                # Then pick TOP1 from the single *.parquet produced by isp_stats.
-                if not top_gene:
-                    try:
-                        parquets = sorted(ispstats_dir.glob("*.parquet"))
-                        if parquets:
-                            import pandas as pd  # local import to avoid hard dependency at module import time
-
-                            df = pd.read_parquet(parquets[0])
-                            if "Shift_to_goal_end" in df.columns and not df.empty:
-                                row = df.sort_values("Shift_to_goal_end", ascending=False).iloc[0]
-                                top_gene = str(row.get("Ensembl_ID") or row.get("Gene_name") or "").strip()
-                    except Exception:
-                        top_gene = None
+                top_gene = pick_e2e_top1_significant_gene(ispstats_dir)
                 if top_gene:
-                    print(f"Running E2E TOP1 ISP UMAP for gene: {top_gene}")
+                    print(f"Running E2E TOP1 significant ISP UMAP for gene: {top_gene}")
                     env = os.environ.copy()
                     # Fig.2/3/4 manuscript style projection: PCA(50) → UMAP (seed 0).
                     _run_subprocess(
@@ -422,10 +433,12 @@ def main() -> None:
                             "0",
                         ],
                         env,
-                        "ISP UMAP (TOP1)",
+                        "ISP UMAP (TOP1 significant)",
                     )
                 else:
-                    print("E2E TOP1 ISP UMAP: could not determine top gene; skipping.")
+                    print(
+                        "E2E TOP1 ISP UMAP: no significant gene found; skipping."
+                    )
 
         pipeline_ok = True
         print("\n" + "=" * 72)

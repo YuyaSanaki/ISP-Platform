@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - ISP UMAP `max_cells_per_state` now samples proportionally across `sample_id` (then shuffles) instead of taking the first N tokenized cells.
 - ISP UMAP / WebUI remap `stage_configs/isp.yaml` dataset and model paths onto the selected local `--run-dir` when cluster absolute paths (e.g. `/work/...`) are missing after sync.
+- E2E Pipeline auto ISP UMAP now selects the **TOP1 significant** gene (`significant_genes.csv` / parquet `Sig==1`), not the raw top positive shifter.
 
 ## [1.1.0] - 2026-09-18
 

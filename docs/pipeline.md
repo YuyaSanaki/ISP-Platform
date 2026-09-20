@@ -139,7 +139,7 @@ Copied into the generated ISP config. Same keys as [`core/config/isp.yaml`](../c
 | `state_key` | Metadata column for states (e.g. `disease`) |
 | `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (from folder names when `extract_metadata_from_path` is on) |
 | `organ_data` | Optional output filename prefix |
-| `genes_to_perturb` | Optional gene list; empty = genome-wide. E2E always runs **TOP1 ISP UMAP** once under `{run}/isp_umap/` (full trajectory UMAP: use Run type **ISP UMAP**) |
+| `genes_to_perturb` | Optional gene list; empty = genome-wide. E2E always runs **TOP1 significant ISP UMAP** once under `{run}/isp_umap/` (full trajectory UMAP: use Run type **ISP UMAP**) |
 
 ### `stages` (optional overrides)
 
@@ -175,7 +175,7 @@ The pipeline resolves these per run:
 | Fine-tune checkpoint | `{run}/finetune/all_run1/` |
 | ISP results | `{run}/isp_results/`, `ispstats_results/`, `figures/` |
 | Fine-tune UMAP (when enabled) | `{run}/finetune/figures/*_umap.pdf` |
-| ISP UMAP (TOP1, E2E standard) | `{run}/isp_umap/` — `umap_*.png`, `per_cell_isp_shift.csv` |
+| ISP UMAP (TOP1 significant, E2E standard) | `{run}/isp_umap/` — `umap_*.png`, `per_cell_isp_shift.csv` |
 
 Inspect resolved values after a run in `pipeline_resolved_paths.yaml`.
 
