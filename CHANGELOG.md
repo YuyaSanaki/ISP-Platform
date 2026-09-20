@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.2.0] - 2026-09-20
 
+### Changed
+
+- E2E Pipeline auto ISP UMAP now selects the **TOP1 significant** gene (`significant_genes.csv` / parquet `Sig==1`), not the raw top positive shifter.
+
 ### Added
 
 - Optional ISP UMAP postprocess **`cluster_coexpr_analysis`** (default **off**): marker cell-type labels, joint UMAP overlays (L2 / KMeans cluster / cell type), and L2-by-group box/mean figures.

@@ -2548,7 +2548,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
         with c_analysis:
             st.caption(
                 "Cell **trajectory** UMAP: use Run type **ISP UMAP** after a completed "
-                "Pipeline (E2E). Pipeline (E2E) also runs **TOP1 ISP UMAP** automatically; "
+                "Pipeline (E2E). Pipeline (E2E) also runs **TOP1 significant ISP UMAP** automatically; "
                 "Fine-tune UMAP is controlled by `stages.finetune.umap.enabled`."
             )
 
@@ -2594,7 +2594,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 | **stats.mode** | How cosine shifts are scored. Keep **goal_state_shift** for Disease→WT. |
 | **analysis plots** | Post-stats figures (top genes barplot, volcano, etc.). |
 | **cluster_coexpr_analysis** | Optional joint UMAP + L2-by-group after ISP UMAP / E2E TOP1 (`stages.isp.postprocess`). |
-| **Trajectory UMAP** | Run type **ISP UMAP** (per-cell arrows), after E2E. E2E also runs **TOP1 ISP UMAP** automatically; Fine-tune UMAP comes from `stages.finetune.umap.enabled`. |
+| **Trajectory UMAP** | Run type **ISP UMAP** (per-cell arrows), after E2E. E2E also runs **TOP1 significant ISP UMAP** automatically; Fine-tune UMAP comes from `stages.finetune.umap.enabled`. |
 """
         )
 
