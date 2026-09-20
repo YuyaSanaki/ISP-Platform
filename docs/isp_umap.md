@@ -31,6 +31,9 @@ Key configurations to note:
 | `perturbation.state_key` | Label column that divides your cells (e.g., `disease`). |
 | `perturbation.start_state` | Condition you are perturbing (e.g. `Disease`). |
 | `perturbation.end_state` | Condition you are comparing against (e.g. `Ctrl`). |
+| `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
+| `postprocess.n_clusters` | KMeans clusters when no `cluster` column (default `4`). |
+| `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
 
 ### Gene Symbol Auto-Detection
 
@@ -57,6 +60,16 @@ python3 core/run_isp_umap.py --run-dir /app/output/.../pipeline_... \
   --gene POU5F1 SOX2 KLF4 MYC --pca-components 50 --umap-seed 0
 ```
 
+### Downstream plots (`cluster_coexpr_analysis/`, optional)
+
+After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis (詳細設定)**, or `--enable-postprocess`.
+
+1. **Cell-type prediction** — marker scores on start-state `input_ids` → `pred_cell_type` / `coarse_type` (when `celltype_prediction: true`).
+2. **Joint UMAP overlays** — `umap_joint_l2_cluster_celltype.png` (+ enriched CSV, `joint_umap_coords.npy`).
+3. **L2 by group** — `l2_by_coarse_celltype.png` and `l2_mean_by_coarse_celltype.png`.
+
+Failures in postprocess are logged as warnings; core UMAP outputs stay intact.
+
 ## Outputs
 
 All generated assets are safely routed to the `output/[DATE]/isp_umap_[UTC TIME]` directory.
@@ -66,6 +79,7 @@ All generated assets are safely routed to the `output/[DATE]/isp_umap_[UTC TIME]
 | **`per_cell_isp_shift.csv`** | **Essential:** per-cell perturbation magnitude and direction (see below) |
 | `umap_*.png` | Visual summary (white L-axes, Fig.2 endpoint style); arrows = same cells as `umap_shift_l2` in the CSV |
 | `*_embs.npy` | Raw embedding matrices for custom downstream analysis |
+| `cluster_coexpr_analysis/*` | Optional (when `postprocess.enabled`): joint overlays, L2-by-group plots, enriched CSV |
 
 ### 1. UMAP Figure (`umap_*.png`)
 A matplotlib scatter (Fig.2 endpoint style: **white background**, no grid, L-shaped **UMAP-1 / UMAP-2** axes) comparing:

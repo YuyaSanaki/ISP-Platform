@@ -74,6 +74,9 @@ _FT_WARMUP_MODE_LABELS = {
 _DEFAULT_ISP_MAX_NCELLS = 2000
 _DEFAULT_STATS_MODE = "goal_state_shift"
 _DEFAULT_ISP_ANALYSIS_ENABLED = True
+_DEFAULT_ISP_POSTPROCESS_ENABLED = False
+_DEFAULT_ISP_POSTPROCESS_N_CLUSTERS = 4
+_DEFAULT_ISP_POSTPROCESS_CELLTYPE = True
 _DEFAULT_PERTURB_TYPE = "delete"
 _DEFAULT_STATE_KEY = "disease"
 _DEFAULT_FT_TASK_TYPE = "disease"
@@ -439,6 +442,32 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
             cmd.extend(["--num-trajectory-arrows", str(max(1, num_arrows))])
         else:
             cmd.append("--no-trajectory-arrows")
+        if bool(st.session_state.get("isp_umap_postprocess_enabled", False)):
+            cmd.append("--enable-postprocess")
+            cmd.extend(
+                [
+                    "--postprocess-n-clusters",
+                    str(
+                        int(
+                            st.session_state.get(
+                                "isp_umap_postprocess_n_clusters",
+                                _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS,
+                            )
+                            or _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
+                        )
+                    ),
+                ]
+            )
+            if bool(
+                st.session_state.get(
+                    "isp_umap_postprocess_celltype", _DEFAULT_ISP_POSTPROCESS_CELLTYPE
+                )
+            ):
+                cmd.append("--postprocess-celltype")
+            else:
+                cmd.append("--no-postprocess-celltype")
+        else:
+            cmd.append("--skip-postprocess")
         env["ISP_UMAP_CONFIG"] = cfg
     elif run_label == RUN_TYPE_SEQUENTIAL_ISP:
         cmd = ["python3", str(CORE / "run_sequential_isp.py"), "--config", cfg]
@@ -821,6 +850,30 @@ def _build_isp_umap_yaml_from_pipeline_run(
         },
         "species": dict(cfg.get("species") or {}),
     }
+    post_block = dict(cfg.get("postprocess") or {})
+    post_enabled = bool(
+        st.session_state.get(
+            "isp_umap_postprocess_enabled",
+            post_block.get("enabled", _DEFAULT_ISP_POSTPROCESS_ENABLED),
+        )
+    )
+    post_n_clusters = int(
+        st.session_state.get(
+            "isp_umap_postprocess_n_clusters",
+            post_block.get("n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS),
+        )
+    )
+    post_celltype = bool(
+        st.session_state.get(
+            "isp_umap_postprocess_celltype",
+            post_block.get("celltype_prediction", _DEFAULT_ISP_POSTPROCESS_CELLTYPE),
+        )
+    )
+    out["postprocess"] = {
+        "enabled": post_enabled,
+        "n_clusters": max(2, post_n_clusters),
+        "celltype_prediction": post_celltype,
+    }
     return (
         yaml.dump(out, default_flow_style=False, sort_keys=False, allow_unicode=True),
         None,
@@ -891,6 +944,41 @@ def _render_isp_umap_plot_options() -> None:
         )
     else:
         st.caption("Scatter points only (no Start → Perturbed arrows).")
+
+    with st.expander("Cluster / cell-type analysis (詳細設定)", expanded=False):
+        st.caption(
+            "Optional post-UMAP outputs under `cluster_coexpr_analysis/` "
+            "(`postprocess.*`). Default **off** — enable only when you need joint "
+            "L2 / cluster / cell-type overlays."
+        )
+        st.session_state.setdefault(
+            "isp_umap_postprocess_enabled", _DEFAULT_ISP_POSTPROCESS_ENABLED
+        )
+        st.session_state.setdefault(
+            "isp_umap_postprocess_n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
+        )
+        st.session_state.setdefault(
+            "isp_umap_postprocess_celltype", _DEFAULT_ISP_POSTPROCESS_CELLTYPE
+        )
+        st.checkbox(
+            "Enable cluster_coexpr_analysis",
+            key="isp_umap_postprocess_enabled",
+            help="Write joint UMAP + L2-by-group figures (`postprocess.enabled`).",
+        )
+        if st.session_state.get("isp_umap_postprocess_enabled"):
+            st.number_input(
+                "n_clusters (KMeans)",
+                min_value=2,
+                max_value=50,
+                step=1,
+                key="isp_umap_postprocess_n_clusters",
+                help="KMeans clusters when no cluster column (`postprocess.n_clusters`).",
+            )
+            st.checkbox(
+                "Cell-type prediction (marker genes)",
+                key="isp_umap_postprocess_celltype",
+                help="Score marker tokens in start-state input_ids (`postprocess.celltype_prediction`).",
+            )
 
 
 def _render_isp_umap_source_picker() -> None:
@@ -1785,6 +1873,9 @@ def _build_patched_pipeline_yaml(
     isp_max_ncells: int | None = None,
     isp_stats_mode: str | None = None,
     isp_analysis_enabled: bool | None = None,
+    isp_postprocess_enabled: bool | None = None,
+    isp_postprocess_n_clusters: int | None = None,
+    isp_postprocess_celltype: bool | None = None,
     pert_type: str | None = None,
     pert_state_key: str | None = None,
     pert_genes_to_perturb: list[str] | None = None,
@@ -1908,6 +1999,9 @@ def _build_patched_pipeline_yaml(
         isp_max_ncells is not None
         or isp_stats_mode is not None
         or isp_analysis_enabled is not None
+        or isp_postprocess_enabled is not None
+        or isp_postprocess_n_clusters is not None
+        or isp_postprocess_celltype is not None
     ):
         stages = cfg.setdefault("stages", {})
         isp_stage = stages.setdefault("isp", {})
@@ -1917,6 +2011,18 @@ def _build_patched_pipeline_yaml(
             isp_stage.setdefault("stats", {})["mode"] = str(isp_stats_mode)
         if isp_analysis_enabled is not None:
             isp_stage.setdefault("analysis", {})["enabled"] = bool(isp_analysis_enabled)
+        if (
+            isp_postprocess_enabled is not None
+            or isp_postprocess_n_clusters is not None
+            or isp_postprocess_celltype is not None
+        ):
+            post = isp_stage.setdefault("postprocess", {})
+            if isp_postprocess_enabled is not None:
+                post["enabled"] = bool(isp_postprocess_enabled)
+            if isp_postprocess_n_clusters is not None:
+                post["n_clusters"] = int(isp_postprocess_n_clusters)
+            if isp_postprocess_celltype is not None:
+                post["celltype_prediction"] = bool(isp_postprocess_celltype)
 
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
@@ -1944,6 +2050,9 @@ def _patch_pipeline_yaml(
     isp_max_ncells: int | None = None,
     isp_stats_mode: str | None = None,
     isp_analysis_enabled: bool | None = None,
+    isp_postprocess_enabled: bool | None = None,
+    isp_postprocess_n_clusters: int | None = None,
+    isp_postprocess_celltype: bool | None = None,
     pert_type: str | None = None,
     pert_state_key: str | None = None,
     pert_genes_to_perturb: list[str] | None = None,
@@ -1974,6 +2083,9 @@ def _patch_pipeline_yaml(
         isp_max_ncells=isp_max_ncells,
         isp_stats_mode=isp_stats_mode,
         isp_analysis_enabled=isp_analysis_enabled,
+        isp_postprocess_enabled=isp_postprocess_enabled,
+        isp_postprocess_n_clusters=isp_postprocess_n_clusters,
+        isp_postprocess_celltype=isp_postprocess_celltype,
         pert_type=pert_type,
         pert_state_key=pert_state_key,
         pert_genes_to_perturb=pert_genes_to_perturb,
@@ -2131,6 +2243,13 @@ def _ft_isp_advanced_kwargs_from_session() -> dict:
         "isp_max_ncells": st.session_state.get("pipeline_isp_max_ncells"),
         "isp_stats_mode": st.session_state.get("pipeline_isp_stats_mode"),
         "isp_analysis_enabled": st.session_state.get("pipeline_isp_analysis_enabled"),
+        "isp_postprocess_enabled": st.session_state.get("pipeline_isp_postprocess_enabled"),
+        "isp_postprocess_n_clusters": st.session_state.get(
+            "pipeline_isp_postprocess_n_clusters"
+        ),
+        "isp_postprocess_celltype": st.session_state.get(
+            "pipeline_isp_postprocess_celltype"
+        ),
         "ft_task_type": st.session_state.get("pipeline_ft_task_type"),
         "ft_label_column": st.session_state.get("pipeline_ft_label_column"),
         "runtime_max_cells": st.session_state.get("pipeline_max_cells"),
@@ -2175,6 +2294,21 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
     analysis_enabled = _nested_get(
         isp_stage, "analysis", "enabled", default=_DEFAULT_ISP_ANALYSIS_ENABLED
     )
+    postprocess_enabled = _nested_get(
+        isp_stage, "postprocess", "enabled", default=_DEFAULT_ISP_POSTPROCESS_ENABLED
+    )
+    postprocess_n_clusters = _nested_get(
+        isp_stage,
+        "postprocess",
+        "n_clusters",
+        default=_DEFAULT_ISP_POSTPROCESS_N_CLUSTERS,
+    )
+    postprocess_celltype = _nested_get(
+        isp_stage,
+        "postprocess",
+        "celltype_prediction",
+        default=_DEFAULT_ISP_POSTPROCESS_CELLTYPE,
+    )
     task_type = ft_block.get("task_type", _DEFAULT_FT_TASK_TYPE)
     label_column = ft_block.get("label_column", _DEFAULT_FT_LABEL_COLUMN)
     max_cells = runtime.get("max_cells", _DEFAULT_MAX_CELLS)
@@ -2194,6 +2328,20 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
     mode = str(stats_mode) if stats_mode in _STATS_MODE_LABELS else _DEFAULT_STATS_MODE
     st.session_state.setdefault("pipeline_isp_stats_mode", mode)
     st.session_state.setdefault("pipeline_isp_analysis_enabled", bool(analysis_enabled))
+    st.session_state.setdefault(
+        "pipeline_isp_postprocess_enabled", bool(postprocess_enabled)
+    )
+    try:
+        st.session_state.setdefault(
+            "pipeline_isp_postprocess_n_clusters", int(postprocess_n_clusters)
+        )
+    except (TypeError, ValueError):
+        st.session_state.setdefault(
+            "pipeline_isp_postprocess_n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
+        )
+    st.session_state.setdefault(
+        "pipeline_isp_postprocess_celltype", bool(postprocess_celltype)
+    )
     task = str(task_type) if task_type in _FT_TASK_TYPE_LABELS else _DEFAULT_FT_TASK_TYPE
     st.session_state.setdefault("pipeline_ft_task_type", task)
     st.session_state.setdefault(
@@ -2404,6 +2552,34 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 "Fine-tune UMAP is controlled by `stages.finetune.umap.enabled`."
             )
 
+        with st.expander("Cluster / cell-type analysis (詳細設定)", expanded=False):
+            st.caption(
+                "After ISP UMAP (including E2E TOP1), optionally write "
+                "`cluster_coexpr_analysis/` (`stages.isp.postprocess.*`). Default **off**."
+            )
+            st.checkbox(
+                "Enable cluster_coexpr_analysis",
+                key="pipeline_isp_postprocess_enabled",
+                on_change=_apply_ft_isp_advanced_to_yaml,
+                help="`stages.isp.postprocess.enabled`",
+            )
+            if st.session_state.get("pipeline_isp_postprocess_enabled"):
+                st.number_input(
+                    "n_clusters (KMeans)",
+                    min_value=2,
+                    max_value=50,
+                    step=1,
+                    key="pipeline_isp_postprocess_n_clusters",
+                    on_change=_apply_ft_isp_advanced_to_yaml,
+                    help="`stages.isp.postprocess.n_clusters`",
+                )
+                st.checkbox(
+                    "Cell-type prediction (marker genes)",
+                    key="pipeline_isp_postprocess_celltype",
+                    on_change=_apply_ft_isp_advanced_to_yaml,
+                    help="`stages.isp.postprocess.celltype_prediction`",
+                )
+
     with st.expander("What do these options mean?", expanded=False):
         st.markdown(
             """
@@ -2417,6 +2593,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 | **max_ncells** | How many cells ISP uses. Lower ≈ faster; **results change**. |
 | **stats.mode** | How cosine shifts are scored. Keep **goal_state_shift** for Disease→WT. |
 | **analysis plots** | Post-stats figures (top genes barplot, volcano, etc.). |
+| **cluster_coexpr_analysis** | Optional joint UMAP + L2-by-group after ISP UMAP / E2E TOP1 (`stages.isp.postprocess`). |
 | **Trajectory UMAP** | Run type **ISP UMAP** (per-cell arrows), after E2E. E2E also runs **TOP1 ISP UMAP** automatically; Fine-tune UMAP comes from `stages.finetune.umap.enabled`. |
 """
         )

@@ -41,6 +41,81 @@ DEFAULT_UMAP_CFG: dict[str, Any] = {
     "batch_size": 100,
 }
 
+# cluster_coexpr_analysis postprocess (default OFF for v1.2.0).
+DEFAULT_POSTPROCESS_CFG: dict[str, Any] = {
+    "enabled": False,
+    "n_clusters": 4,
+    "celltype_prediction": True,
+}
+
+
+def postprocess_is_enabled(cfg: Mapping[str, Any]) -> bool:
+    """Return True when cluster_coexpr_analysis should run (explicit enabled only)."""
+    post = cfg.get("postprocess", {})
+    if post is False:
+        return False
+    if not isinstance(post, dict):
+        return False
+    return bool(post.get("enabled", False))
+
+
+def postprocess_wants_celltype(cfg: Mapping[str, Any]) -> bool:
+    """Cell-type prediction runs only when postprocess is enabled (and not disabled)."""
+    if not postprocess_is_enabled(cfg):
+        return False
+    post = cfg.get("postprocess") or {}
+    if not isinstance(post, dict):
+        return False
+    return bool(post.get("celltype_prediction", True))
+
+
+def run_downstream_plots(run_dir: Path, gene: str, cfg: Mapping[str, Any]) -> None:
+    """Generate joint overlays + L2-by-group figures under cluster_coexpr_analysis/.
+
+    Failures are logged as warnings; core UMAP outputs stay intact.
+    """
+    if not postprocess_is_enabled(cfg):
+        logger.info("postprocess.enabled is false; skipping cluster_coexpr_analysis")
+        return
+
+    post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
+    umap_cfg = cfg.get("umap") or {}
+    n_clusters = int(post.get("n_clusters", umap_cfg.get("n_clusters", 4)))
+    n_neighbors = int(umap_cfg.get("n_neighbors", DEFAULT_UMAP_CFG["n_neighbors"]))
+    min_dist = float(umap_cfg.get("min_dist", DEFAULT_UMAP_CFG["min_dist"]))
+    seed = int(umap_cfg.get("seed", DEFAULT_UMAP_CFG["seed"]))
+    num_arrows = int(umap_cfg.get("num_trajectory_arrows", DEFAULT_UMAP_CFG["num_trajectory_arrows"]))
+
+    try:
+        from plot_isp_umap_joint_overlays import run_joint_overlays
+
+        logger.info("Post-process: joint UMAP overlays ...")
+        run_joint_overlays(
+            run_dir=Path(run_dir),
+            gene=str(gene),
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            seed=seed,
+            num_trajectory_arrows=num_arrows,
+            n_clusters=n_clusters,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Post-process joint UMAP overlays failed (core UMAP outputs are intact): %s",
+            exc,
+        )
+
+    try:
+        from plot_l2_by_coarse_celltype import run_l2_by_group
+
+        logger.info("Post-process: L2 by coarse cell type ...")
+        run_l2_by_group(run_dir=Path(run_dir))
+    except Exception as exc:
+        logger.warning(
+            "Post-process L2-by-group failed (core UMAP outputs are intact): %s",
+            exc,
+        )
+
 
 def _hamilton_allocate(sizes: np.ndarray, total: int) -> np.ndarray:
     """Largest-remainder (Hamilton) allocation, never exceeding group sizes."""
@@ -343,6 +418,14 @@ def build_isp_umap_config(
     gene_list = _normalize_genes_list(genes)
     label = perturbation_display_label(gene_list, gene_labels, fallback=gene_label)
 
+    post_raw = isp_cfg.get("postprocess", {})
+    if post_raw is False:
+        postprocess = {**DEFAULT_POSTPROCESS_CFG, "enabled": False}
+    elif isinstance(post_raw, dict):
+        postprocess = {**DEFAULT_POSTPROCESS_CFG, **post_raw}
+    else:
+        postprocess = dict(DEFAULT_POSTPROCESS_CFG)
+
     return {
         "paths": {
             "dataset": paths["dataset"],
@@ -362,6 +445,7 @@ def build_isp_umap_config(
             "batch_size": int(batch_size),
         },
         "umap": umap_cfg,
+        "postprocess": postprocess,
     }
 
 
@@ -780,6 +864,20 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
         umap_coords=umap_embs,
         start_umap_offset=len(end_embs),
     )
+
+    if postprocess_wants_celltype(cfg):
+        try:
+            from isp_umap_celltype import annotate_dataframe_with_cell_types
+
+            logger.info("Predicting cell types from marker genes in start-state input_ids...")
+            per_cell_df = annotate_dataframe_with_cell_types(
+                per_cell_df, start_dataset["input_ids"]
+            )
+        except Exception:
+            logger.exception(
+                "Cell-type prediction failed; continuing without pred_cell_type/coarse_type"
+            )
+
     per_cell_path = out_dir / "per_cell_isp_shift.csv"
     per_cell_df.to_csv(per_cell_path, index=False)
     logger.info("Saved per-cell shift metrics to %s (%d cells)", per_cell_path, len(per_cell_df))
@@ -807,6 +905,8 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
         num_arrows=num_arrows,
     )
     logger.info("Saved UMAP plot to %s", out_file)
+
+    run_downstream_plots(out_dir, safe_label, cfg)
     return out_dir
 
 
@@ -935,6 +1035,39 @@ def main() -> None:
         metavar="N",
         help="Approximate number of trajectory arrows when enabled (default: config / 100).",
     )
+    parser.add_argument(
+        "--enable-postprocess",
+        dest="postprocess_enabled",
+        action="store_true",
+        default=None,
+        help="Enable cluster_coexpr_analysis after the main UMAP (overrides config).",
+    )
+    parser.add_argument(
+        "--skip-postprocess",
+        dest="postprocess_enabled",
+        action="store_false",
+        help="Skip cluster_coexpr_analysis even if postprocess.enabled is true.",
+    )
+    parser.add_argument(
+        "--postprocess-n-clusters",
+        type=int,
+        default=None,
+        metavar="N",
+        help="KMeans cluster count for cluster_coexpr_analysis (overrides config).",
+    )
+    parser.add_argument(
+        "--postprocess-celltype",
+        dest="postprocess_celltype",
+        action="store_true",
+        default=None,
+        help="Enable marker cell-type prediction when postprocess runs.",
+    )
+    parser.add_argument(
+        "--no-postprocess-celltype",
+        dest="postprocess_celltype",
+        action="store_false",
+        help="Skip marker cell-type prediction even when postprocess is enabled.",
+    )
     args = parser.parse_args()
 
     def _apply_umap_cli_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -951,6 +1084,19 @@ def main() -> None:
             umap["seed"] = int(args.umap_seed)
         cfg = dict(cfg)
         cfg["umap"] = umap
+        if (
+            args.postprocess_enabled is not None
+            or args.postprocess_n_clusters is not None
+            or args.postprocess_celltype is not None
+        ):
+            post = dict(cfg.get("postprocess") or DEFAULT_POSTPROCESS_CFG)
+            if args.postprocess_enabled is not None:
+                post["enabled"] = bool(args.postprocess_enabled)
+            if args.postprocess_n_clusters is not None:
+                post["n_clusters"] = max(2, int(args.postprocess_n_clusters))
+            if args.postprocess_celltype is not None:
+                post["celltype_prediction"] = bool(args.postprocess_celltype)
+            cfg["postprocess"] = post
         return cfg
 
     if args.run_dir is not None:
@@ -1028,6 +1174,9 @@ def main() -> None:
     if "umap" not in cfg:
         cfg = dict(cfg)
         cfg["umap"] = DEFAULT_UMAP_CFG.copy()
+    if "postprocess" not in cfg:
+        cfg = dict(cfg)
+        cfg["postprocess"] = dict(DEFAULT_POSTPROCESS_CFG)
     if "species" not in cfg:
         cfg = dict(cfg)
         cfg["species"] = {"model_organism": "mouse", "model": "mouse_geneformer"}

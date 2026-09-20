@@ -82,6 +82,7 @@ perturbation:
 #   runtime.max_cells
 #   stages.isp.isp.max_ncells / stages.isp.stats.mode
 #   stages.isp.umap.enabled / stages.isp.analysis.enabled
+#   stages.isp.postprocess.enabled (cluster_coexpr_analysis after ISP UMAP / E2E TOP1)
 stages:
   tokenize: {}
   finetune:
@@ -97,3 +98,8 @@ stages:
     # Per-cell trajectory UMAP is a separate Web UI run type (ISP UMAP), not E2E.
     umap:
       enabled: false
+    # cluster_coexpr_analysis after ISP UMAP (including E2E TOP1). Default OFF.
+    postprocess:
+      enabled: false
+      n_clusters: 4
+      celltype_prediction: true

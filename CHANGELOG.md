@@ -6,10 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
+## [1.2.0] - 2026-09-20
 
-- ISP UMAP `max_cells_per_state` now samples proportionally across `sample_id` (then shuffles) instead of taking the first N tokenized cells.
-- ISP UMAP / WebUI remap `stage_configs/isp.yaml` dataset and model paths onto the selected local `--run-dir` when cluster absolute paths (e.g. `/work/...`) are missing after sync.
+### Added
+
+- Optional ISP UMAP postprocess **`cluster_coexpr_analysis`** (default **off**): marker cell-type labels, joint UMAP overlays (L2 / KMeans cluster / cell type), and L2-by-group box/mean figures.
+- Config: `postprocess.enabled` / `n_clusters` / `celltype_prediction` in `isp_umap.yaml` and `stages.isp.postprocess` (pipeline → E2E TOP1 UMAP).
+- Web UI: **Cluster / cell-type analysis (詳細設定)** on ISP UMAP Plot options and Pipeline Advanced options.
+- CLI: `--enable-postprocess` / `--skip-postprocess` / `--postprocess-n-clusters` / `--postprocess-celltype`.
+
+### Notes
+
+- Existing 1.0 / 1.1 runs are unchanged until `postprocess.enabled` is set true.
+- Docker image / Compose default tag is `isp-platform:v1.2.0`.
 
 ## [1.1.0] - 2026-09-18
 

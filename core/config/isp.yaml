@@ -70,6 +70,13 @@ umap:
   sample_key: sample_id
   batch_size: 100
 
+# Optional ISP UMAP postprocess → cluster_coexpr_analysis/ (default OFF).
+# Also applies to E2E TOP1 UMAP via stage_configs/isp.yaml → build_isp_umap_config.
+postprocess:
+  enabled: false
+  n_clusters: 4
+  celltype_prediction: true
+
 # Provenance and reproducibility settings
 provenance:
   # Whether to compute content fingerprints of input data

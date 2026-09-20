@@ -47,3 +47,12 @@ runtime:
   num_classes: 2
   # Batch size for dataset mapping processes
   batch_size: 100
+
+# Optional post-UMAP cluster / cell-type analysis (default OFF).
+# When enabled, writes cluster_coexpr_analysis/ under the UMAP run dir:
+#   umap_joint_l2_cluster_celltype.png, l2_by_coarse_celltype.png,
+#   l2_mean_by_coarse_celltype.png, per_cell_cluster_l2_celltype.csv, joint_umap_coords.npy
+postprocess:
+  enabled: false
+  n_clusters: 4
+  celltype_prediction: true
