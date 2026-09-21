@@ -46,8 +46,8 @@ DEFAULT_POSTPROCESS_CFG: dict[str, Any] = {
     "enabled": False,
     "n_clusters": 4,
     "celltype_prediction": True,
-    # Prefer dataset metadata cell_type labels when present.
-    "prefer_metadata_celltype": True,
+    # Ignore dataset cell_type metadata by default (often user-filled / unreliable).
+    "prefer_metadata_celltype": False,
     # Rank-weight marker hits (earlier Geneformer ranks = higher expression).
     "celltype_rank_weights": True,
 }
@@ -906,7 +906,7 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
             from isp_umap_celltype import annotate_dataframe_with_cell_types
 
             post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
-            prefer_meta = bool(post.get("prefer_metadata_celltype", True))
+            prefer_meta = bool(post.get("prefer_metadata_celltype", False))
             use_rank = bool(post.get("celltype_rank_weights", True))
             logger.info(
                 "Predicting cell types from marker genes in start-state input_ids "

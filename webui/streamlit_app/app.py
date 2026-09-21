@@ -913,7 +913,7 @@ def _build_isp_umap_yaml_from_pipeline_run(
         "prefer_metadata_celltype": bool(
             post_block.get(
                 "prefer_metadata_celltype",
-                True,
+                False,
             )
         ),
         "celltype_rank_weights": bool(

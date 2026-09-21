@@ -13,7 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- ISP UMAP marker cell-type prediction is **species-aware** (mouse vs human panels matched to the Geneformer backend), with optional **rank-weighted** marker scoring and **prefer metadata `cell_type`** when present (`postprocess.prefer_metadata_celltype` / `celltype_rank_weights`).
+- ISP UMAP marker cell-type prediction is **species-aware** (mouse vs human panels matched to the Geneformer backend), with optional **rank-weighted** marker scoring (`celltype_rank_weights`). Dataset `cell_type` metadata is **ignored by default** (`prefer_metadata_celltype: false`).
 - Pipeline E2E TOP1 ISP UMAP now honors `stages.isp.postprocess.enabled` (`--enable-postprocess`).
 
 ## [1.2.0] - 2026-09-20

@@ -34,7 +34,7 @@ Key configurations to note:
 | `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
 | `postprocess.n_clusters` | KMeans clusters when no `cluster` column. Integer (>=2) or `auto` (silhouette over k=2..15; default `4`). |
 | `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
-| `postprocess.prefer_metadata_celltype` | Prefer dataset `cell_type` (etc.) over markers when present (default `true`). |
+| `postprocess.prefer_metadata_celltype` | Prefer dataset `cell_type` over markers (default **`false`** — metadata is often user-filled). |
 | `postprocess.celltype_rank_weights` | Rank-weight marker hits (earlier Geneformer ranks = higher expression; default `true`). |
 
 ### Gene Symbol Auto-Detection
@@ -66,7 +66,7 @@ python3 core/run_isp_umap.py --run-dir /app/output/.../pipeline_... \
 
 After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis**, or `--enable-postprocess`.
 
-1. **Cell-type prediction** — species-aware marker panels (mouse / human, matched to the Geneformer backend) scored on start-state `input_ids` → `pred_cell_type` / `coarse_type` / `celltype_plot`. When the tokenized dataset already has `cell_type` (or similar) metadata and `prefer_metadata_celltype: true`, those labels win. Rank weighting prefers markers that appear early in the Geneformer rank list.
+1. **Cell-type prediction** — species-aware marker panels (mouse / human, matched to the Geneformer backend) scored on start-state `input_ids` → `pred_cell_type` / `coarse_type` / `celltype_plot`. Dataset `cell_type` metadata is **ignored by default** (`prefer_metadata_celltype: false`); set it true only for trusted annotations. Rank weighting prefers markers that appear early in the Geneformer rank list.
 2. **Joint UMAP overlays** — `umap_joint_l2_cluster_celltype.png` (+ enriched CSV, `joint_umap_coords.npy`).
 3. **L2 by group** — `l2_by_coarse_celltype.png` and `l2_mean_by_coarse_celltype.png`.
 4. **Cell-type trajectory tracking** — `umap_celltype_trajectories.png` (arrows + mean displacement vectors colored by cell type), `celltype_shift_summary.csv`, and `l2_mean_by_pred_celltype.png`.
@@ -82,7 +82,7 @@ Marker panels live in [`core/isp_umap_celltype.py`](../core/isp_umap_celltype.py
 | `mouse_geneformer` | Mouse brain markers (title-case symbols, e.g. `Cx3cr1`) |
 | `human_geneformer` | Human HGNC orthologs (uppercase, e.g. `CX3CR1`) |
 
-Because tokenization remaps genes into the **model** vocabulary, panels are chosen by the model-native organism—not the input species. Cross-species runs (e.g. mouse data → human Geneformer) therefore use the human panel against human token IDs. Unresolved symbols additionally try `resolve_gene_for_model` (ortholog path). When external annotations are already in the dataset, set `prefer_metadata_celltype: true` (default) to use them for trajectory / L2 grouping.
+Because tokenization remaps genes into the **model** vocabulary, panels are chosen by the model-native organism—not the input species. Cross-species runs (e.g. mouse data → human Geneformer) therefore use the human panel against human token IDs. Unresolved symbols additionally try `resolve_gene_for_model` (ortholog path). Trusted external labels can be opted in with `prefer_metadata_celltype: true` (default off).
 
 ## Outputs
 

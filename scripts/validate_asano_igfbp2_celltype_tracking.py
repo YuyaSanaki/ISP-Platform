@@ -288,7 +288,7 @@ def _write_pipeline_yaml(
                     "enabled": True,
                     "n_clusters": 4,
                     "celltype_prediction": True,
-                    "prefer_metadata_celltype": True,
+                    "prefer_metadata_celltype": False,
                     "celltype_rank_weights": True,
                 },
             },

@@ -472,14 +472,15 @@ def predict_cell_types_from_input_ids(
 def apply_metadata_cell_types(
     df: pd.DataFrame,
     *,
-    prefer_metadata: bool = True,
+    prefer_metadata: bool = False,
     metadata_columns: Sequence[str] = METADATA_CELLTYPE_COLUMNS,
 ) -> pd.DataFrame:
-    """When a metadata cell-type column exists, prefer it over marker predictions.
+    """Optionally overwrite marker predictions with a metadata cell-type column.
 
-    Writes ``celltype_plot`` (always) and, when preferred, overwrites
-    ``pred_cell_type`` / ``coarse_type`` for non-empty metadata labels while
-    recording ``celltype_source`` as ``metadata`` or ``markers``.
+    Default is **off** — dataset ``cell_type`` is often user-filled and unreliable.
+    When ``prefer_metadata=True``, non-empty metadata labels overwrite
+    ``pred_cell_type`` / ``coarse_type`` and set ``celltype_source=metadata``.
+    Always writes ``celltype_plot``.
     """
     out = df.copy()
     meta_col = next((c for c in metadata_columns if c in out.columns), None)
@@ -533,7 +534,7 @@ def annotate_dataframe_with_cell_types(
     species: Mapping[str, Any] | None = None,
     organism: str | None = None,
     use_rank_weights: bool = True,
-    prefer_metadata: bool = True,
+    prefer_metadata: bool = False,
     min_score: float = 0.25,
     min_margin: float = 0.05,
     min_markers_hit: int = 1,

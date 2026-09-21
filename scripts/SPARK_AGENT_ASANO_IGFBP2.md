@@ -132,7 +132,7 @@ Expected under each `--output-dir/cluster_coexpr_analysis/`:
 postprocess:
   enabled: true
   celltype_prediction: true
-  prefer_metadata_celltype: true   # use dataset cell_type if present
+  prefer_metadata_celltype: false  # ignore user-filled cell_type metadata
   celltype_rank_weights: true      # rank-weighted marker scores
 ```
 
