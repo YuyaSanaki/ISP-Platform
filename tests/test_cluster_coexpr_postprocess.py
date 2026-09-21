@@ -97,27 +97,27 @@ def test_build_isp_umap_config_postprocess_default_off():
 
 def test_run_downstream_plots_skips_when_disabled(tmp_path):
     joint_mod = MagicMock()
-    l2_mod = MagicMock()
+    traj_mod = MagicMock()
     with patch.dict(
         sys.modules,
         {
             "plot_isp_umap_joint_overlays": joint_mod,
-            "plot_l2_by_coarse_celltype": l2_mod,
+            "plot_isp_umap_celltype_trajectories": traj_mod,
         },
     ):
         run_downstream_plots(tmp_path, "Igfbp2", {"postprocess": {"enabled": False}})
         joint_mod.run_joint_overlays.assert_not_called()
-        l2_mod.run_l2_by_group.assert_not_called()
+        traj_mod.run_celltype_trajectory_plots.assert_not_called()
 
 
 def test_run_downstream_plots_calls_when_enabled(tmp_path):
     joint_mod = MagicMock()
-    l2_mod = MagicMock()
+    traj_mod = MagicMock()
     with patch.dict(
         sys.modules,
         {
             "plot_isp_umap_joint_overlays": joint_mod,
-            "plot_l2_by_coarse_celltype": l2_mod,
+            "plot_isp_umap_celltype_trajectories": traj_mod,
         },
     ):
         run_downstream_plots(
@@ -138,17 +138,17 @@ def test_run_downstream_plots_calls_when_enabled(tmp_path):
         assert kwargs["gene"] == "Igfbp2"
         assert kwargs["n_clusters"] == 3
         assert kwargs["n_neighbors"] == 10
-        l2_mod.run_l2_by_group.assert_called_once()
+        traj_mod.run_celltype_trajectory_plots.assert_called_once()
 
 
 def test_run_downstream_plots_passes_auto_n_clusters(tmp_path):
     joint_mod = MagicMock()
-    l2_mod = MagicMock()
+    traj_mod = MagicMock()
     with patch.dict(
         sys.modules,
         {
             "plot_isp_umap_joint_overlays": joint_mod,
-            "plot_l2_by_coarse_celltype": l2_mod,
+            "plot_isp_umap_celltype_trajectories": traj_mod,
         },
     ):
         run_downstream_plots(
@@ -188,22 +188,26 @@ def test_resolve_n_clusters_auto_picks_true_k():
             sys.modules["torch"] = torch_stub
 
 
-def test_celltype_scoring_with_mock_dicts():
-    name_id = {"Acta2": "ENS1", "Myh11": "ENS2", "Tagln": "ENS3", "Cx3cr1": "ENS10"}
-    token_dict = {"ENS1": 101, "ENS2": 102, "ENS3": 103, "ENS10": 110}
-    markers = {"Vascular_SMC": ["Acta2", "Myh11", "Tagln"], "Microglia": ["Cx3cr1"]}
-    ids = [[101, 102, 103, 999], [110, 999]]
-    pred = predict_cell_types_from_input_ids(
-        ids, markers=markers, token_dict=token_dict, name_id=name_id
-    )
-    assert len(pred) == 2
-    assert pred.loc[0, "pred_cell_type"] == "Vascular_SMC"
-    assert pred.loc[0, "score_Vascular_SMC"] == 1.0
-    assert "coarse_type" in pred.columns
+def test_celltype_preisp_only_no_token_markers():
+    import pytest
 
-    base = pd.DataFrame({"cell_index": [0, 1], "shift_l2": [1.0, 0.5]})
-    annotated = annotate_dataframe_with_cell_types(
-        base, ids, markers=markers, token_dict=token_dict, name_id=name_id
+    with pytest.raises(RuntimeError, match="brain cell-type panels were removed"):
+        predict_cell_types_from_input_ids([[1, 2]])
+
+    # Without platform annotator → Unknown
+    base = pd.DataFrame(
+        {
+            "cell_index": [0, 1],
+            "shift_l2": [1.0, 0.5],
+            "cell_type": ["Neuron", "Astrocyte"],
+        }
     )
-    assert "pred_cell_type" in annotated.columns
-    assert list(annotated["cell_index"]) == [0, 1]
+    annotated = annotate_dataframe_with_cell_types(base, prefer_metadata="auto")
+    assert list(annotated["pred_cell_type"]) == ["Unknown", "Unknown"]
+    assert list(annotated["celltype_source"]) == ["none", "none"]
+
+    # With isp_expression_v1 → platform labels
+    base["celltype_annotator"] = "isp_expression_v1"
+    annotated = annotate_dataframe_with_cell_types(base, prefer_metadata="auto")
+    assert list(annotated["pred_cell_type"]) == ["Neuron", "Astrocyte"]
+    assert list(annotated["celltype_source"]) == ["platform", "platform"]

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Plot L2 / toward-end L2 shift by coarse cell program (or fallback group).
+"""Plot L2 / toward-end L2 shift by predicted cell type (or fallback group).
 
-Writes under ``<run-dir>/cluster_coexpr_analysis/``:
+Legacy helper kept for ad-hoc CLI use. The ISP UMAP postprocess pipeline no longer
+writes coarse L2 figures; prefer ``plot_isp_umap_celltype_trajectories`` /
+``l2_mean_by_pred_celltype.png`` (mean L2 descending, detected types only).
+
+Writes under ``<run-dir>/cluster_coexpr_analysis/`` when invoked manually:
   l2_by_coarse_celltype.png
   l2_mean_by_coarse_celltype.png
 """
@@ -21,12 +25,10 @@ _CORE = Path(__file__).resolve().parent
 if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
-from isp_umap_postprocess_style import order_for_groups, palette_for_groups  # noqa: E402
+from isp_umap_postprocess_style import is_detected_pred_label, order_for_groups, palette_for_groups  # noqa: E402
 
 GROUP_CANDIDATES = (
-    "coarse_type",
     "pred_cell_type",
-    "pred_cell_type_v2",
     "celltype_plot",
     "cell_type",
     "cluster",
@@ -108,7 +110,15 @@ def run_l2_by_group(
     print(f"Group by: {resolved_group}")
 
     plot_df = df.copy()
-    raw_labels = plot_df[resolved_group]
+    raw_labels = plot_df[resolved_group].astype(str)
+    keep = raw_labels.map(is_detected_pred_label)
+    plot_df = plot_df.loc[keep].copy()
+    raw_labels = raw_labels[keep]
+    if raw_labels.empty:
+        raise ValueError(
+            f"No detected cell types in {resolved_group!r} "
+            "(all Unknown/Ambiguous or empty)."
+        )
     plot_df["coarse_type"] = raw_labels.astype(str)
 
     dest = out_dir or annot_path.parent
@@ -117,12 +127,14 @@ def run_l2_by_group(
     dest.mkdir(parents=True, exist_ok=True)
 
     pal = palette_for_groups(raw_labels, resolved_group)
-    order = order_for_groups(raw_labels, resolved_group)
+    order = order_for_groups(
+        raw_labels,
+        resolved_group,
+        shift_l2=plot_df["shift_l2"],
+    )
     order = [o for o in order if o in set(plot_df["coarse_type"])]
 
-    group_label = (
-        "coarse cell program" if resolved_group == "coarse_type" else resolved_group.replace("_", " ")
-    )
+    group_label = resolved_group.replace("_", " ")
 
     sns.set_theme(style="whitegrid", context="talk")
 

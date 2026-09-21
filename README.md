@@ -7,7 +7,7 @@
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.2.0 · Docker image `isp-platform:v1.2.0`
+**Release:** v1.3.0 · Docker image `isp-platform:v1.3.0`
 
 
 Run tokenize, fine-tune, ISP, UMAP, and sequential multi-gene ISP (ordered perturbations, e.g. to mimic iPSC reprogramming steps) from the **CLI** or **Web UI**, both on Docker Compose and Streamlit.
@@ -216,28 +216,9 @@ Fine-tune `train_batch_size` changes the number of optimizer steps per epoch and
 
 More detail: [docs/web-ui.md](docs/web-ui.md).
 
-## ISP UMAP (quick)
-
-Per-cell ISP trajectories on UMAP (start → perturbed arrows). Gene-level ISP ranking is separate; this plots how each cell moves.
-
-**Web UI:** after a Pipeline (E2E) finishes, set Run type to **ISP UMAP** → pick that pipeline folder → choose gene(s) → **Run job**. Outputs land under `{pipeline_run}/isp_umap/` (`umap_*.png`, `per_cell_isp_shift.csv`).
-
-**CLI** — edit [`core/config/isp_umap.yaml`](core/config/isp_umap.yaml) (`paths`, `genes_to_perturb`, `start_state` / `end_state`), then:
-
-```bash
-docker compose run --rm isp_umap
-```
-
-Or reuse a finished Pipeline run (recommended):
-
-```bash
-docker compose run --rm isp_umap \
-  python3 /app/core/run_isp_umap.py --run-dir /app/output/YYYYMMDD/pipeline_… --gene Igfbp2
-```
-
-Details: [docs/isp_umap.md](docs/isp_umap.md).
-
 ## Usage
+
+
 
 #### Users choose:
 

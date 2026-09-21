@@ -235,7 +235,13 @@ def _load_or_build_annot(
 
 
 def _celltype_column(df: pd.DataFrame) -> str:
-    for col in ("coarse_type", "pred_cell_type", "pred_cell_type_v2", "cell_type", "celltype_plot"):
+    for col in (
+        "pred_cell_type",
+        "celltype_plot",
+        "cell_type",
+        "coarse_type",
+        "pred_cell_type_v2",
+    ):
         if col in df.columns:
             return col
     if "sample_id" in df.columns:

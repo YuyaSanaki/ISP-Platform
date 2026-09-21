@@ -238,6 +238,10 @@ def resolve_single_cell_input_dir(
 
     Use `/data/ExperimentName/` for one experiment, or `/data/` for many.
     If you point at a single sample folder, returns its ExperimentName parent.
+
+    When ``input_dir`` already contains 10x sample folders as direct children
+    (including symlink children such as a PIPseq-only view), keep that directory
+    and do **not** climb to a symlink-target parent via ``_common_parent``.
     """
     root = Path(input_dir).resolve()
     loom = Path(loom_temp_dir).resolve() if loom_temp_dir else None
@@ -247,6 +251,11 @@ def resolve_single_cell_input_dir(
         return root
 
     if len(samples) == 1 and samples[0].resolve() == root:
+        return root
+
+    # Symlink-safe: PIPseq/ with children -> ../full_study/Sample must stay PIPseq/.
+    direct = [c for c in _child_dirs(root, loom) if is_10x_mtx_dir(c)]
+    if direct:
         return root
 
     return _common_parent(samples)

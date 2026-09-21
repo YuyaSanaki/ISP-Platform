@@ -50,10 +50,14 @@ runtime:
 
 # Optional post-UMAP cluster / cell-type analysis (default OFF).
 # When enabled, writes cluster_coexpr_analysis/ under the UMAP run dir:
-#   umap_joint_l2_cluster_celltype.png, l2_by_coarse_celltype.png,
-#   l2_mean_by_coarse_celltype.png, per_cell_cluster_l2_celltype.csv, joint_umap_coords.npy
+#   umap_joint_l2_cluster_celltype.png, umap_celltype_trajectories.png,
+#   l2_mean_by_pred_celltype.png (mean L2 desc; n>=2, no Ambiguous),
+#   per_cell_cluster_l2_celltype.csv, joint_umap_coords.npy
 postprocess:
   enabled: false
   # Integer (>=2) or "auto" (silhouette over k=2..15 on start embeddings).
   n_clusters: 4
   celltype_prediction: true
+  # Pre-ISP only: auto = isp_expression* labels from tokenize (brain token panels removed).
+  prefer_metadata_celltype: auto
+  # Also writes umap_celltype_trajectories.png + celltype_shift_summary.csv

@@ -41,11 +41,13 @@ DEFAULT_UMAP_CFG: dict[str, Any] = {
     "batch_size": 100,
 }
 
-# cluster_coexpr_analysis postprocess (default OFF for v1.2.0).
+# cluster_coexpr_analysis postprocess (default OFF for v1.3.0).
 DEFAULT_POSTPROCESS_CFG: dict[str, Any] = {
     "enabled": False,
     "n_clusters": 4,
     "celltype_prediction": True,
+    # Pre-ISP only (isp_expression*): auto|platform|true. Brain token markers removed.
+    "prefer_metadata_celltype": "auto",
 }
 
 
@@ -123,13 +125,17 @@ def run_downstream_plots(run_dir: Path, gene: str, cfg: Mapping[str, Any]) -> No
         )
 
     try:
-        from plot_l2_by_coarse_celltype import run_l2_by_group
+        from plot_isp_umap_celltype_trajectories import run_celltype_trajectory_plots
 
-        logger.info("Post-process: L2 by coarse cell type ...")
-        run_l2_by_group(run_dir=Path(run_dir))
+        logger.info("Post-process: cell-type trajectory tracking (pred L2) ...")
+        run_celltype_trajectory_plots(
+            run_dir=Path(run_dir),
+            num_trajectory_arrows=num_arrows,
+            seed=seed,
+        )
     except Exception as exc:
         logger.warning(
-            "Post-process L2-by-group failed (core UMAP outputs are intact): %s",
+            "Post-process cell-type trajectories failed (core UMAP outputs are intact): %s",
             exc,
         )
 
@@ -886,13 +892,20 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
         try:
             from isp_umap_celltype import annotate_dataframe_with_cell_types
 
-            logger.info("Predicting cell types from marker genes in start-state input_ids...")
+            post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
+            prefer_meta = post.get("prefer_metadata_celltype", "auto")
+            logger.info(
+                "Applying pre-ISP cell types from dataset metadata "
+                "(prefer_metadata=%s; token-rank brain panels disabled)...",
+                prefer_meta,
+            )
             per_cell_df = annotate_dataframe_with_cell_types(
-                per_cell_df, start_dataset["input_ids"]
+                per_cell_df,
+                prefer_metadata=prefer_meta,
             )
         except Exception:
             logger.exception(
-                "Cell-type prediction failed; continuing without pred_cell_type/coarse_type"
+                "Pre-ISP cell-type labeling failed; continuing without pred_cell_type"
             )
 
     per_cell_path = out_dir / "per_cell_isp_shift.csv"

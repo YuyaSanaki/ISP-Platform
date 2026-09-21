@@ -34,6 +34,10 @@ Key configurations to note:
 | `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
 | `postprocess.n_clusters` | KMeans clusters when no `cluster` column. Integer (>=2) or `auto` (silhouette over k=2..15; default `4`). |
 | `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
+| `postprocess.prefer_metadata_celltype` | `auto` (default): use pre-ISP platform `cell_type` when `celltype_annotator` is `isp_expression*`; `true`: trust any dataset `cell_type`; `false`: marker scoring only. |
+| `postprocess.celltype_rank_weights` | Rank-weight marker hits (earlier Geneformer ranks = higher expression; default `true`). |
+| `postprocess.celltype_negative_markers` | Subtract negative-marker scores to sharpen boundaries (default `true`). |
+| `postprocess.celltype_negative_weight` | Penalty weight for negatives (default `0.55`). |
 
 ### Gene Symbol Auto-Detection
 
@@ -64,11 +68,19 @@ python3 core/run_isp_umap.py --run-dir /app/output/.../pipeline_... \
 
 After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis**, or `--enable-postprocess`.
 
-1. **Cell-type prediction** — marker scores on start-state `input_ids` → `pred_cell_type` / `coarse_type` (when `celltype_prediction: true`).
+1. **Cell-type prediction** — when postprocess cell-type is on, **pre-ISP platform labels** (`cell_type` written at tokenize with `celltype_annotator=isp_expression_v1`) are used (`prefer_metadata_celltype: auto`). Brain token-rank marker panels were removed in v1.3.0; without platform labels cells stay `Unknown`. Raw user-filled `cell_type` without platform provenance is still ignored unless `prefer_metadata_celltype: true`.
 2. **Joint UMAP overlays** — `umap_joint_l2_cluster_celltype.png` (+ enriched CSV, `joint_umap_coords.npy`).
-3. **L2 by group** — `l2_by_coarse_celltype.png` and `l2_mean_by_coarse_celltype.png`.
+3. **Cell-type trajectory tracking** — `umap_celltype_trajectories.png` (arrows + mean displacement vectors colored by predicted cell type), `celltype_shift_summary.csv`, and `l2_mean_by_pred_celltype.png` (bars ordered by mean `shift_l2` descending; Unknown/Ambiguous omitted; types with fewer than 2 cells omitted so singleton false calls like Neuron do not appear). Coarse L2 figures are no longer written.
 
 Failures in postprocess are logged as warnings; core UMAP outputs stay intact.
+
+### Cell-type classification (pre-ISP)
+
+Token-rank brain marker panels were removed in v1.3.0. Cell types come from **pre-ISP expression annotation** only:
+
+- tokenize (`tokenizer.celltype_annotation`, default on) scores the curated whole-body panel [`isp_expression_v1.json`](../core/geneformer/dicts/celltype_panels/isp_expression_v1.json) on the count matrix before loom write (`core/celltype_annotate_expression.py`).
+- Labels (`cell_type`, `tissue`, `celltype_score`, `celltype_annotator=isp_expression_v1`) propagate into the HF dataset.
+- ISP UMAP postprocess with `prefer_metadata_celltype: auto` (default) uses that platform metadata. Set `true` for any trusted external `cell_type`; without platform labels cells stay `Unknown`.
 
 ## Outputs
 
@@ -79,7 +91,7 @@ All generated assets are safely routed to the `output/[DATE]/isp_umap_[UTC TIME]
 | **`per_cell_isp_shift.csv`** | **Essential:** per-cell perturbation magnitude and direction (see below) |
 | `umap_*.png` | Visual summary (white L-axes, Fig.2 endpoint style); arrows = same cells as `umap_shift_l2` in the CSV |
 | `*_embs.npy` | Raw embedding matrices for custom downstream analysis |
-| `cluster_coexpr_analysis/*` | Optional (when `postprocess.enabled`): joint overlays, L2-by-group plots, enriched CSV |
+| `cluster_coexpr_analysis/*` | Optional (when `postprocess.enabled`): joint overlays, pred L2 mean bars, **cell-type trajectories**, enriched CSV |
 
 ### 1. UMAP Figure (`umap_*.png`)
 A matplotlib scatter (Fig.2 endpoint style: **white background**, no grid, L-shaped **UMAP-1 / UMAP-2** axes) comparing:
@@ -103,7 +115,7 @@ One row per **start-state** cell (e.g. each `Disease` cell in the run), with how
 | `umap1_after` / `umap2_after` | UMAP position after perturbation |
 | `umap_shift_l2` | L2 distance between before/after positions in UMAP space (matches the grey arrows on the plot) |
 
-Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `disease`) are included so you can join cell-type labels later after classification.
+Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `disease`, and platform `cell_type` / `celltype_annotator` when tokenize annotation ran) are included in the CSV. When postprocess cell-type is on, those platform labels are used (`prefer_metadata_celltype: auto`).
 
 ## Troubleshooting
 

@@ -36,7 +36,7 @@ from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_
 from run_provenance import write_service_provenance, update_service_provenance
 
 
-def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg) -> int:
+def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg, species=None) -> int:
     """Convert subdirectories of (barcodes/features/matrix) to .loom files. Returns loom count."""
     os.makedirs(loom_temp_dir, exist_ok=True)
     input_path = Path(input_dir).resolve()
@@ -54,6 +54,8 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
         print(diagnose_input_dir(input_path, loom_path))
         return 0
 
+    from celltype_annotate_expression import apply_pre_isp_celltype_annotation
+
     converted = 0
     for sample_dir in sample_dirs:
         sample_path = Path(sample_dir)
@@ -68,12 +70,14 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
         print(f"Converting {folder_name} → {loom_stem}.loom (from {mtx_path})...")
         try:
             # Read mtx and set Ensembl IDs
-            adata = sc.read_10x_mtx(mtx_path, var_names='gene_ids', make_unique=True)
+            adata = sc.read_10x_mtx(mtx_path, var_names="gene_ids", make_unique=True)
             # Strip version numbers from Ensembl IDs (e.g., ENSMUSG00000102693.2 -> ENSMUSG00000102693)
             adata.var["ensembl_id"] = [
                 normalize_gene_id(x) for x in adata.var_names.astype(str)
             ]
-            adata.obs['n_counts'] = adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
+            adata.obs["n_counts"] = (
+                adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
+            )
 
             if settings.get("extract_metadata_from_path"):
                 meta = parse_sample_folder_name(folder_name)
@@ -85,10 +89,12 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
             elif tokenizer_cfg.get("custom_attr_name_dict"):
                 adata.obs["sample_id"] = folder_name
 
+            apply_pre_isp_celltype_annotation(adata, tokenizer_cfg, species=species)
+
             if tokenizer_cfg.get("custom_attr_name_dict"):
-                for attr in tokenizer_cfg["custom_attr_name_dict"].keys():
-                    if attr not in adata.obs.columns:
-                        adata.obs[attr] = ""
+                for attr_name in tokenizer_cfg["custom_attr_name_dict"].keys():
+                    if attr_name not in adata.obs.columns:
+                        adata.obs[attr_name] = ""
 
             if "sample_id" not in adata.obs.columns:
                 adata.obs["sample_id"] = folder_name
@@ -252,6 +258,7 @@ def main():
             data_cfg['loom_temp_dir'],
             single_cell_settings,
             tokenizer_cfg,
+            species=species,
         )
         loom_dir = Path(data_cfg['loom_temp_dir'])
         n_looms = len(list(loom_dir.glob("*.loom")))

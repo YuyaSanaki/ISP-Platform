@@ -33,7 +33,7 @@ x-geneformer-env: &geneformer-env
   GENEFORMER_IMAGE_ASSETS: ${GENEFORMER_IMAGE_ASSETS:-/opt/geneformer-assets}
 
 x-geneformer-base: &geneformer-base
-  image: ${ISP_PLATFORM_IMAGE:-isp-platform:v1.2.0}
+  image: ${ISP_PLATFORM_IMAGE:-isp-platform:v1.3.0}
   user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
   volumes:
     - .:/app
