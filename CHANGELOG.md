@@ -11,7 +11,7 @@ Work in progress on branch `cursor/pre-isp-celltype-annotation-d63e` (and relate
 ### Added
 
 - **Pre-ISP expression-matrix cell-type annotation** at tokenize (`tokenizer.celltype_annotation`, default **on**):
-  - Scores curated whole-body marker panels on the count matrix (`scanpy.tl.score_genes`).
+  - Scores curated whole-body marker panels on the count matrix (`scanpy.tl.score_genes`, with a mean-difference fallback on tiny matrices).
   - Writes `cell_type`, `tissue`, `celltype_score`, `celltype_annotator=isp_expression_v1` onto loom → HF dataset.
   - Implementation: [`core/celltype_annotate_expression.py`](core/celltype_annotate_expression.py), panel [`core/geneformer/dicts/celltype_panels/isp_expression_v1.json`](core/geneformer/dicts/celltype_panels/isp_expression_v1.json).
 - ISP UMAP postprocess **cell-type trajectory tracking**: `umap_celltype_trajectories.png`, `celltype_shift_summary.csv`, `l2_mean_by_pred_celltype.png`.

@@ -99,6 +99,42 @@ def _prepare_scoring_adata(adata: ad.AnnData) -> ad.AnnData:
     return scor
 
 
+def _simple_marker_score(scor: ad.AnnData, resolved: list[str], col: str) -> None:
+    """Mean marker expression minus mean of remaining genes (log-normalized copy)."""
+    X = scor[:, resolved].X
+    if hasattr(X, "toarray"):
+        X = X.toarray()
+    marker_mean = np.asarray(X, dtype=float).mean(axis=1)
+    rest = [g for g in scor.var_names.astype(str) if g not in set(resolved)]
+    if rest:
+        R = scor[:, rest].X
+        if hasattr(R, "toarray"):
+            R = R.toarray()
+        rest_mean = np.asarray(R, dtype=float).mean(axis=1)
+    else:
+        rest_mean = np.zeros(scor.n_obs, dtype=float)
+    scor.obs[col] = marker_mean - rest_mean
+
+
+def _score_gene_list(scor: ad.AnnData, resolved: list[str], col: str) -> None:
+    """``score_genes`` with fallbacks for tiny matrices (no control-gene bins)."""
+    import scanpy as sc
+
+    ctrl_size = max(1, min(50, int(scor.n_vars) - len(resolved)))
+    attempts = (
+        dict(use_raw=False, ctrl_size=ctrl_size),
+        dict(use_raw=False, ctrl_as_ref=False, ctrl_size=ctrl_size),
+    )
+    for kwargs in attempts:
+        try:
+            sc.tl.score_genes(scor, gene_list=resolved, score_name=col, **kwargs)
+            return
+        except (RuntimeError, ValueError, TypeError) as exc:
+            logger.info("score_genes failed for %s (%s); trying fallback", col, exc)
+    logger.info("Using mean-difference fallback for %s", col)
+    _simple_marker_score(scor, resolved, col)
+
+
 def annotate_adata_cell_types(
     adata: ad.AnnData,
     *,
@@ -116,8 +152,6 @@ def annotate_adata_cell_types(
     """
     if not enabled:
         return adata
-
-    import scanpy as sc
 
     panel = load_panel(panel_path)
     org = (organism or "mouse").strip().lower()
@@ -148,7 +182,7 @@ def annotate_adata_cell_types(
             )
             scor.obs[col] = 0.0
         else:
-            sc.tl.score_genes(scor, gene_list=resolved, score_name=col, use_raw=False)
+            _score_gene_list(scor, resolved, col)
         score_cols.append(col)
 
     if not score_cols:
@@ -227,3 +261,44 @@ def is_platform_celltype_annotation(series: pd.Series | None) -> bool:
         return False
     s = series.astype(str)
     return bool(s.str.startswith("isp_expression").fillna(False).any())
+
+
+def organism_from_species(species: Mapping[str, Any] | str | None) -> str:
+    """Pick mouse/human from a species config mapping or string."""
+    if isinstance(species, Mapping):
+        return str(species.get("model_organism") or "mouse")
+    if isinstance(species, str) and species.strip():
+        return species.strip()
+    return "mouse"
+
+
+def ensure_annotation_attrs(tokenizer_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    """Guarantee platform annotation columns are listed in custom_attr_name_dict."""
+    cfg = tokenizer_cfg if isinstance(tokenizer_cfg, dict) else {}
+    attr = dict(cfg.get("custom_attr_name_dict") or {})
+    for col in ANNOTATION_OBS_COLUMNS:
+        attr.setdefault(col, col)
+    cfg["custom_attr_name_dict"] = attr
+    return cfg
+
+
+def apply_pre_isp_celltype_annotation(
+    adata: ad.AnnData,
+    tokenizer_cfg: Mapping[str, Any] | None,
+    species: Mapping[str, Any] | str | None = None,
+) -> ad.AnnData:
+    """Annotate ``adata`` when ``tokenizer.celltype_annotation`` is enabled."""
+    cfg = tokenizer_cfg if isinstance(tokenizer_cfg, dict) else {}
+    ensure_annotation_attrs(cfg)
+    ct_ann = annotation_config_from_tokenizer(cfg)
+    if not ct_ann.get("enabled", True):
+        return adata
+    return annotate_adata_cell_types(
+        adata,
+        organism=organism_from_species(species),
+        panel_path=ct_ann.get("panel"),
+        enabled=True,
+        min_score=ct_ann.get("min_score"),
+        min_margin=ct_ann.get("min_margin"),
+        inplace=True,
+    )
