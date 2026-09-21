@@ -223,7 +223,7 @@ Under **Advanced options** (collapsed by default):
 | Cluster / cell-type analysis      | `stages.isp.postprocess.enabled` (+ `n_clusters`, `celltype_prediction`; default **off**) |
 
 
-**Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. Optional expander **Cluster / cell-type analysis (詳細設定)** enables `cluster_coexpr_analysis/` after the UMAP. The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
+**Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. Optional expander **Cluster / cell-type analysis** enables `cluster_coexpr_analysis/` after the UMAP (`n_clusters` can be a fixed K or `auto`). The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
 
 **Sequential ISP** (OE then KD, or any ordered chain): use Run type **Sequential ISP**. Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Writes under `{pipeline_run}/sequential_isp/`. See [sequential_isp.md](sequential_isp.md).
 

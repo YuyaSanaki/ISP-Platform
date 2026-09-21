@@ -54,5 +54,6 @@ runtime:
 #   l2_mean_by_coarse_celltype.png, per_cell_cluster_l2_celltype.csv, joint_umap_coords.npy
 postprocess:
   enabled: false
+  # Integer (>=2) or "auto" (silhouette over k=2..15 on start embeddings).
   n_clusters: 4
   celltype_prediction: true

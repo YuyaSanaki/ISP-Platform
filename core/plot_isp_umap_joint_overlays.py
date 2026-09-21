@@ -25,6 +25,85 @@ if str(_CORE) not in sys.path:
 
 from isp_umap_postprocess_style import palette_for_groups  # noqa: E402
 
+# Silhouette search bounds when n_clusters="auto".
+_AUTO_K_MIN = 2
+_AUTO_K_MAX = 15
+_AUTO_SILHOUETTE_MAX_SAMPLES = 2000
+
+
+def resolve_n_clusters(
+    n_clusters: int | str,
+    X: np.ndarray,
+    *,
+    seed: int = 42,
+    k_min: int = _AUTO_K_MIN,
+    k_max: int = _AUTO_K_MAX,
+) -> int:
+    """Return an integer KMeans ``n_clusters``.
+
+    ``n_clusters`` may be an int (>=2) or ``\"auto\"``. Auto picks the K in
+    ``[k_min, k_max]`` that maximises silhouette score on (optionally subsampled)
+    rows of ``X``.
+    """
+    if isinstance(n_clusters, str) and n_clusters.strip().lower() == "auto":
+        return _auto_n_clusters(X, seed=seed, k_min=k_min, k_max=k_max)
+    try:
+        k = int(n_clusters)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"n_clusters must be an int >= 2 or 'auto' (got {n_clusters!r})"
+        ) from exc
+    if k < 2:
+        raise ValueError(f"n_clusters must be >= 2 (got {k})")
+    return k
+
+
+def _auto_n_clusters(
+    X: np.ndarray,
+    *,
+    seed: int = 42,
+    k_min: int = _AUTO_K_MIN,
+    k_max: int = _AUTO_K_MAX,
+) -> int:
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+
+    n_samples = int(X.shape[0])
+    if n_samples < 3:
+        print(f"auto n_clusters: n_samples={n_samples} < 3; using k=2")
+        return 2
+
+    upper = min(int(k_max), n_samples - 1)
+    lower = min(int(k_min), upper)
+    if upper < lower:
+        return max(2, upper)
+
+    rng = np.random.default_rng(seed)
+    if n_samples > _AUTO_SILHOUETTE_MAX_SAMPLES:
+        idx = rng.choice(n_samples, size=_AUTO_SILHOUETTE_MAX_SAMPLES, replace=False)
+        X_score = np.asarray(X)[idx]
+    else:
+        X_score = np.asarray(X)
+
+    best_k = lower
+    best_score = float("-inf")
+    scores: list[tuple[int, float]] = []
+    for k in range(lower, upper + 1):
+        labels = KMeans(n_clusters=k, random_state=seed, n_init=10).fit_predict(X_score)
+        if len(set(labels)) < 2:
+            continue
+        score = float(silhouette_score(X_score, labels))
+        scores.append((k, score))
+        if score > best_score:
+            best_k, best_score = k, score
+
+    score_str = ", ".join(f"k={k}:{s:.3f}" for k, s in scores)
+    print(
+        f"auto n_clusters: chose k={best_k} (silhouette={best_score:.3f}; "
+        f"searched {lower}..{upper}; {score_str})"
+    )
+    return int(best_k)
+
 
 def fit_umap(embs: np.ndarray, n_neighbors: int = 15, min_dist: float = 0.1, seed: int = 42):
     try:
@@ -91,7 +170,7 @@ def _load_or_build_annot(
     out_dir: Path,
     annot_csv: Path,
     start_embs: np.ndarray,
-    n_clusters: int,
+    n_clusters: int | str,
     seed: int,
 ) -> tuple[pd.DataFrame, Path]:
     """Load annotation CSV or build a minimal one from per_cell_isp_shift.csv."""
@@ -144,11 +223,12 @@ def _load_or_build_annot(
     if "cluster" not in df.columns:
         from sklearn.cluster import KMeans
 
+        k = resolve_n_clusters(n_clusters, start_embs, seed=seed)
         print(
-            f"No 'cluster' column; fitting KMeans(n_clusters={n_clusters}, seed={seed}) "
-            "on start embeddings"
+            f"No 'cluster' column; fitting KMeans(n_clusters={k}, seed={seed}) "
+            f"on start embeddings (requested={n_clusters!r})"
         )
-        km = KMeans(n_clusters=n_clusters, random_state=seed, n_init=10)
+        km = KMeans(n_clusters=k, random_state=seed, n_init=10)
         df["cluster"] = km.fit_predict(start_embs)
 
     return df, used
@@ -172,7 +252,7 @@ def run_joint_overlays(
     min_dist: float = 0.1,
     seed: int = 42,
     num_trajectory_arrows: int = 100,
-    n_clusters: int = 4,
+    n_clusters: int | str = 4,
 ) -> Path:
     """Build joint UMAP overlays for an ISP UMAP run directory. Returns the PNG path."""
     run_dir = Path(run_dir)
@@ -359,6 +439,16 @@ def run_joint_overlays(
     return out_png
 
 
+def _parse_n_clusters_arg(value: str) -> int | str:
+    text = str(value).strip()
+    if text.lower() == "auto":
+        return "auto"
+    k = int(text)
+    if k < 2:
+        raise argparse.ArgumentTypeError(f"n_clusters must be >= 2 or 'auto' (got {k})")
+    return k
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -380,7 +470,12 @@ def main() -> None:
     parser.add_argument("--min-dist", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-trajectory-arrows", type=int, default=100)
-    parser.add_argument("--n-clusters", type=int, default=4)
+    parser.add_argument(
+        "--n-clusters",
+        type=_parse_n_clusters_arg,
+        default=4,
+        help="KMeans cluster count, or 'auto' (silhouette over k=2..15).",
+    )
     args = parser.parse_args()
     run_joint_overlays(
         run_dir=args.run_dir,

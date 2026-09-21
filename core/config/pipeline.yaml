@@ -101,5 +101,6 @@ stages:
     # cluster_coexpr_analysis after ISP UMAP (including E2E TOP1). Default OFF.
     postprocess:
       enabled: false
+      # Integer (>=2) or "auto" (silhouette over k=2..15).
       n_clusters: 4
       celltype_prediction: true

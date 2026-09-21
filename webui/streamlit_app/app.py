@@ -76,12 +76,49 @@ _DEFAULT_STATS_MODE = "goal_state_shift"
 _DEFAULT_ISP_ANALYSIS_ENABLED = True
 _DEFAULT_ISP_POSTPROCESS_ENABLED = False
 _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS = 4
+_DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE = "manual"  # "auto" | "manual"
 _DEFAULT_ISP_POSTPROCESS_CELLTYPE = True
 _DEFAULT_PERTURB_TYPE = "delete"
 _DEFAULT_STATE_KEY = "disease"
 _DEFAULT_FT_TASK_TYPE = "disease"
 _DEFAULT_FT_LABEL_COLUMN = "disease"
 _DEFAULT_MAX_CELLS = 300_000
+
+
+def _normalize_n_clusters_value(value: object) -> int | str:
+    """Return ``\"auto\"`` or an int >= 2 for ``postprocess.n_clusters``."""
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return "auto"
+    try:
+        k = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
+    return max(2, k)
+
+
+def _n_clusters_from_mode_session(
+    mode_key: str, value_key: str, *, default_mode: str = _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE
+) -> int | str:
+    mode = str(st.session_state.get(mode_key, default_mode) or default_mode).strip().lower()
+    if mode == "auto":
+        return "auto"
+    return _normalize_n_clusters_value(
+        st.session_state.get(value_key, _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS)
+    )
+
+
+def _set_n_clusters_session_from_config(
+    mode_key: str, value_key: str, configured: object
+) -> None:
+    """Seed mode/value session keys from a YAML ``n_clusters`` (auto or int)."""
+    normalized = _normalize_n_clusters_value(configured)
+    if normalized == "auto":
+        st.session_state.setdefault(mode_key, "auto")
+        st.session_state.setdefault(value_key, _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS)
+    else:
+        st.session_state.setdefault(mode_key, "manual")
+        st.session_state.setdefault(value_key, int(normalized))
+
 
 def _repo_root() -> Path:
     """Monorepo root (contains core/, webui/, contracts/)."""
@@ -448,12 +485,9 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
                 [
                     "--postprocess-n-clusters",
                     str(
-                        int(
-                            st.session_state.get(
-                                "isp_umap_postprocess_n_clusters",
-                                _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS,
-                            )
-                            or _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
+                        _n_clusters_from_mode_session(
+                            "isp_umap_postprocess_n_clusters_mode",
+                            "isp_umap_postprocess_n_clusters",
                         )
                     ),
                 ]
@@ -857,12 +891,15 @@ def _build_isp_umap_yaml_from_pipeline_run(
             post_block.get("enabled", _DEFAULT_ISP_POSTPROCESS_ENABLED),
         )
     )
-    post_n_clusters = int(
-        st.session_state.get(
+    if "isp_umap_postprocess_n_clusters_mode" in st.session_state:
+        post_n_clusters = _n_clusters_from_mode_session(
+            "isp_umap_postprocess_n_clusters_mode",
             "isp_umap_postprocess_n_clusters",
-            post_block.get("n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS),
         )
-    )
+    else:
+        post_n_clusters = _normalize_n_clusters_value(
+            post_block.get("n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS)
+        )
     post_celltype = bool(
         st.session_state.get(
             "isp_umap_postprocess_celltype",
@@ -871,7 +908,7 @@ def _build_isp_umap_yaml_from_pipeline_run(
     )
     out["postprocess"] = {
         "enabled": post_enabled,
-        "n_clusters": max(2, post_n_clusters),
+        "n_clusters": post_n_clusters,
         "celltype_prediction": post_celltype,
     }
     return (
@@ -945,7 +982,7 @@ def _render_isp_umap_plot_options() -> None:
     else:
         st.caption("Scatter points only (no Start → Perturbed arrows).")
 
-    with st.expander("Cluster / cell-type analysis (詳細設定)", expanded=False):
+    with st.expander("Cluster / cell-type analysis", expanded=False):
         st.caption(
             "Optional post-UMAP outputs under `cluster_coexpr_analysis/` "
             "(`postprocess.*`). Default **off** — enable only when you need joint "
@@ -953,6 +990,10 @@ def _render_isp_umap_plot_options() -> None:
         )
         st.session_state.setdefault(
             "isp_umap_postprocess_enabled", _DEFAULT_ISP_POSTPROCESS_ENABLED
+        )
+        st.session_state.setdefault(
+            "isp_umap_postprocess_n_clusters_mode",
+            _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE,
         )
         st.session_state.setdefault(
             "isp_umap_postprocess_n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
@@ -966,14 +1007,28 @@ def _render_isp_umap_plot_options() -> None:
             help="Write joint UMAP + L2-by-group figures (`postprocess.enabled`).",
         )
         if st.session_state.get("isp_umap_postprocess_enabled"):
-            st.number_input(
+            st.radio(
                 "n_clusters (KMeans)",
-                min_value=2,
-                max_value=50,
-                step=1,
-                key="isp_umap_postprocess_n_clusters",
-                help="KMeans clusters when no cluster column (`postprocess.n_clusters`).",
+                options=["auto", "manual"],
+                format_func=lambda m: (
+                    "auto (silhouette)" if m == "auto" else "manual (specify K)"
+                ),
+                horizontal=True,
+                key="isp_umap_postprocess_n_clusters_mode",
+                help=(
+                    "auto: pick K by max silhouette on start embeddings (k=2..15). "
+                    "manual: use the number below (`postprocess.n_clusters`)."
+                ),
             )
+            if st.session_state.get("isp_umap_postprocess_n_clusters_mode") == "manual":
+                st.number_input(
+                    "K",
+                    min_value=2,
+                    max_value=50,
+                    step=1,
+                    key="isp_umap_postprocess_n_clusters",
+                    help="Fixed KMeans cluster count (`postprocess.n_clusters`).",
+                )
             st.checkbox(
                 "Cell-type prediction (marker genes)",
                 key="isp_umap_postprocess_celltype",
@@ -1874,7 +1929,7 @@ def _build_patched_pipeline_yaml(
     isp_stats_mode: str | None = None,
     isp_analysis_enabled: bool | None = None,
     isp_postprocess_enabled: bool | None = None,
-    isp_postprocess_n_clusters: int | None = None,
+    isp_postprocess_n_clusters: int | str | None = None,
     isp_postprocess_celltype: bool | None = None,
     pert_type: str | None = None,
     pert_state_key: str | None = None,
@@ -2020,7 +2075,7 @@ def _build_patched_pipeline_yaml(
             if isp_postprocess_enabled is not None:
                 post["enabled"] = bool(isp_postprocess_enabled)
             if isp_postprocess_n_clusters is not None:
-                post["n_clusters"] = int(isp_postprocess_n_clusters)
+                post["n_clusters"] = _normalize_n_clusters_value(isp_postprocess_n_clusters)
             if isp_postprocess_celltype is not None:
                 post["celltype_prediction"] = bool(isp_postprocess_celltype)
 
@@ -2051,7 +2106,7 @@ def _patch_pipeline_yaml(
     isp_stats_mode: str | None = None,
     isp_analysis_enabled: bool | None = None,
     isp_postprocess_enabled: bool | None = None,
-    isp_postprocess_n_clusters: int | None = None,
+    isp_postprocess_n_clusters: int | str | None = None,
     isp_postprocess_celltype: bool | None = None,
     pert_type: str | None = None,
     pert_state_key: str | None = None,
@@ -2244,8 +2299,9 @@ def _ft_isp_advanced_kwargs_from_session() -> dict:
         "isp_stats_mode": st.session_state.get("pipeline_isp_stats_mode"),
         "isp_analysis_enabled": st.session_state.get("pipeline_isp_analysis_enabled"),
         "isp_postprocess_enabled": st.session_state.get("pipeline_isp_postprocess_enabled"),
-        "isp_postprocess_n_clusters": st.session_state.get(
-            "pipeline_isp_postprocess_n_clusters"
+        "isp_postprocess_n_clusters": _n_clusters_from_mode_session(
+            "pipeline_isp_postprocess_n_clusters_mode",
+            "pipeline_isp_postprocess_n_clusters",
         ),
         "isp_postprocess_celltype": st.session_state.get(
             "pipeline_isp_postprocess_celltype"
@@ -2331,14 +2387,11 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
     st.session_state.setdefault(
         "pipeline_isp_postprocess_enabled", bool(postprocess_enabled)
     )
-    try:
-        st.session_state.setdefault(
-            "pipeline_isp_postprocess_n_clusters", int(postprocess_n_clusters)
-        )
-    except (TypeError, ValueError):
-        st.session_state.setdefault(
-            "pipeline_isp_postprocess_n_clusters", _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS
-        )
+    _set_n_clusters_session_from_config(
+        "pipeline_isp_postprocess_n_clusters_mode",
+        "pipeline_isp_postprocess_n_clusters",
+        postprocess_n_clusters,
+    )
     st.session_state.setdefault(
         "pipeline_isp_postprocess_celltype", bool(postprocess_celltype)
     )
@@ -2552,7 +2605,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 "Fine-tune UMAP is controlled by `stages.finetune.umap.enabled`."
             )
 
-        with st.expander("Cluster / cell-type analysis (詳細設定)", expanded=False):
+        with st.expander("Cluster / cell-type analysis", expanded=False):
             st.caption(
                 "After ISP UMAP (including E2E TOP1), optionally write "
                 "`cluster_coexpr_analysis/` (`stages.isp.postprocess.*`). Default **off**."
@@ -2564,15 +2617,33 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 help="`stages.isp.postprocess.enabled`",
             )
             if st.session_state.get("pipeline_isp_postprocess_enabled"):
-                st.number_input(
+                st.radio(
                     "n_clusters (KMeans)",
-                    min_value=2,
-                    max_value=50,
-                    step=1,
-                    key="pipeline_isp_postprocess_n_clusters",
+                    options=["auto", "manual"],
+                    format_func=lambda m: (
+                        "auto (silhouette)" if m == "auto" else "manual (specify K)"
+                    ),
+                    horizontal=True,
+                    key="pipeline_isp_postprocess_n_clusters_mode",
                     on_change=_apply_ft_isp_advanced_to_yaml,
-                    help="`stages.isp.postprocess.n_clusters`",
+                    help=(
+                        "auto: silhouette-optimal K (2..15) on start embeddings. "
+                        "manual: fixed K (`stages.isp.postprocess.n_clusters`)."
+                    ),
                 )
+                if (
+                    st.session_state.get("pipeline_isp_postprocess_n_clusters_mode")
+                    == "manual"
+                ):
+                    st.number_input(
+                        "K",
+                        min_value=2,
+                        max_value=50,
+                        step=1,
+                        key="pipeline_isp_postprocess_n_clusters",
+                        on_change=_apply_ft_isp_advanced_to_yaml,
+                        help="`stages.isp.postprocess.n_clusters`",
+                    )
                 st.checkbox(
                     "Cell-type prediction (marker genes)",
                     key="pipeline_isp_postprocess_celltype",

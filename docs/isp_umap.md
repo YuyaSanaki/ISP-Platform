@@ -32,7 +32,7 @@ Key configurations to note:
 | `perturbation.start_state` | Condition you are perturbing (e.g. `Disease`). |
 | `perturbation.end_state` | Condition you are comparing against (e.g. `Ctrl`). |
 | `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
-| `postprocess.n_clusters` | KMeans clusters when no `cluster` column (default `4`). |
+| `postprocess.n_clusters` | KMeans clusters when no `cluster` column. Integer (>=2) or `auto` (silhouette over k=2..15; default `4`). |
 | `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
 
 ### Gene Symbol Auto-Detection
@@ -62,7 +62,7 @@ python3 core/run_isp_umap.py --run-dir /app/output/.../pipeline_... \
 
 ### Downstream plots (`cluster_coexpr_analysis/`, optional)
 
-After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis (詳細設定)**, or `--enable-postprocess`.
+After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis**, or `--enable-postprocess`.
 
 1. **Cell-type prediction** — marker scores on start-state `input_ids` → `pred_cell_type` / `coarse_type` (when `celltype_prediction: true`).
 2. **Joint UMAP overlays** — `umap_joint_l2_cluster_celltype.png` (+ enriched CSV, `joint_umap_coords.npy`).

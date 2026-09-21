@@ -49,6 +49,19 @@ DEFAULT_POSTPROCESS_CFG: dict[str, Any] = {
 }
 
 
+def _parse_postprocess_n_clusters(value: str) -> int | str:
+    """CLI/config helper: int >= 2, or the string ``auto``."""
+    text = str(value).strip()
+    if text.lower() == "auto":
+        return "auto"
+    k = int(text)
+    if k < 2:
+        raise argparse.ArgumentTypeError(
+            f"postprocess n_clusters must be >= 2 or 'auto' (got {k})"
+        )
+    return k
+
+
 def postprocess_is_enabled(cfg: Mapping[str, Any]) -> bool:
     """Return True when cluster_coexpr_analysis should run (explicit enabled only)."""
     post = cfg.get("postprocess", {})
@@ -80,7 +93,11 @@ def run_downstream_plots(run_dir: Path, gene: str, cfg: Mapping[str, Any]) -> No
 
     post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
     umap_cfg = cfg.get("umap") or {}
-    n_clusters = int(post.get("n_clusters", umap_cfg.get("n_clusters", 4)))
+    raw_n_clusters = post.get("n_clusters", umap_cfg.get("n_clusters", 4))
+    if isinstance(raw_n_clusters, str) and raw_n_clusters.strip().lower() == "auto":
+        n_clusters: int | str = "auto"
+    else:
+        n_clusters = max(2, int(raw_n_clusters))
     n_neighbors = int(umap_cfg.get("n_neighbors", DEFAULT_UMAP_CFG["n_neighbors"]))
     min_dist = float(umap_cfg.get("min_dist", DEFAULT_UMAP_CFG["min_dist"]))
     seed = int(umap_cfg.get("seed", DEFAULT_UMAP_CFG["seed"]))
@@ -1050,10 +1067,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--postprocess-n-clusters",
-        type=int,
+        type=_parse_postprocess_n_clusters,
         default=None,
-        metavar="N",
-        help="KMeans cluster count for cluster_coexpr_analysis (overrides config).",
+        metavar="N|auto",
+        help="KMeans cluster count or 'auto' (silhouette) for cluster_coexpr_analysis.",
     )
     parser.add_argument(
         "--postprocess-celltype",
@@ -1093,7 +1110,9 @@ def main() -> None:
             if args.postprocess_enabled is not None:
                 post["enabled"] = bool(args.postprocess_enabled)
             if args.postprocess_n_clusters is not None:
-                post["n_clusters"] = max(2, int(args.postprocess_n_clusters))
+                post["n_clusters"] = args.postprocess_n_clusters
+                if isinstance(post["n_clusters"], int):
+                    post["n_clusters"] = max(2, int(post["n_clusters"]))
             if args.postprocess_celltype is not None:
                 post["celltype_prediction"] = bool(args.postprocess_celltype)
             cfg["postprocess"] = post

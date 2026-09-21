@@ -74,6 +74,7 @@ umap:
 # Also applies to E2E TOP1 UMAP via stage_configs/isp.yaml → build_isp_umap_config.
 postprocess:
   enabled: false
+  # Integer (>=2) or "auto" (silhouette over k=2..15).
   n_clusters: 4
   celltype_prediction: true
 

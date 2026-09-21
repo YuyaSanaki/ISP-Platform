@@ -16,7 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Optional ISP UMAP postprocess **`cluster_coexpr_analysis`** (default **off**): marker cell-type labels, joint UMAP overlays (L2 / KMeans cluster / cell type), and L2-by-group box/mean figures.
 - Config: `postprocess.enabled` / `n_clusters` / `celltype_prediction` in `isp_umap.yaml` and `stages.isp.postprocess` (pipeline → E2E TOP1 UMAP).
-- Web UI: **Cluster / cell-type analysis (詳細設定)** on ISP UMAP Plot options and Pipeline Advanced options.
+- Web UI: **Cluster / cell-type analysis** on ISP UMAP Plot options and Pipeline Advanced options (`n_clusters`: fixed K or `auto`).
 - CLI: `--enable-postprocess` / `--skip-postprocess` / `--postprocess-n-clusters` / `--postprocess-celltype`.
 
 ### Notes

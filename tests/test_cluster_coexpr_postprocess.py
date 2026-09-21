@@ -141,6 +141,53 @@ def test_run_downstream_plots_calls_when_enabled(tmp_path):
         l2_mod.run_l2_by_group.assert_called_once()
 
 
+def test_run_downstream_plots_passes_auto_n_clusters(tmp_path):
+    joint_mod = MagicMock()
+    l2_mod = MagicMock()
+    with patch.dict(
+        sys.modules,
+        {
+            "plot_isp_umap_joint_overlays": joint_mod,
+            "plot_l2_by_coarse_celltype": l2_mod,
+        },
+    ):
+        run_downstream_plots(
+            tmp_path,
+            "Igfbp2",
+            {"postprocess": {"enabled": True, "n_clusters": "auto"}},
+        )
+        kwargs = joint_mod.run_joint_overlays.call_args.kwargs
+        assert kwargs["n_clusters"] == "auto"
+
+
+def test_resolve_n_clusters_auto_picks_true_k():
+    import numpy as np
+
+    # plot_isp_umap_joint_overlays pulls matplotlib/seaborn at import time.
+    for _mod in (
+        "seaborn",
+        "matplotlib",
+        "matplotlib.pyplot",
+        "isp_umap_postprocess_style",
+    ):
+        sys.modules.setdefault(_mod, MagicMock())
+
+    # Module-level torch MagicMock breaks scipy/sklearn; unstub for this test.
+    torch_stub = sys.modules.pop("torch", None)
+    try:
+        from plot_isp_umap_joint_overlays import resolve_n_clusters
+
+        rng = np.random.default_rng(0)
+        # Three well-separated blobs → silhouette should prefer k=3.
+        centers = np.array([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]])
+        X = np.vstack([c + rng.normal(0, 0.3, size=(40, 2)) for c in centers])
+        assert resolve_n_clusters(5, X, seed=0) == 5
+        assert resolve_n_clusters("auto", X, seed=0, k_min=2, k_max=6) == 3
+    finally:
+        if torch_stub is not None:
+            sys.modules["torch"] = torch_stub
+
+
 def test_celltype_scoring_with_mock_dicts():
     name_id = {"Acta2": "ENS1", "Myh11": "ENS2", "Tagln": "ENS3", "Cx3cr1": "ENS10"}
     token_dict = {"ENS1": 101, "ENS2": 102, "ENS3": 103, "ENS10": 110}
