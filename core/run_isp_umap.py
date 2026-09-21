@@ -50,6 +50,9 @@ DEFAULT_POSTPROCESS_CFG: dict[str, Any] = {
     "prefer_metadata_celltype": False,
     # Rank-weight marker hits (earlier Geneformer ranks = higher expression).
     "celltype_rank_weights": True,
+    # Subtract negative-marker scores to sharpen type boundaries.
+    "celltype_negative_markers": True,
+    "celltype_negative_weight": 0.55,
 }
 
 
@@ -908,11 +911,15 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
             post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
             prefer_meta = bool(post.get("prefer_metadata_celltype", False))
             use_rank = bool(post.get("celltype_rank_weights", True))
+            use_neg = bool(post.get("celltype_negative_markers", True))
+            neg_w = float(post.get("celltype_negative_weight", 0.55))
             logger.info(
                 "Predicting cell types from marker genes in start-state input_ids "
-                "(species-aware panel; prefer_metadata=%s, rank_weights=%s)...",
+                "(species-aware panel; prefer_metadata=%s, rank_weights=%s, "
+                "negatives=%s)...",
                 prefer_meta,
                 use_rank,
+                use_neg,
             )
             per_cell_df = annotate_dataframe_with_cell_types(
                 per_cell_df,
@@ -920,6 +927,8 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
                 species=cfg.get("species"),
                 use_rank_weights=use_rank,
                 prefer_metadata=prefer_meta,
+                use_negative_markers=use_neg,
+                negative_weight=neg_w,
             )
         except Exception:
             logger.exception(

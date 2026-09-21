@@ -61,4 +61,7 @@ postprocess:
   prefer_metadata_celltype: false
   # Weight marker hits by Geneformer rank position (higher expression earlier).
   celltype_rank_weights: true
+  # Subtract negative-marker scores (sharpen SMC vs endo/microglia etc.).
+  celltype_negative_markers: true
+  celltype_negative_weight: 0.55
   # Also writes umap_celltype_trajectories.png + celltype_shift_summary.csv

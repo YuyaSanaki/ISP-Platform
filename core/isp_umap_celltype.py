@@ -33,18 +33,47 @@ MOUSE_MARKERS: dict[str, list[str]] = {
     "Choroid_plexus": ["Ttr", "Folr1", "Kcnj13", "Aqp1"],
 }
 
-# Human HGNC orthologs of the mouse brain panel (uppercase).
+# Human HGNC panel — curated for Geneformer vocab / cross-species robustness.
+# Dropped mouse-only or weak orthologs (e.g. Ly6c1); added CDH5/VWF/CSF1R etc.
 HUMAN_MARKERS: dict[str, list[str]] = {
     "Vascular_SMC": ["ACTA2", "MYH11", "TAGLN", "CNN1", "MYL9", "TPM2"],
-    "Pericyte": ["PDGFRB", "RGS5", "ABCC9"],
+    "Pericyte": ["PDGFRB", "RGS5", "ABCC9", "KCNJ8"],
     "Fibroblast": ["COL1A1", "DCN", "LUM", "PDGFRA"],
-    "Microglia": ["CX3CR1", "P2RY12", "TMEM119", "HEXB", "C1QA", "CTSS", "AIF1"],
-    "Endothelial": ["CLDN5", "PECAM1", "FLT1", "KDR", "CDH5"],
+    "Microglia": ["CX3CR1", "P2RY12", "HEXB", "C1QA", "CTSS", "AIF1", "CSF1R"],
+    "Endothelial": ["CLDN5", "PECAM1", "FLT1", "KDR", "CDH5", "VWF"],
     "Astrocyte": ["GFAP", "AQP4", "ALDH1L1", "SLC1A3"],
-    "OPC": ["CSPG4", "OLIG1", "SOX10"],
+    "OPC": ["CSPG4", "OLIG1", "OLIG2", "SOX10"],
     "Oligodendrocyte": ["MBP", "PLP1", "MOG", "MOBP"],
-    "Neuron": ["RBFOX3", "SNAP25", "SYT1", "SLC17A7", "GAD1"],
+    "Neuron": ["SNAP25", "SYT1", "STMN2", "SLC17A7", "GAD1", "RBFOX3"],
     "Choroid_plexus": ["TTR", "FOLR1", "KCNJ13", "AQP1"],
+}
+
+# Negative markers: presence lowers the score for that cell type (boundary sharpening).
+# Keep lists short and orthogonal to the positive panel.
+MOUSE_NEGATIVE_MARKERS: dict[str, list[str]] = {
+    "Vascular_SMC": ["Cx3cr1", "Cldn5", "Pecam1", "Snap25", "Mbp"],
+    "Pericyte": ["Cx3cr1", "Cldn5", "Snap25", "Mbp", "Myh11"],
+    "Fibroblast": ["Cx3cr1", "Cldn5", "Snap25", "Mbp"],
+    "Microglia": ["Acta2", "Myh11", "Cldn5", "Snap25", "Mbp", "Gfap"],
+    "Endothelial": ["Cx3cr1", "Acta2", "Snap25", "Mbp", "Aif1"],
+    "Astrocyte": ["Cx3cr1", "Cldn5", "Mbp", "Snap25", "Aif1"],
+    "OPC": ["Mbp", "Mog", "Snap25", "Cx3cr1", "Cldn5"],
+    "Oligodendrocyte": ["Cspg4", "Snap25", "Cx3cr1", "Cldn5", "Gfap"],
+    "Neuron": ["Cx3cr1", "Cldn5", "Mbp", "Gfap", "Aif1"],
+    "Choroid_plexus": ["Snap25", "Cx3cr1", "Mbp", "Cldn5"],
+}
+
+HUMAN_NEGATIVE_MARKERS: dict[str, list[str]] = {
+    "Vascular_SMC": ["CX3CR1", "CLDN5", "PECAM1", "SNAP25", "MBP"],
+    "Pericyte": ["CX3CR1", "CLDN5", "SNAP25", "MBP", "MYH11"],
+    "Fibroblast": ["CX3CR1", "CLDN5", "SNAP25", "MBP"],
+    "Microglia": ["ACTA2", "MYH11", "CLDN5", "SNAP25", "MBP", "GFAP"],
+    "Endothelial": ["CX3CR1", "ACTA2", "SNAP25", "MBP", "AIF1"],
+    "Astrocyte": ["CX3CR1", "CLDN5", "MBP", "SNAP25", "AIF1"],
+    "OPC": ["MBP", "MOG", "SNAP25", "CX3CR1", "CLDN5"],
+    "Oligodendrocyte": ["CSPG4", "SNAP25", "CX3CR1", "CLDN5", "GFAP"],
+    "Neuron": ["CX3CR1", "CLDN5", "MBP", "GFAP", "AIF1"],
+    "Choroid_plexus": ["SNAP25", "CX3CR1", "MBP", "CLDN5"],
 }
 
 # Back-compat alias.
@@ -54,6 +83,16 @@ MARKERS_BY_ORGANISM: dict[str, dict[str, list[str]]] = {
     "mouse": MOUSE_MARKERS,
     "human": HUMAN_MARKERS,
 }
+
+NEGATIVE_MARKERS_BY_ORGANISM: dict[str, dict[str, list[str]]] = {
+    "mouse": MOUSE_NEGATIVE_MARKERS,
+    "human": HUMAN_NEGATIVE_MARKERS,
+}
+
+# Default penalty for negative-marker presence (final = max(0, pos - weight * neg)).
+DEFAULT_NEGATIVE_WEIGHT = 0.55
+# Skip a cell-type panel when fewer than this many positive markers resolve to tokens.
+MIN_RESOLVED_POSITIVE_MARKERS = 2
 
 # Coarse vascular vs immune programs (for L2-by-group plots).
 COARSE_MICROGLIA_MARKERS_MOUSE = [
@@ -105,7 +144,7 @@ def select_marker_panel(
     organism: str | None = None,
     markers: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, list[str]]:
-    """Return a copy of the marker panel for ``organism`` (or an override)."""
+    """Return a copy of the positive marker panel for ``organism`` (or an override)."""
     if markers is not None:
         return {k: list(v) for k, v in markers.items()}
     key = (organism or "mouse").strip().lower()
@@ -116,6 +155,19 @@ def select_marker_panel(
         )
         key = "mouse"
     return {k: list(v) for k, v in MARKERS_BY_ORGANISM[key].items()}
+
+
+def select_negative_marker_panel(
+    organism: str | None = None,
+    negatives: Mapping[str, Sequence[str]] | None = None,
+) -> dict[str, list[str]]:
+    """Return negative-marker lists keyed by cell type."""
+    if negatives is not None:
+        return {k: list(v) for k, v in negatives.items()}
+    key = (organism or "mouse").strip().lower()
+    if key not in NEGATIVE_MARKERS_BY_ORGANISM:
+        key = "mouse"
+    return {k: list(v) for k, v in NEGATIVE_MARKERS_BY_ORGANISM[key].items()}
 
 
 def _coarse_marker_genes(organism: str | None) -> tuple[list[str], list[str]]:
@@ -205,15 +257,15 @@ def _genes_to_tokens(
     *,
     species: Mapping[str, Any] | None = None,
     panel_organism: str | None = None,
-) -> list[int]:
+) -> tuple[list[int], list[str]]:
     """Resolve marker symbols to model token IDs.
 
-    Prefer direct model-native symbol lookup. When that fails and ``species`` is
-    set, fall back to ``resolve_gene_for_model`` with ``model_organism`` set to
-    the marker panel organism (ortholog path for cross-species robustness).
+    Returns ``(token_ids, unresolved_symbols)``. Prefer direct model-native
+    symbol lookup; fall back to ``resolve_gene_for_model`` when ``species`` is set.
     """
     toks: list[int] = []
     seen: set[int] = set()
+    unresolved: list[str] = []
     resolver = None
     if species is not None:
         try:
@@ -226,7 +278,6 @@ def _genes_to_tokens(
     for g in genes:
         eid = _symbol_lookup_local(name_id, g)
         if eid is None and resolver is not None:
-            # Ortholog / input-organism path: treat markers as panel-organism symbols.
             panel_species = dict(species)
             if panel_organism:
                 panel_species["model_organism"] = panel_organism
@@ -235,19 +286,20 @@ def _genes_to_tokens(
             except Exception:  # noqa: BLE001
                 eid = None
         if eid is None:
+            unresolved.append(str(g))
             continue
         tok = token_dict.get(eid)
         if tok is None:
-            # Some tables store int keys; others strip versions inconsistently.
             tok = token_dict.get(str(eid))
         if tok is None:
+            unresolved.append(str(g))
             continue
         tok_i = int(tok)
         if tok_i in seen or tok_i in _PAD_LIKE:
             continue
         seen.add(tok_i)
         toks.append(tok_i)
-    return toks
+    return toks, unresolved
 
 
 def _build_marker_tokens(
@@ -257,50 +309,86 @@ def _build_marker_tokens(
     *,
     species: Mapping[str, Any] | None = None,
     panel_organism: str | None = None,
+    min_resolved: int = MIN_RESOLVED_POSITIVE_MARKERS,
 ) -> dict[str, list[int]]:
+    """Resolve positive panels; drop cell types with too few resolved markers (#5)."""
     out: dict[str, list[int]] = {}
     for ct, genes in markers.items():
-        toks = _genes_to_tokens(
+        toks, unresolved = _genes_to_tokens(
             genes,
             token_dict,
             name_id,
             species=species,
             panel_organism=panel_organism,
         )
-        if not toks:
-            logger.warning("No tokens resolved for cell-type markers: %s (%s)", ct, list(genes))
+        if unresolved:
+            logger.info(
+                "Cell-type %s: dropped unresolved markers for panel quality: %s",
+                ct,
+                unresolved,
+            )
+        if len(toks) < int(min_resolved):
+            logger.warning(
+                "Cell-type %s: only %d/%d markers resolved (need >=%d); skipping type",
+                ct,
+                len(toks),
+                len(genes),
+                min_resolved,
+            )
             continue
         if len(toks) < len(genes):
-            resolved_eids = {
-                _symbol_lookup_local(name_id, g) for g in genes
-            }
-            missing = [
-                g
-                for g in genes
-                if _symbol_lookup_local(name_id, g) not in token_dict
-                and (
-                    _symbol_lookup_local(name_id, g) is None
-                    or token_dict.get(_symbol_lookup_local(name_id, g)) is None
-                )
-            ]
-            # Prefer a short missing list for logs; ortholog fallback may still have filled toks.
-            if missing and len(toks) < len(genes):
-                logger.info(
-                    "Cell-type %s: %d/%d markers resolved (unresolved symbols: %s)",
-                    ct,
-                    len(toks),
-                    len(genes),
-                    missing,
-                )
-            elif resolved_eids:
-                logger.info(
-                    "Cell-type %s: %d/%d markers resolved to tokens",
-                    ct,
-                    len(toks),
-                    len(genes),
-                )
+            logger.info(
+                "Cell-type %s: %d/%d positive markers resolved to tokens",
+                ct,
+                len(toks),
+                len(genes),
+            )
         out[ct] = toks
     return out
+
+
+def _build_negative_tokens(
+    negatives: Mapping[str, Sequence[str]],
+    token_dict: Mapping,
+    name_id: Mapping,
+    *,
+    species: Mapping[str, Any] | None = None,
+    panel_organism: str | None = None,
+    positive_types: Sequence[str] | None = None,
+) -> dict[str, list[int]]:
+    """Resolve negative markers for types that have a positive panel."""
+    keep = set(positive_types) if positive_types is not None else set(negatives)
+    out: dict[str, list[int]] = {}
+    for ct in keep:
+        genes = negatives.get(ct) or []
+        if not genes:
+            continue
+        toks, unresolved = _genes_to_tokens(
+            genes,
+            token_dict,
+            name_id,
+            species=species,
+            panel_organism=panel_organism,
+        )
+        if unresolved:
+            logger.info(
+                "Cell-type %s: unresolved negative markers (ignored): %s",
+                ct,
+                unresolved,
+            )
+        if toks:
+            out[ct] = toks
+    return out
+
+
+def _combine_pos_neg_score(
+    pos: float,
+    neg: float,
+    *,
+    negative_weight: float = DEFAULT_NEGATIVE_WEIGHT,
+) -> float:
+    """Positive score minus penalized negative-marker score, clipped to [0, 1]."""
+    return float(max(0.0, min(1.0, pos - float(negative_weight) * neg)))
 
 
 def _score_ids(ids: Sequence[int], ct_tokens: Sequence[int]) -> float:
@@ -397,6 +485,10 @@ def predict_cell_types_from_input_ids(
     min_score: float = 0.25,
     min_margin: float = 0.05,
     min_markers_hit: int = 1,
+    use_negative_markers: bool = True,
+    negative_markers: Mapping[str, Sequence[str]] | None = None,
+    negative_weight: float = DEFAULT_NEGATIVE_WEIGHT,
+    min_resolved_markers: int = MIN_RESOLVED_POSITIVE_MARKERS,
 ) -> pd.DataFrame:
     """Return one row per cell with score_*, pred_cell_type, pred_score, coarse_type."""
     native = organism
@@ -418,12 +510,31 @@ def predict_cell_types_from_input_ids(
         name_id,
         species=species,
         panel_organism=native,
+        min_resolved=min_resolved_markers,
     )
+    neg_panel = (
+        select_negative_marker_panel(native, negative_markers)
+        if use_negative_markers
+        else {}
+    )
+    neg_tokens = (
+        _build_negative_tokens(
+            neg_panel,
+            token_dict,
+            name_id,
+            species=species,
+            panel_organism=native,
+            positive_types=list(marker_tokens.keys()),
+        )
+        if use_negative_markers
+        else {}
+    )
+
     mic_genes, smc_genes = _coarse_marker_genes(native)
-    mic_tokens = _genes_to_tokens(
+    mic_tokens, _ = _genes_to_tokens(
         mic_genes, token_dict, name_id, species=species, panel_organism=native
     )
-    smc_tokens = _genes_to_tokens(
+    smc_tokens, _ = _genes_to_tokens(
         smc_genes, token_dict, name_id, species=species, panel_organism=native
     )
 
@@ -435,7 +546,20 @@ def predict_cell_types_from_input_ids(
 
     rows: list[dict[str, Any]] = []
     for ids in input_ids_list:
-        scores = {ct: score_fn(ids, toks) for ct, toks in marker_tokens.items()}
+        raw_pos = {ct: score_fn(ids, toks) for ct, toks in marker_tokens.items()}
+        raw_neg = {
+            ct: score_fn(ids, neg_tokens[ct]) if ct in neg_tokens else 0.0
+            for ct in marker_tokens
+        }
+        if use_negative_markers:
+            scores = {
+                ct: _combine_pos_neg_score(
+                    raw_pos[ct], raw_neg[ct], negative_weight=negative_weight
+                )
+                for ct in marker_tokens
+            }
+        else:
+            scores = dict(raw_pos)
         hits = {ct: _hit_count(ids, toks) for ct, toks in marker_tokens.items()}
         pred, pred_score = _assign_pred(
             scores,
@@ -452,14 +576,17 @@ def predict_cell_types_from_input_ids(
         }
         for ct, sc in scores.items():
             row[f"score_{ct}"] = sc
+            row[f"score_pos_{ct}"] = raw_pos[ct]
+            row[f"score_neg_{ct}"] = raw_neg.get(ct, 0.0)
             row[f"hits_{ct}"] = hits.get(ct, 0)
         rows.append(row)
 
     df = pd.DataFrame(rows)
     logger.info(
-        "Cell-type prediction (organism=%s, rank_weighted=%s): %s",
+        "Cell-type prediction (organism=%s, rank_weighted=%s, negatives=%s): %s",
         native,
         use_rank_weights,
+        use_negative_markers,
         df["pred_cell_type"].value_counts().to_dict() if len(df) else {},
     )
     logger.info(
@@ -535,6 +662,9 @@ def annotate_dataframe_with_cell_types(
     organism: str | None = None,
     use_rank_weights: bool = True,
     prefer_metadata: bool = False,
+    use_negative_markers: bool = True,
+    negative_weight: float = DEFAULT_NEGATIVE_WEIGHT,
+    min_resolved_markers: int = MIN_RESOLVED_POSITIVE_MARKERS,
     min_score: float = 0.25,
     min_margin: float = 0.05,
     min_markers_hit: int = 1,
@@ -553,6 +683,9 @@ def annotate_dataframe_with_cell_types(
         species=species,
         organism=organism,
         use_rank_weights=use_rank_weights,
+        use_negative_markers=use_negative_markers,
+        negative_weight=negative_weight,
+        min_resolved_markers=min_resolved_markers,
         min_score=min_score,
         min_margin=min_margin,
         min_markers_hit=min_markers_hit,

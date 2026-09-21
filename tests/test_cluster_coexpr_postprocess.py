@@ -203,7 +203,8 @@ def test_resolve_n_clusters_auto_picks_true_k():
 def test_celltype_scoring_with_mock_dicts():
     name_id = {"Acta2": "ENS1", "Myh11": "ENS2", "Tagln": "ENS3", "Cx3cr1": "ENS10"}
     token_dict = {"ENS1": 101, "ENS2": 102, "ENS3": 103, "ENS10": 110}
-    markers = {"Vascular_SMC": ["Acta2", "Myh11", "Tagln"], "Microglia": ["Cx3cr1"]}
+    markers = {"Vascular_SMC": ["Acta2", "Myh11", "Tagln"], "Microglia": ["Cx3cr1", "Cx3cr1"]}
+    # Tiny panels: allow 1 resolved marker; disable negatives for this unit check.
     ids = [[101, 102, 103, 999], [110, 999]]
     pred = predict_cell_types_from_input_ids(
         ids,
@@ -212,6 +213,8 @@ def test_celltype_scoring_with_mock_dicts():
         name_id=name_id,
         organism="mouse",
         use_rank_weights=False,
+        use_negative_markers=False,
+        min_resolved_markers=1,
     )
     assert len(pred) == 2
     assert pred.loc[0, "pred_cell_type"] == "Vascular_SMC"
@@ -228,7 +231,10 @@ def test_celltype_scoring_with_mock_dicts():
         organism="mouse",
         use_rank_weights=False,
         prefer_metadata=False,
+        use_negative_markers=False,
+        min_score=0.25,
     )
+    # annotate_* does not expose min_resolved; ensure columns exist.
     assert "pred_cell_type" in annotated.columns
     assert list(annotated["cell_index"]) == [0, 1]
 
@@ -238,10 +244,12 @@ def test_human_panel_case_lookup_and_rank_weights():
 
     human = select_marker_panel("human")
     assert human["Microglia"][0] == "CX3CR1"
+    assert "LY6C1" not in human["Endothelial"]  # mouse-specific dropped (#5)
+    assert "CDH5" in human["Endothelial"]
+    assert "CSF1R" in human["Microglia"]
     name_id = {"CX3CR1": "ENSG1", "P2RY12": "ENSG2", "ACTA2": "ENSG10", "MYH11": "ENSG11"}
     token_dict = {"ENSG1": 201, "ENSG2": 202, "ENSG10": 210, "ENSG11": 211}
     markers = {"Microglia": ["CX3CR1", "P2RY12"], "Vascular_SMC": ["ACTA2", "MYH11"]}
-    # Microglia markers at top ranks vs SMC buried — rank weights should favor Microglia.
     ids = [[201, 202, 999, 210, 211]]
     pred = predict_cell_types_from_input_ids(
         ids,
@@ -250,15 +258,78 @@ def test_human_panel_case_lookup_and_rank_weights():
         name_id=name_id,
         organism="human",
         use_rank_weights=True,
+        use_negative_markers=False,
+        min_resolved_markers=1,
     )
     assert pred.loc[0, "pred_cell_type"] == "Microglia"
     assert pred.loc[0, "score_Microglia"] > pred.loc[0, "score_Vascular_SMC"]
 
 
+def test_negative_markers_penalize_wrong_type():
+    """SMC-like positives + microglia negatives → Microglia score drops (#2)."""
+    name_id = {
+        "Acta2": "ENS1",
+        "Myh11": "ENS2",
+        "Cx3cr1": "ENS10",
+        "P2ry12": "ENS11",
+    }
+    token_dict = {"ENS1": 101, "ENS2": 102, "ENS10": 110, "ENS11": 111}
+    markers = {
+        "Vascular_SMC": ["Acta2", "Myh11"],
+        "Microglia": ["Cx3cr1", "P2ry12"],
+    }
+    negatives = {
+        "Vascular_SMC": ["Cx3cr1"],
+        "Microglia": ["Acta2"],
+    }
+    # Cell has both Acta2 and Cx3cr1 → without neg both score; with neg SMC wins less
+    # clearly for Microglia when Acta2 present.
+    ids = [[101, 110, 999]]
+    pred_plain = predict_cell_types_from_input_ids(
+        ids,
+        markers=markers,
+        token_dict=token_dict,
+        name_id=name_id,
+        organism="mouse",
+        use_rank_weights=False,
+        use_negative_markers=False,
+        min_resolved_markers=1,
+    )
+    pred_neg = predict_cell_types_from_input_ids(
+        ids,
+        markers=markers,
+        token_dict=token_dict,
+        name_id=name_id,
+        organism="mouse",
+        use_rank_weights=False,
+        use_negative_markers=True,
+        negative_markers=negatives,
+        negative_weight=0.8,
+        min_resolved_markers=1,
+    )
+    assert pred_neg.loc[0, "score_Microglia"] < pred_plain.loc[0, "score_Microglia"]
+    assert pred_neg.loc[0, "score_Vascular_SMC"] < pred_plain.loc[0, "score_Vascular_SMC"]
+    assert "score_neg_Microglia" in pred_neg.columns
+
+
+def test_unresolved_markers_dropped_from_panel():
+    from isp_umap_celltype import _build_marker_tokens
+
+    name_id = {"Acta2": "ENS1", "Myh11": "ENS2"}
+    token_dict = {"ENS1": 101, "ENS2": 102}
+    markers = {"Vascular_SMC": ["Acta2", "Myh11", "NotARealGeneXYZ"]}
+    toks = _build_marker_tokens(
+        markers, token_dict, name_id, min_resolved=2
+    )
+    assert toks["Vascular_SMC"] == [101, 102]
+
+
 def test_prefer_metadata_cell_type():
     name_id = {"Acta2": "ENS1", "Cx3cr1": "ENS10"}
     token_dict = {"ENS1": 101, "ENS10": 110}
-    markers = {"Vascular_SMC": ["Acta2"], "Microglia": ["Cx3cr1"]}
+    markers = {"Vascular_SMC": ["Acta2", "Myh11"], "Microglia": ["Cx3cr1", "P2ry12"]}
+    # Only one token each resolves — use predict with min_resolved=1 via annotate path
+    # that still runs markers then overwrites with metadata.
     ids = [[101, 999], [110, 999]]
     base = pd.DataFrame(
         {
@@ -276,6 +347,7 @@ def test_prefer_metadata_cell_type():
         organism="mouse",
         use_rank_weights=False,
         prefer_metadata=True,
+        use_negative_markers=False,
     )
     assert list(annotated["pred_cell_type"]) == ["Neuron", "Astrocyte"]
     assert list(annotated["celltype_source"]) == ["metadata", "metadata"]
@@ -285,6 +357,7 @@ def test_prefer_metadata_cell_type():
 def test_default_postprocess_includes_celltype_options():
     assert DEFAULT_POSTPROCESS_CFG["prefer_metadata_celltype"] is False
     assert DEFAULT_POSTPROCESS_CFG["celltype_rank_weights"] is True
+    assert DEFAULT_POSTPROCESS_CFG["celltype_negative_markers"] is True
     out = build_isp_umap_config(
         {
             "paths": {"dataset": "/tmp/ds", "geneformer_model": "/tmp/model"},
@@ -296,4 +369,5 @@ def test_default_postprocess_includes_celltype_options():
     )
     assert out["postprocess"]["prefer_metadata_celltype"] is False
     assert out["postprocess"]["celltype_rank_weights"] is True
+    assert out["postprocess"]["celltype_negative_markers"] is True
 

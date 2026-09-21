@@ -36,6 +36,8 @@ Key configurations to note:
 | `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
 | `postprocess.prefer_metadata_celltype` | Prefer dataset `cell_type` over markers (default **`false`** — metadata is often user-filled). |
 | `postprocess.celltype_rank_weights` | Rank-weight marker hits (earlier Geneformer ranks = higher expression; default `true`). |
+| `postprocess.celltype_negative_markers` | Subtract negative-marker scores to sharpen boundaries (default `true`). |
+| `postprocess.celltype_negative_weight` | Penalty weight for negatives (default `0.55`). |
 
 ### Gene Symbol Auto-Detection
 
@@ -82,7 +84,7 @@ Marker panels live in [`core/isp_umap_celltype.py`](../core/isp_umap_celltype.py
 | `mouse_geneformer` | Mouse brain markers (title-case symbols, e.g. `Cx3cr1`) |
 | `human_geneformer` | Human HGNC orthologs (uppercase, e.g. `CX3CR1`) |
 
-Because tokenization remaps genes into the **model** vocabulary, panels are chosen by the model-native organism—not the input species. Cross-species runs (e.g. mouse data → human Geneformer) therefore use the human panel against human token IDs. Unresolved symbols additionally try `resolve_gene_for_model` (ortholog path). Trusted external labels can be opted in with `prefer_metadata_celltype: true` (default off).
+Because tokenization remaps genes into the **model** vocabulary, panels are chosen by the model-native organism—not the input species. Cross-species runs (e.g. mouse data → human Geneformer) therefore use the **curated human panel** (mouse-only genes like `Ly6c1` dropped; human-preferable markers such as `CDH5`/`VWF`/`CSF1R` added). Unresolved symbols are dropped from the panel; types with fewer than 2 resolved positives are skipped. **Negative markers** (e.g. microglia markers against SMC) subtract from the score to reduce boundary mix-ups. Trusted external labels can be opted in with `prefer_metadata_celltype: true` (default off).
 
 ## Outputs
 

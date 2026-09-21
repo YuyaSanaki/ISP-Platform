@@ -87,6 +87,8 @@ def main() -> None:
         species=cfg.get("species"),
         use_rank_weights=bool(post.get("celltype_rank_weights", True)),
         prefer_metadata=bool(post.get("prefer_metadata_celltype", False)),
+        use_negative_markers=bool(post.get("celltype_negative_markers", True)),
+        negative_weight=float(post.get("celltype_negative_weight", 0.55)),
     )
 
     cluster_csv = run_dir / "cluster_coexpr_analysis" / "per_cell_cluster_l2_celltype.csv"
