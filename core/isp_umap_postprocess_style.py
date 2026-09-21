@@ -24,11 +24,23 @@ def palette_for_groups(labels: Sequence[Hashable], group_col: str) -> dict[str, 
     series = pd.Series(list(labels))
     if group_col == "cluster":
         ids = _sorted_cluster_ids(series)
-        colors = sns.color_palette("tab10", n_colors=max(len(ids), 1))
+        n = max(len(ids), 1)
+        try:
+            colors = list(sns.color_palette("tab10", n_colors=n))
+        except Exception:  # noqa: BLE001
+            colors = []
+        if not colors:
+            colors = ["#4C72B0"] * n
         return {str(c): colors[i % len(colors)] for i, c in enumerate(ids)}
 
     types = list(series.value_counts().index)
-    colors = sns.color_palette("husl", n_colors=max(len(types), 1))
+    n = max(len(types), 1)
+    try:
+        colors = list(sns.color_palette("husl", n_colors=n))
+    except Exception:  # noqa: BLE001
+        colors = []
+    if not colors:
+        colors = ["#4C72B0"] * n
     return {str(t): colors[i % len(colors)] for i, t in enumerate(types)}
 
 

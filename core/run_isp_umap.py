@@ -46,6 +46,10 @@ DEFAULT_POSTPROCESS_CFG: dict[str, Any] = {
     "enabled": False,
     "n_clusters": 4,
     "celltype_prediction": True,
+    # Prefer dataset metadata cell_type labels when present.
+    "prefer_metadata_celltype": True,
+    # Rank-weight marker hits (earlier Geneformer ranks = higher expression).
+    "celltype_rank_weights": True,
 }
 
 
@@ -130,6 +134,21 @@ def run_downstream_plots(run_dir: Path, gene: str, cfg: Mapping[str, Any]) -> No
     except Exception as exc:
         logger.warning(
             "Post-process L2-by-group failed (core UMAP outputs are intact): %s",
+            exc,
+        )
+
+    try:
+        from plot_isp_umap_celltype_trajectories import run_celltype_trajectory_plots
+
+        logger.info("Post-process: cell-type trajectory tracking ...")
+        run_celltype_trajectory_plots(
+            run_dir=Path(run_dir),
+            num_trajectory_arrows=num_arrows,
+            seed=seed,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Post-process cell-type trajectories failed (core UMAP outputs are intact): %s",
             exc,
         )
 
@@ -886,9 +905,21 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
         try:
             from isp_umap_celltype import annotate_dataframe_with_cell_types
 
-            logger.info("Predicting cell types from marker genes in start-state input_ids...")
+            post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
+            prefer_meta = bool(post.get("prefer_metadata_celltype", True))
+            use_rank = bool(post.get("celltype_rank_weights", True))
+            logger.info(
+                "Predicting cell types from marker genes in start-state input_ids "
+                "(species-aware panel; prefer_metadata=%s, rank_weights=%s)...",
+                prefer_meta,
+                use_rank,
+            )
             per_cell_df = annotate_dataframe_with_cell_types(
-                per_cell_df, start_dataset["input_ids"]
+                per_cell_df,
+                start_dataset["input_ids"],
+                species=cfg.get("species"),
+                use_rank_weights=use_rank,
+                prefer_metadata=prefer_meta,
             )
         except Exception:
             logger.exception(

@@ -910,6 +910,18 @@ def _build_isp_umap_yaml_from_pipeline_run(
         "enabled": post_enabled,
         "n_clusters": post_n_clusters,
         "celltype_prediction": post_celltype,
+        "prefer_metadata_celltype": bool(
+            post_block.get(
+                "prefer_metadata_celltype",
+                True,
+            )
+        ),
+        "celltype_rank_weights": bool(
+            post_block.get(
+                "celltype_rank_weights",
+                True,
+            )
+        ),
     }
     return (
         yaml.dump(out, default_flow_style=False, sort_keys=False, allow_unicode=True),
@@ -986,7 +998,7 @@ def _render_isp_umap_plot_options() -> None:
         st.caption(
             "Optional post-UMAP outputs under `cluster_coexpr_analysis/` "
             "(`postprocess.*`). Default **off** — enable only when you need joint "
-            "L2 / cluster / cell-type overlays."
+            "L2 / cluster / cell-type overlays and cell-type trajectory tracking."
         )
         st.session_state.setdefault(
             "isp_umap_postprocess_enabled", _DEFAULT_ISP_POSTPROCESS_ENABLED
@@ -1032,7 +1044,11 @@ def _render_isp_umap_plot_options() -> None:
             st.checkbox(
                 "Cell-type prediction (marker genes)",
                 key="isp_umap_postprocess_celltype",
-                help="Score marker tokens in start-state input_ids (`postprocess.celltype_prediction`).",
+                help=(
+                    "Species-aware marker panels on start-state input_ids "
+                    "(`postprocess.celltype_prediction`). Prefers dataset "
+                    "`cell_type` metadata when present; rank-weights marker hits."
+                ),
             )
 
 

@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- ISP UMAP postprocess **cell-type trajectory tracking**: `umap_celltype_trajectories.png` (per-cell arrows + mean displacement by type), `celltype_shift_summary.csv`, `l2_mean_by_pred_celltype.png`.
+
+### Changed
+
+- ISP UMAP marker cell-type prediction is **species-aware** (mouse vs human panels matched to the Geneformer backend), with optional **rank-weighted** marker scoring and **prefer metadata `cell_type`** when present (`postprocess.prefer_metadata_celltype` / `celltype_rank_weights`).
+
 ## [1.2.0] - 2026-09-20
 
 ### Changed

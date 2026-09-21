@@ -80,7 +80,14 @@ def main() -> None:
     sample_ids = df["sample_id"].astype(str).tolist() if "sample_id" in df.columns else None
     input_ids = _resolve_start_input_ids(cfg, len(df), sample_ids)
 
-    annotated = annotate_dataframe_with_cell_types(df, input_ids)
+    post = cfg.get("postprocess") if isinstance(cfg.get("postprocess"), dict) else {}
+    annotated = annotate_dataframe_with_cell_types(
+        df,
+        input_ids,
+        species=cfg.get("species"),
+        use_rank_weights=bool(post.get("celltype_rank_weights", True)),
+        prefer_metadata=bool(post.get("prefer_metadata_celltype", True)),
+    )
 
     cluster_csv = run_dir / "cluster_coexpr_analysis" / "per_cell_cluster_l2_celltype.csv"
     if cluster_csv.exists():

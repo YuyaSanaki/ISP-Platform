@@ -57,3 +57,8 @@ postprocess:
   # Integer (>=2) or "auto" (silhouette over k=2..15 on start embeddings).
   n_clusters: 4
   celltype_prediction: true
+  # Prefer dataset metadata cell_type (etc.) over marker scores when present.
+  prefer_metadata_celltype: true
+  # Weight marker hits by Geneformer rank position (higher expression earlier).
+  celltype_rank_weights: true
+  # Also writes umap_celltype_trajectories.png + celltype_shift_summary.csv
