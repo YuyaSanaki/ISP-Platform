@@ -6,18 +6,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Work in progress on branch `cursor/pre-isp-celltype-annotation-d63e` (and related ISP UMAP cell-type tracking).
+
 ### Added
 
-- **Pre-ISP expression-matrix cell-type annotation** at tokenize (`tokenizer.celltype_annotation`, default on): writes `cell_type` / `tissue` / `celltype_score` / `celltype_annotator=isp_expression_v1` onto loom → HF dataset (`core/celltype_annotate_expression.py`, panel `geneformer/dicts/celltype_panels/isp_expression_v1.json`).
-- ISP UMAP postprocess **cell-type trajectory tracking**: `umap_celltype_trajectories.png` (per-cell arrows + mean displacement by type), `celltype_shift_summary.csv`, `l2_mean_by_pred_celltype.png`.
-- Script `scripts/validate_asano_igfbp2_celltype_tracking.py` — Asano PIPseq (1w) Igfbp2 delete validation for mouse + human Geneformer with the new cell-type tracking plots.
+- **Pre-ISP expression-matrix cell-type annotation** at tokenize (`tokenizer.celltype_annotation`, default **on**):
+  - Scores curated whole-body marker panels on the count matrix (`scanpy.tl.score_genes`).
+  - Writes `cell_type`, `tissue`, `celltype_score`, `celltype_annotator=isp_expression_v1` onto loom → HF dataset.
+  - Implementation: [`core/celltype_annotate_expression.py`](core/celltype_annotate_expression.py), panel [`core/geneformer/dicts/celltype_panels/isp_expression_v1.json`](core/geneformer/dicts/celltype_panels/isp_expression_v1.json).
+- ISP UMAP postprocess **cell-type trajectory tracking**: `umap_celltype_trajectories.png`, `celltype_shift_summary.csv`, `l2_mean_by_pred_celltype.png`.
+- Script [`scripts/validate_asano_igfbp2_celltype_tracking.py`](scripts/validate_asano_igfbp2_celltype_tracking.py) (+ DGX Spark brief [`scripts/SPARK_AGENT_ASANO_IGFBP2.md`](scripts/SPARK_AGENT_ASANO_IGFBP2.md)).
 
 ### Changed
 
-- When ISP UMAP cluster/cell-type postprocess is on, `prefer_metadata_celltype` defaults to **`auto`**: use pre-ISP platform `cell_type` when `celltype_annotator` is `isp_expression*`; otherwise fall back to marker scoring. Set `true` for any trusted external labels, or `false` to force markers.
-- ISP UMAP marker cell-type prediction is **species-aware** (mouse vs human panels matched to the Geneformer backend), with optional **rank-weighted** marker scoring (`celltype_rank_weights`).
-- Marker panels: **human panel curated** for cross-species (drop mouse-only genes; add CDH5/VWF/CSF1R/…); **negative markers** subtract from scores (`celltype_negative_markers`, default on).
-- Pipeline E2E TOP1 ISP UMAP now honors `stages.isp.postprocess.enabled` (`--enable-postprocess`).
+- ISP UMAP `prefer_metadata_celltype` default is **`auto`**: when cluster/cell-type postprocess is on, prefer platform `cell_type` if `celltype_annotator` is `isp_expression*`; otherwise marker scoring on tokens. Use `true` for any trusted external labels, or `false` to force markers.
+- Marker cell-type prediction is **species-aware** (mouse vs human panels), with **rank-weighted** hits and **negative markers** (defaults on).
+- Pipeline E2E TOP1 ISP UMAP honors `stages.isp.postprocess.enabled` (`--enable-postprocess`).
+
+### Docs
+
+- README (ISP UMAP quick + tokenize note), [docs/tokenization.md](docs/tokenization.md), [docs/isp_umap.md](docs/isp_umap.md), [docs/web-ui.md](docs/web-ui.md).
 
 ## [1.2.0] - 2026-09-20
 

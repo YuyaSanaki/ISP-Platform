@@ -85,6 +85,7 @@ With **`single_cell_settings.extract_metadata_from_path: true`** in `config/toke
 | `data.output_dir` | Parent directory for the tokenized `.dataset` |
 | `data.output_prefix` | Base name → `{output_prefix}_0.dataset` |
 | `tokenizer.custom_attr_name_dict` | Loom/dataset column mapping |
+| `tokenizer.celltype_annotation` | Pre-ISP expression cell-type labels (default **on**; see below) |
 | `tokenizer.nproc` / `max_cells` | Parallelism and cell cap |
 | `tokenizer.report_conversion` | Pre-tokenize ortholog summary (default **true** whenever ortholog conversion applies) |
 | `tokenizer.ortholog_audit` | Path to analysis manifest / audit YAML enabling **ortholog_loss_gate** |
@@ -97,6 +98,30 @@ With **`single_cell_settings.extract_metadata_from_path: true`** in `config/toke
 **`input_type: single-cell`**: builds `.loom` under `data.loom_temp_dir`, then runs `TranscriptomeTokenizer`.
 
 **`input_type: loom`**: reads `*.loom` from `data.input_dir`; loom attributes must match keys in `custom_attr_name_dict`.
+
+### Pre-ISP cell-type annotation
+
+During 10x→loom conversion, the platform can label each cell from the **expression matrix** (not from Geneformer tokens):
+
+```yaml
+tokenizer:
+  celltype_annotation:
+    enabled: true          # default
+    # panel: null          # default isp_expression_v1.json
+    # min_score: null
+    # min_margin: null
+  custom_attr_name_dict:
+    # …existing attrs…
+    cell_type: cell_type
+    tissue: tissue
+    celltype_score: celltype_score
+    celltype_annotator: celltype_annotator
+```
+
+- Implementation: [`celltype_annotate_expression.py`](../core/celltype_annotate_expression.py).
+- Panel: [`geneformer/dicts/celltype_panels/isp_expression_v1.json`](../core/geneformer/dicts/celltype_panels/isp_expression_v1.json) (mouse + human symbols; organism from `species.model_organism`).
+- Provenance column `celltype_annotator=isp_expression_v1` lets ISP UMAP postprocess trust these labels (`prefer_metadata_celltype: auto`) while still ignoring arbitrary user-filled `cell_type` without that provenance.
+- Disable with `tokenizer.celltype_annotation: false` or `enabled: false`.
 
 The image resolves token and median dictionaries from `species.model` via `core/geneformer/backends/registry.py` (mouse or human V2). When `model_organism` differs from the model’s native species, genes are remapped through ortholog tables before tokenization (`core/geneformer/gene_converter.py`).
 
@@ -206,7 +231,8 @@ Saved under `data.output_dir`, typically **`{output_prefix}_0.dataset`** (suffix
 | `input_ids` | Rank-encoded gene tokens per cell |
 | `length` | Sequence length |
 | State column | e.g. `disease` — must match ISP `perturbation.state_key` and state strings |
-| Other metadata | e.g. `cell_type`, `time`, `sample_id` if mapped in `custom_attr_name_dict` |
+| Other metadata | e.g. `time`, `sample_id` if mapped in `custom_attr_name_dict` |
+| `cell_type` / `tissue` / `celltype_score` / `celltype_annotator` | Pre-ISP expression annotation (when `celltype_annotation.enabled`) |
 
 Point **`paths.dataset`** in [`core/config/finetune.yaml`](../core/config/finetune.yaml) or [`core/config/isp.yaml`](../core/config/isp.yaml) at this directory.
 

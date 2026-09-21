@@ -121,7 +121,7 @@ One row per **start-state** cell (e.g. each `Disease` cell in the run), with how
 | `umap1_after` / `umap2_after` | UMAP position after perturbation |
 | `umap_shift_l2` | L2 distance between before/after positions in UMAP space (matches the grey arrows on the plot) |
 
-Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `disease`) are included so you can join cell-type labels later after classification.
+Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `disease`, and platform `cell_type` / `celltype_annotator` when tokenize annotation ran) are included in the CSV. When postprocess cell-type is on, those platform labels are preferred over token-marker scoring (`prefer_metadata_celltype: auto`).
 
 ## Troubleshooting
 

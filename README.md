@@ -220,6 +220,8 @@ More detail: [docs/web-ui.md](docs/web-ui.md).
 
 Per-cell ISP trajectories on UMAP (start → perturbed arrows). Gene-level ISP ranking is separate; this plots how each cell moves.
 
+Optional **Cluster / cell-type analysis** (`postprocess.enabled`) writes `cluster_coexpr_analysis/` (joint overlays, L2-by-type, cell-type trajectories). When that option is on, labels prefer **pre-ISP platform annotation** written at tokenize (`celltype_annotator=isp_expression_v1`); otherwise marker scoring on tokens is used. See [docs/isp_umap.md](docs/isp_umap.md#downstream-plots-cluster_coexpr_analysis-optional).
+
 **Web UI:** after a Pipeline (E2E) finishes, set Run type to **ISP UMAP** → pick that pipeline folder → choose gene(s) → **Run job**. Outputs land under `{pipeline_run}/isp_umap/` (`umap_*.png`, `per_cell_isp_shift.csv`).
 
 **CLI** — edit [`core/config/isp_umap.yaml`](core/config/isp_umap.yaml) (`paths`, `genes_to_perturb`, `start_state` / `end_state`), then:
@@ -247,6 +249,8 @@ Details: [docs/isp_umap.md](docs/isp_umap.md).
 When `model_organism` does not match the selected model’s native species, an **ortholog gene converter** maps genes from the data organism to the model vocabulary (tokenization and ISP).
 
 At **tokenize**, a **conversion report** (`conversion_report.json`, `conversion_unmapped_genes.tsv`) summarizes mapped vs dropped genes. It runs **by default whenever ortholog conversion applies**; disable with `--no-report-conversion`. The Web UI **Output** tab lists dropped genes with a brief function note. See [docs/tokenization.md](docs/tokenization.md).
+
+Tokenize also runs **pre-ISP cell-type annotation** on the expression matrix by default (`tokenizer.celltype_annotation`), writing `cell_type` / `tissue` / `celltype_annotator=isp_expression_v1` into the `.dataset`. ISP UMAP cluster/cell-type postprocess uses these labels when enabled (`prefer_metadata_celltype: auto`). Details: [docs/tokenization.md](docs/tokenization.md#pre-isp-cell-type-annotation) · [docs/isp_umap.md](docs/isp_umap.md).
 
 For analysis contracts with critical gene sets (e.g. OSKM), enable `ortholog_loss_gate`: it **Blocks** only when a critical gene is **present in the raw input** but dropped by the mapping policy (e.g. POU5F1 under `one2one`). Genes absent from the matrix are **Warn**, not Block. Approval is fail-closed (`ortholog_approval_request.yaml` pending → separate `approval_record.yaml` with `status: approved` via CLI or Web UI card); one-to-many genes are **never** auto-added to curated overlays. Details: [docs/tokenization.md](docs/tokenization.md#ortholog-loss-gate) · [docs/web-ui.md](docs/web-ui.md#ortholog-loss-gate--approval-card-web-ui).
 
