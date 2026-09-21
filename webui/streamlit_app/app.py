@@ -1046,8 +1046,8 @@ def _render_isp_umap_plot_options() -> None:
                 key="isp_umap_postprocess_celltype",
                 help=(
                     "Species-aware marker panels on start-state input_ids "
-                    "(`postprocess.celltype_prediction`). Prefers dataset "
-                    "`cell_type` metadata when present; rank-weights marker hits."
+                    "(`postprocess.celltype_prediction`). Dataset cell_type "
+                    "metadata is ignored by default."
                 ),
             )
 
