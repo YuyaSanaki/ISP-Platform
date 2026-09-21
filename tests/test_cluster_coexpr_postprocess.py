@@ -355,7 +355,7 @@ def test_prefer_metadata_cell_type():
 
 
 def test_default_postprocess_includes_celltype_options():
-    assert DEFAULT_POSTPROCESS_CFG["prefer_metadata_celltype"] is False
+    assert DEFAULT_POSTPROCESS_CFG["prefer_metadata_celltype"] == "auto"
     assert DEFAULT_POSTPROCESS_CFG["celltype_rank_weights"] is True
     assert DEFAULT_POSTPROCESS_CFG["celltype_negative_markers"] is True
     out = build_isp_umap_config(
@@ -367,7 +367,6 @@ def test_default_postprocess_includes_celltype_options():
         },
         ["Igfbp2"],
     )
-    assert out["postprocess"]["prefer_metadata_celltype"] is False
+    assert out["postprocess"]["prefer_metadata_celltype"] == "auto"
     assert out["postprocess"]["celltype_rank_weights"] is True
     assert out["postprocess"]["celltype_negative_markers"] is True
-

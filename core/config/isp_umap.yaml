@@ -57,8 +57,9 @@ postprocess:
   # Integer (>=2) or "auto" (silhouette over k=2..15 on start embeddings).
   n_clusters: 4
   celltype_prediction: true
-  # Ignore dataset cell_type metadata by default (often user-filled / unreliable).
-  prefer_metadata_celltype: false
+  # auto = use pre-ISP platform cell_type when celltype_annotator=isp_expression*;
+  # true = trust any dataset cell_type; false = marker scoring only.
+  prefer_metadata_celltype: auto
   # Weight marker hits by Geneformer rank position (higher expression earlier).
   celltype_rank_weights: true
   # Subtract negative-marker scores (sharpen SMC vs endo/microglia etc.).

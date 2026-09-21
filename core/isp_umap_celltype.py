@@ -596,17 +596,55 @@ def predict_cell_types_from_input_ids(
     return df
 
 
+def is_platform_celltype_annotation(series: pd.Series | None) -> bool:
+    """True when a column carries platform expression-annotator provenance."""
+    if series is None:
+        return False
+    s = series.astype(str)
+    return bool(s.str.startswith("isp_expression").fillna(False).any())
+
+
+def resolve_prefer_metadata_flag(
+    setting: bool | str | None,
+    df: pd.DataFrame | None = None,
+) -> bool:
+    """Interpret ``prefer_metadata_celltype`` against optional dataframe provenance.
+
+    - ``True`` / ``"true"`` / ``"always"``: always prefer dataset ``cell_type``
+    - ``False`` / ``"false"`` / ``"never"`` / ``None``: never prefer metadata
+    - ``"auto"`` / ``"platform"``: prefer only when ``celltype_annotator`` starts
+      with ``isp_expression`` (pre-ISP platform annotation)
+    """
+    if setting is True:
+        return True
+    if setting is False or setting is None:
+        return False
+    text = str(setting).strip().lower()
+    if text in ("1", "true", "yes", "always", "on"):
+        return True
+    if text in ("0", "false", "no", "never", "off", ""):
+        return False
+    if text in ("auto", "platform"):
+        if df is None or "celltype_annotator" not in df.columns:
+            return False
+        return is_platform_celltype_annotation(df["celltype_annotator"])
+    # Unknown string → conservative off
+    logger.warning("Unknown prefer_metadata_celltype=%r; treating as false", setting)
+    return False
+
+
 def apply_metadata_cell_types(
     df: pd.DataFrame,
     *,
-    prefer_metadata: bool = False,
+    prefer_metadata: bool | str = False,
     metadata_columns: Sequence[str] = METADATA_CELLTYPE_COLUMNS,
 ) -> pd.DataFrame:
     """Optionally overwrite marker predictions with a metadata cell-type column.
 
-    Default is **off** — dataset ``cell_type`` is often user-filled and unreliable.
-    When ``prefer_metadata=True``, non-empty metadata labels overwrite
-    ``pred_cell_type`` / ``coarse_type`` and set ``celltype_source=metadata``.
+    Default is **off** for bare ``False``. Use ``prefer_metadata="auto"`` to trust
+    only platform pre-ISP labels (``celltype_annotator`` = ``isp_expression*``).
+    When preferring metadata, non-empty labels overwrite ``pred_cell_type`` /
+    ``coarse_type`` and set ``celltype_source`` to ``platform`` or ``metadata``.
     Always writes ``celltype_plot``.
     """
     out = df.copy()
@@ -632,20 +670,48 @@ def apply_metadata_cell_types(
     if "celltype_source" not in out.columns:
         out["celltype_source"] = "markers"
 
-    if prefer_metadata:
+    prefer_mode = prefer_metadata
+    if isinstance(prefer_mode, str):
+        mode_text = prefer_mode.strip().lower()
+    elif prefer_mode is True:
+        mode_text = "always"
+    else:
+        mode_text = "never"
+
+    if mode_text in ("auto", "platform"):
+        if "celltype_annotator" in out.columns:
+            platform_mask = (
+                out["celltype_annotator"]
+                .astype(str)
+                .str.startswith("isp_expression")
+                .fillna(False)
+            )
+            use_meta = (~empty) & platform_mask
+            source_label = "platform"
+        else:
+            use_meta = pd.Series(False, index=out.index)
+            source_label = "platform"
+    elif mode_text in ("1", "true", "yes", "always", "on") or prefer_mode is True:
         use_meta = ~empty
+        source_label = "metadata"
+    else:
+        use_meta = pd.Series(False, index=out.index)
+        source_label = "metadata"
+
+    if bool(use_meta.any()):
         out.loc[use_meta, "pred_cell_type"] = meta[use_meta]
         out.loc[use_meta, "pred_score"] = 1.0
         out.loc[use_meta, "coarse_type"] = meta[use_meta]
-        out.loc[use_meta, "celltype_source"] = "metadata"
+        out.loc[use_meta, "celltype_source"] = source_label
         n = int(use_meta.sum())
-        if n:
-            logger.info(
-                "Using metadata column %r for %d/%d cells (prefer_metadata=True)",
-                meta_col,
-                n,
-                len(out),
-            )
+        logger.info(
+            "Using metadata column %r for %d/%d cells (prefer_metadata=%r, source=%s)",
+            meta_col,
+            n,
+            len(out),
+            prefer_metadata,
+            source_label,
+        )
 
     out["celltype_plot"] = out["pred_cell_type"].astype(str)
     return out
@@ -661,7 +727,7 @@ def annotate_dataframe_with_cell_types(
     species: Mapping[str, Any] | None = None,
     organism: str | None = None,
     use_rank_weights: bool = True,
-    prefer_metadata: bool = False,
+    prefer_metadata: bool | str = False,
     use_negative_markers: bool = True,
     negative_weight: float = DEFAULT_NEGATIVE_WEIGHT,
     min_resolved_markers: int = MIN_RESOLVED_POSITIVE_MARKERS,

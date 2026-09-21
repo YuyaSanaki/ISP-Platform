@@ -42,3 +42,4 @@ __pycache__/
 !/core/geneformer/dicts/**/README.md
 !/core/geneformer/dicts/orthologs/*_curated.tsv
 !/core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv
+!/core/geneformer/dicts/celltype_panels/*.json

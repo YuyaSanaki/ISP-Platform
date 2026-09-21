@@ -910,11 +910,9 @@ def _build_isp_umap_yaml_from_pipeline_run(
         "enabled": post_enabled,
         "n_clusters": post_n_clusters,
         "celltype_prediction": post_celltype,
-        "prefer_metadata_celltype": bool(
-            post_block.get(
-                "prefer_metadata_celltype",
-                False,
-            )
+        "prefer_metadata_celltype": post_block.get(
+            "prefer_metadata_celltype",
+            "auto",
         ),
         "celltype_rank_weights": bool(
             post_block.get(
@@ -1045,9 +1043,10 @@ def _render_isp_umap_plot_options() -> None:
                 "Cell-type prediction (marker genes)",
                 key="isp_umap_postprocess_celltype",
                 help=(
-                    "Species-aware marker panels on start-state input_ids "
-                    "(`postprocess.celltype_prediction`). Dataset cell_type "
-                    "metadata is ignored by default."
+                    "When on, uses pre-ISP platform cell_type metadata "
+                    "(celltype_annotator=isp_expression*) if present; otherwise "
+                    "species-aware marker panels on start-state input_ids "
+                    "(`postprocess.celltype_prediction`, prefer_metadata_celltype: auto)."
                 ),
             )
 
@@ -2664,7 +2663,11 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                     "Cell-type prediction (marker genes)",
                     key="pipeline_isp_postprocess_celltype",
                     on_change=_apply_ft_isp_advanced_to_yaml,
-                    help="`stages.isp.postprocess.celltype_prediction`",
+                    help=(
+                        "When on, prefers pre-ISP platform cell_type "
+                        "(celltype_annotator=isp_expression*) if present "
+                        "(`stages.isp.postprocess.celltype_prediction`)."
+                    ),
                 )
 
     with st.expander("What do these options mean?", expanded=False):

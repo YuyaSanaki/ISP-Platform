@@ -1,0 +1,143 @@
+{
+  "version": "isp_expression_v1",
+  "description": "Whole-body major cell-type panels for pre-ISP expression annotation (Geneformer-compatible symbols). Markers are commonly used scRNA markers; not a full CellMarker dump.",
+  "min_score": 0.15,
+  "min_margin": 0.02,
+  "types": {
+    "T_cell": {
+      "tissue": "Immune",
+      "mouse": ["Cd3d", "Cd3e", "Cd3g", "Cd2", "Trbc2"],
+      "human": ["CD3D", "CD3E", "CD3G", "CD2", "TRBC2"]
+    },
+    "B_cell": {
+      "tissue": "Immune",
+      "mouse": ["Cd79a", "Cd79b", "Ms4a1", "Cd19", "Ighm"],
+      "human": ["CD79A", "CD79B", "MS4A1", "CD19", "IGHM"]
+    },
+    "NK_cell": {
+      "tissue": "Immune",
+      "mouse": ["Ncr1", "Klrb1c", "Prf1", "Gzma"],
+      "human": ["NCR1", "KLRB1", "PRF1", "GZMA", "GNLY"]
+    },
+    "Monocyte": {
+      "tissue": "Immune",
+      "mouse": ["Ly6c2", "Ccr2", "Cd14", "F13a1"],
+      "human": ["LYZ", "S100A8", "S100A9", "CD14", "FCN1"]
+    },
+    "Macrophage": {
+      "tissue": "Immune",
+      "mouse": ["Adgre1", "Cd68", "Csf1r", "Lyz2", "Mrc1"],
+      "human": ["CD68", "CSF1R", "LYZ", "MRC1", "MSR1"]
+    },
+    "Dendritic_cell": {
+      "tissue": "Immune",
+      "mouse": ["Flt3", "Itgax", "Clec9a", "Xcr1"],
+      "human": ["FLT3", "ITGAX", "CLEC9A", "XCR1", "IRF8"]
+    },
+    "Neutrophil": {
+      "tissue": "Immune",
+      "mouse": ["S100a8", "S100a9", "Cxcr2", "Mmp9"],
+      "human": ["S100A8", "S100A9", "CXCR2", "FCGR3B", "CSF3R"]
+    },
+    "Mast_cell": {
+      "tissue": "Immune",
+      "mouse": ["Kit", "Cpa3", "Tpsb2", "Mcpt4"],
+      "human": ["KIT", "CPA3", "TPSAB1", "TPSB2", "HDC"]
+    },
+    "Microglia": {
+      "tissue": "Neural",
+      "mouse": ["Cx3cr1", "P2ry12", "Tmem119", "Hexb", "C1qa"],
+      "human": ["CX3CR1", "P2RY12", "TMEM119", "HEXB", "C1QA", "CSF1R"]
+    },
+    "Neuron": {
+      "tissue": "Neural",
+      "mouse": ["Snap25", "Syt1", "Rbfox3", "Tubb3", "Map2"],
+      "human": ["SNAP25", "SYT1", "RBFOX3", "TUBB3", "MAP2", "STMN2"]
+    },
+    "Astrocyte": {
+      "tissue": "Neural",
+      "mouse": ["Gfap", "Aqp4", "Aldh1l1", "Slc1a3"],
+      "human": ["GFAP", "AQP4", "ALDH1L1", "SLC1A3"]
+    },
+    "Oligodendrocyte": {
+      "tissue": "Neural",
+      "mouse": ["Mbp", "Plp1", "Mog", "Mobp"],
+      "human": ["MBP", "PLP1", "MOG", "MOBP"]
+    },
+    "OPC": {
+      "tissue": "Neural",
+      "mouse": ["Cspg4", "Olig1", "Olig2", "Pdgfra"],
+      "human": ["CSPG4", "OLIG1", "OLIG2", "PDGFRA"]
+    },
+    "Endothelial": {
+      "tissue": "Vascular",
+      "mouse": ["Cldn5", "Pecam1", "Flt1", "Kdr", "Cdh5"],
+      "human": ["CLDN5", "PECAM1", "FLT1", "KDR", "CDH5", "VWF"]
+    },
+    "Pericyte": {
+      "tissue": "Vascular",
+      "mouse": ["Pdgfrb", "Rgs5", "Abcc9", "Kcnj8"],
+      "human": ["PDGFRB", "RGS5", "ABCC9", "KCNJ8"]
+    },
+    "Vascular_SMC": {
+      "tissue": "Muscle",
+      "mouse": ["Acta2", "Myh11", "Tagln", "Cnn1"],
+      "human": ["ACTA2", "MYH11", "TAGLN", "CNN1"]
+    },
+    "Fibroblast": {
+      "tissue": "Stromal",
+      "mouse": ["Col1a1", "Dcn", "Lum", "Pdgfra", "Pi16"],
+      "human": ["COL1A1", "DCN", "LUM", "PDGFRA", "PI16"]
+    },
+    "Cardiomyocyte": {
+      "tissue": "Muscle",
+      "mouse": ["Tnnt2", "Myh6", "Actc1", "Nppa"],
+      "human": ["TNNT2", "MYH6", "ACTC1", "NPPA", "MYH7"]
+    },
+    "Skeletal_myocyte": {
+      "tissue": "Muscle",
+      "mouse": ["Acta1", "Myh1", "Myh4", "Tnnc2"],
+      "human": ["ACTA1", "MYH1", "MYH2", "TNNC2"]
+    },
+    "Hepatocyte": {
+      "tissue": "Epithelial",
+      "mouse": ["Alb", "Ttr", "Apob", "Cyp3a11"],
+      "human": ["ALB", "TTR", "APOB", "CYP3A4"]
+    },
+    "Pneumocyte": {
+      "tissue": "Epithelial",
+      "mouse": ["Sftpc", "Sftpb", "Ager", "Hopx"],
+      "human": ["SFTPC", "SFTPB", "AGER", "HOPX"]
+    },
+    "Enterocyte": {
+      "tissue": "Epithelial",
+      "mouse": ["Alpi", "Apoa1", "Fabp1", "Vil1"],
+      "human": ["ALPI", "APOA1", "FABP1", "VIL1"]
+    },
+    "Keratinocyte": {
+      "tissue": "Epithelial",
+      "mouse": ["Krt5", "Krt14", "Krt1", "Krt10"],
+      "human": ["KRT5", "KRT14", "KRT1", "KRT10"]
+    },
+    "Epithelial_general": {
+      "tissue": "Epithelial",
+      "mouse": ["Epcam", "Krt8", "Krt18", "Cdh1"],
+      "human": ["EPCAM", "KRT8", "KRT18", "CDH1"]
+    },
+    "Erythroid": {
+      "tissue": "Blood",
+      "mouse": ["Hba-a1", "Hbb-bs", "Gypa", "Alas2"],
+      "human": ["HBA1", "HBB", "GYPA", "ALAS2"]
+    },
+    "Megakaryocyte": {
+      "tissue": "Blood",
+      "mouse": ["Pf4", "Ppbp", "Itga2b", "Gp9"],
+      "human": ["PF4", "PPBP", "ITGA2B", "GP9"]
+    },
+    "Choroid_plexus": {
+      "tissue": "Neural",
+      "mouse": ["Ttr", "Folr1", "Kcnj13", "Aqp1"],
+      "human": ["TTR", "FOLR1", "KCNJ13", "AQP1"]
+    }
+  }
+}

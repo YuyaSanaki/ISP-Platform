@@ -33,6 +33,14 @@ tokenizer:
   # ortholog_loss_gate: true
   # ortholog_audit: /path/to/analysis_manifest.yaml
   # ortholog_approval_record: null
+  # Pre-ISP expression-matrix cell-type annotation (scanpy score_genes + curated panels).
+  # Writes cell_type / tissue / celltype_score / celltype_annotator onto loom → HF dataset.
+  # ISP UMAP postprocess (prefer_metadata_celltype: auto) uses these when present.
+  celltype_annotation:
+    enabled: true
+    # panel: null  # default: geneformer/dicts/celltype_panels/isp_expression_v1.json
+    # min_score: null
+    # min_margin: null
   # Map metadata from loom column attributes to dataset columns
   custom_attr_name_dict:
     time: "time"
@@ -40,6 +48,10 @@ tokenizer:
     replicate: "replicate"
     disease: "disease"
     sample_id: "sample_id"
+    cell_type: "cell_type"
+    tissue: "tissue"
+    celltype_score: "celltype_score"
+    celltype_annotator: "celltype_annotator"
 
     # need to accept more flexibility using metadata, not folder name
 

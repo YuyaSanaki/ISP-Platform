@@ -34,7 +34,7 @@ Key configurations to note:
 | `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
 | `postprocess.n_clusters` | KMeans clusters when no `cluster` column. Integer (>=2) or `auto` (silhouette over k=2..15; default `4`). |
 | `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
-| `postprocess.prefer_metadata_celltype` | Prefer dataset `cell_type` over markers (default **`false`** — metadata is often user-filled). |
+| `postprocess.prefer_metadata_celltype` | `auto` (default): use pre-ISP platform `cell_type` when `celltype_annotator` is `isp_expression*`; `true`: trust any dataset `cell_type`; `false`: marker scoring only. |
 | `postprocess.celltype_rank_weights` | Rank-weight marker hits (earlier Geneformer ranks = higher expression; default `true`). |
 | `postprocess.celltype_negative_markers` | Subtract negative-marker scores to sharpen boundaries (default `true`). |
 | `postprocess.celltype_negative_weight` | Penalty weight for negatives (default `0.55`). |
@@ -68,7 +68,7 @@ python3 core/run_isp_umap.py --run-dir /app/output/.../pipeline_... \
 
 After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis**, or `--enable-postprocess`.
 
-1. **Cell-type prediction** — species-aware marker panels (mouse / human, matched to the Geneformer backend) scored on start-state `input_ids` → `pred_cell_type` / `coarse_type` / `celltype_plot`. Dataset `cell_type` metadata is **ignored by default** (`prefer_metadata_celltype: false`); set it true only for trusted annotations. Rank weighting prefers markers that appear early in the Geneformer rank list.
+1. **Cell-type prediction** — when postprocess cell-type is on, **pre-ISP platform labels** (`cell_type` written at tokenize with `celltype_annotator=isp_expression_v1`) are preferred (`prefer_metadata_celltype: auto`). If those columns are absent, species-aware marker panels (mouse / human, matched to the Geneformer backend) are scored on start-state `input_ids` → `pred_cell_type` / `coarse_type` / `celltype_plot`. Raw user-filled `cell_type` without platform provenance is still ignored unless `prefer_metadata_celltype: true`. Rank weighting prefers markers that appear early in the Geneformer rank list.
 2. **Joint UMAP overlays** — `umap_joint_l2_cluster_celltype.png` (+ enriched CSV, `joint_umap_coords.npy`).
 3. **L2 by group** — `l2_by_coarse_celltype.png` and `l2_mean_by_coarse_celltype.png`.
 4. **Cell-type trajectory tracking** — `umap_celltype_trajectories.png` (arrows + mean displacement vectors colored by cell type), `celltype_shift_summary.csv`, and `l2_mean_by_pred_celltype.png`.
@@ -84,7 +84,9 @@ Marker panels live in [`core/isp_umap_celltype.py`](../core/isp_umap_celltype.py
 | `mouse_geneformer` | Mouse brain markers (title-case symbols, e.g. `Cx3cr1`) |
 | `human_geneformer` | Human HGNC orthologs (uppercase, e.g. `CX3CR1`) |
 
-Because tokenization remaps genes into the **model** vocabulary, panels are chosen by the model-native organism—not the input species. Cross-species runs (e.g. mouse data → human Geneformer) therefore use the **curated human panel** (mouse-only genes like `Ly6c1` dropped; human-preferable markers such as `CDH5`/`VWF`/`CSF1R` added). Unresolved symbols are dropped from the panel; types with fewer than 2 resolved positives are skipped. **Negative markers** (e.g. microglia markers against SMC) subtract from the score to reduce boundary mix-ups. Trusted external labels can be opted in with `prefer_metadata_celltype: true` (default off).
+Because tokenization remaps genes into the **model** vocabulary, panels are chosen by the model-native organism—not the input species. Cross-species runs (e.g. mouse data → human Geneformer) therefore use the **curated human panel** (mouse-only genes like `Ly6c1` dropped; human-preferable markers such as `CDH5`/`VWF`/`CSF1R` added). Unresolved symbols are dropped from the panel; types with fewer than 2 resolved positives are skipped. **Negative markers** (e.g. microglia markers against SMC) subtract from the score to reduce boundary mix-ups.
+
+**Pre-ISP expression annotation:** tokenize (`tokenizer.celltype_annotation`, default on) scores curated whole-body marker panels on the count matrix before loom write (`core/celltype_annotate_expression.py`, panel `isp_expression_v1.json`). Those labels propagate into the HF dataset. When ISP UMAP cluster/cell-type postprocess is on, `prefer_metadata_celltype: auto` (default) uses that platform metadata; set `false` to force marker scoring on tokens, or `true` for any trusted external `cell_type`.
 
 ## Outputs
 

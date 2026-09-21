@@ -8,7 +8,7 @@ import scanpy as sc
 import anndata as ad
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 # Add current directory to path so geneformer and provenance can be imported
 sys.path.append(os.getcwd())
@@ -36,7 +36,7 @@ from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_
 from run_provenance import write_service_provenance, update_service_provenance
 
 
-def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg) -> int:
+def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg, species=None) -> int:
     """Convert subdirectories of (barcodes/features/matrix) to .loom files. Returns loom count."""
     os.makedirs(loom_temp_dir, exist_ok=True)
     input_path = Path(input_dir).resolve()
@@ -54,6 +54,25 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
         print(diagnose_input_dir(input_path, loom_path))
         return 0
 
+    from celltype_annotate_expression import (
+        ANNOTATION_OBS_COLUMNS,
+        annotate_adata_cell_types,
+        annotation_config_from_tokenizer,
+    )
+
+    ct_ann = annotation_config_from_tokenizer(tokenizer_cfg)
+    organism = "mouse"
+    if isinstance(species, Mapping):
+        organism = str(species.get("model_organism") or "mouse")
+    elif isinstance(species, str) and species:
+        organism = species
+
+    # Ensure platform annotation columns are forwarded into the HF dataset.
+    attr = dict(tokenizer_cfg.get("custom_attr_name_dict") or {})
+    for col in ANNOTATION_OBS_COLUMNS:
+        attr.setdefault(col, col)
+    tokenizer_cfg["custom_attr_name_dict"] = attr
+
     converted = 0
     for sample_dir in sample_dirs:
         sample_path = Path(sample_dir)
@@ -68,12 +87,18 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
         print(f"Converting {folder_name} → {loom_stem}.loom (from {mtx_path})...")
         try:
             # Read mtx and set Ensembl IDs
-            adata = sc.read_10x_mtx(mtx_path, var_names='gene_ids', make_unique=True)
+            adata = sc.read_10x_mtx(mtx_path, var_names="gene_ids", make_unique=True)
+            # Keep symbols for expression annotation (10x also has gene symbols).
+            if "gene_symbols" not in adata.var.columns and "symbol" not in adata.var.columns:
+                # scanpy stores symbols in var["gene_symbols"] when var_names=gene_ids
+                pass
             # Strip version numbers from Ensembl IDs (e.g., ENSMUSG00000102693.2 -> ENSMUSG00000102693)
             adata.var["ensembl_id"] = [
                 normalize_gene_id(x) for x in adata.var_names.astype(str)
             ]
-            adata.obs['n_counts'] = adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
+            adata.obs["n_counts"] = (
+                adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
+            )
 
             if settings.get("extract_metadata_from_path"):
                 meta = parse_sample_folder_name(folder_name)
@@ -85,10 +110,22 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
             elif tokenizer_cfg.get("custom_attr_name_dict"):
                 adata.obs["sample_id"] = folder_name
 
+            if ct_ann.get("enabled", True):
+                # score_genes needs gene symbols; 10x with gene_ids puts symbols in gene_symbols.
+                annotate_adata_cell_types(
+                    adata,
+                    organism=organism,
+                    panel_path=ct_ann.get("panel"),
+                    enabled=True,
+                    min_score=ct_ann.get("min_score"),
+                    min_margin=ct_ann.get("min_margin"),
+                    inplace=True,
+                )
+
             if tokenizer_cfg.get("custom_attr_name_dict"):
-                for attr in tokenizer_cfg["custom_attr_name_dict"].keys():
-                    if attr not in adata.obs.columns:
-                        adata.obs[attr] = ""
+                for attr_name in tokenizer_cfg["custom_attr_name_dict"].keys():
+                    if attr_name not in adata.obs.columns:
+                        adata.obs[attr_name] = ""
 
             if "sample_id" not in adata.obs.columns:
                 adata.obs["sample_id"] = folder_name
@@ -252,6 +289,7 @@ def main():
             data_cfg['loom_temp_dir'],
             single_cell_settings,
             tokenizer_cfg,
+            species=species,
         )
         loom_dir = Path(data_cfg['loom_temp_dir'])
         n_looms = len(list(loom_dir.glob("*.loom")))

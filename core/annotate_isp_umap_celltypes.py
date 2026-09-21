@@ -86,7 +86,7 @@ def main() -> None:
         input_ids,
         species=cfg.get("species"),
         use_rank_weights=bool(post.get("celltype_rank_weights", True)),
-        prefer_metadata=bool(post.get("prefer_metadata_celltype", False)),
+        prefer_metadata=post.get("prefer_metadata_celltype", "auto"),
         use_negative_markers=bool(post.get("celltype_negative_markers", True)),
         negative_weight=float(post.get("celltype_negative_weight", 0.55)),
     )
