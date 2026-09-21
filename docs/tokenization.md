@@ -273,4 +273,4 @@ Implementation: [`execute_tokenizer_pipeline.py`](../core/execute_tokenizer_pipe
 
 ## 6. Flow summary
 
-**Raw counts + metadata → `config/tokenize.yaml` → `docker compose run --rm tokenize` → `{output_prefix}_0.dataset` → fine-tune or ISP.**
+**Raw counts + metadata → `config/tokenize.yaml` → (optional expression cell-type annotation) → `docker compose run --rm tokenize` → `{output_prefix}_0.dataset` → fine-tune or ISP / ISP UMAP.**
