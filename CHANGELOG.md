@@ -9,10 +9,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - ISP UMAP postprocess **cell-type trajectory tracking**: `umap_celltype_trajectories.png` (per-cell arrows + mean displacement by type), `celltype_shift_summary.csv`, `l2_mean_by_pred_celltype.png`.
+- Script `scripts/validate_asano_igfbp2_celltype_tracking.py` — Asano PIPseq (1w) Igfbp2 delete validation for mouse + human Geneformer with the new cell-type tracking plots.
 
 ### Changed
 
 - ISP UMAP marker cell-type prediction is **species-aware** (mouse vs human panels matched to the Geneformer backend), with optional **rank-weighted** marker scoring and **prefer metadata `cell_type`** when present (`postprocess.prefer_metadata_celltype` / `celltype_rank_weights`).
+- Pipeline E2E TOP1 ISP UMAP now honors `stages.isp.postprocess.enabled` (`--enable-postprocess`).
 
 ## [1.2.0] - 2026-09-20
 

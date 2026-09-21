@@ -418,20 +418,30 @@ def main() -> None:
                 if top_gene:
                     print(f"Running E2E TOP1 significant ISP UMAP for gene: {top_gene}")
                     env = os.environ.copy()
+                    isp_stage = ((pipeline.get("stages") or {}).get("isp") or {})
+                    post = isp_stage.get("postprocess") or {}
+                    umap_cmd = [
+                        sys.executable,
+                        str(ROOT / "run_isp_umap.py"),
+                        "--run-dir",
+                        str(run_dir_path),
+                        "--gene",
+                        top_gene,
+                        "--pca-components",
+                        "50",
+                        "--umap-seed",
+                        "0",
+                    ]
+                    if post is True or (isinstance(post, dict) and post.get("enabled")):
+                        umap_cmd.append("--enable-postprocess")
+                        if isinstance(post, dict) and post.get("celltype_prediction") is False:
+                            umap_cmd.append("--no-postprocess-celltype")
+                        n_clusters = (post or {}).get("n_clusters") if isinstance(post, dict) else None
+                        if n_clusters is not None:
+                            umap_cmd.extend(["--postprocess-n-clusters", str(n_clusters)])
                     # Fig.2/3/4 manuscript style projection: PCA(50) → UMAP (seed 0).
                     _run_subprocess(
-                        [
-                            sys.executable,
-                            str(ROOT / "run_isp_umap.py"),
-                            "--run-dir",
-                            str(run_dir_path),
-                            "--gene",
-                            top_gene,
-                            "--pca-components",
-                            "50",
-                            "--umap-seed",
-                            "0",
-                        ],
+                        umap_cmd,
                         env,
                         "ISP UMAP (TOP1 significant)",
                     )
