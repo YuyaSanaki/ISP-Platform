@@ -15,6 +15,8 @@ EXCLUDED_PRED_LABELS = frozenset(
         "None",
         "Unknown",
         "Ambiguous",
+        "ambiguous_cross_compartment",
+        "Doublet_suspected",
         "Other/Ambiguous",
     }
 )

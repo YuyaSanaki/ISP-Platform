@@ -2,9 +2,10 @@
 """Track ISP-perturbed cells on UMAP and summarize displacement by cell type.
 
 Writes under ``<run-dir>/cluster_coexpr_analysis/``:
-  umap_celltype_trajectories.png   — arrows colored by cell type + mean vectors
-  celltype_shift_summary.csv       — per-type mean/median shift_l2 / umap_shift_l2
-  l2_mean_by_pred_celltype.png     — mean±SEM bar (fine types when available)
+  umap_celltype_trajectories.png       — arrows colored by cell type + mean vectors
+  celltype_shift_summary.csv           — per-type mean/median shift_l2 / umap_shift_l2
+  l2_mean_by_pred_celltype.png         — mean±SEM bar (n>=2 detected types)
+  l2_mean_by_pred_celltype_n_gt20.png  — same bar restricted to types with n>20
 """
 
 from __future__ import annotations
@@ -133,6 +134,54 @@ def build_celltype_shift_summary(
     return summary.reset_index(drop=True)
 
 
+def _plot_l2_mean_bar(
+    plot_df: pd.DataFrame,
+    *,
+    order_bar: list[str],
+    pal: dict[str, str],
+    group_label: str,
+    out_path: Path,
+    title_suffix: str = "",
+) -> Path | None:
+    """Write mean±SEM shift_l2 bar chart for ``order_bar`` groups."""
+    if not order_bar or "shift_l2" not in plot_df.columns:
+        return None
+    stat = (
+        plot_df.groupby("_group")["shift_l2"]
+        .agg(mean="mean", sem=lambda s: float(s.sem()), count="count")
+        .reindex(order_bar)
+    )
+    fig, ax = plt.subplots(figsize=(max(8, 0.7 * len(order_bar) + 2), 4.8))
+    colors = [pal[o] for o in order_bar]
+    ax.bar(
+        range(len(order_bar)),
+        stat["mean"].values,
+        yerr=stat["sem"].values,
+        color=colors,
+        capsize=4,
+    )
+    ax.set_xticks(range(len(order_bar)))
+    ax.set_xticklabels(order_bar, rotation=25, ha="right")
+    ax.set_ylabel("mean shift_l2 ± SEM")
+    title = f"Mean embedding L2 shift by {group_label}"
+    if title_suffix:
+        title = f"{title} ({title_suffix})"
+    ax.set_title(title)
+    for i, n_i in enumerate(stat["count"].values):
+        ax.text(
+            i,
+            float(stat["mean"].iloc[i]) + float(stat["sem"].iloc[i]) + 0.04,
+            f"n={int(n_i)}",
+            ha="center",
+            fontsize=8,
+        )
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved {out_path}")
+    return out_path
+
+
 def run_celltype_trajectory_plots(
     run_dir: Path | None = None,
     annot_csv: Path | None = None,
@@ -141,8 +190,11 @@ def run_celltype_trajectory_plots(
     *,
     num_trajectory_arrows: int = 200,
     seed: int = 42,
-) -> tuple[Path, Path, Path | None]:
-    """Write trajectory + summary figures. Returns (png, summary_csv, mean_bar_png)."""
+) -> tuple[Path, Path, Path | None, Path | None]:
+    """Write trajectory + summary figures.
+
+    Returns (traj_png, summary_csv, mean_bar_png, mean_bar_n_gt20_png).
+    """
     annot_path = _resolve_annot_csv(run_dir, annot_csv)
     df = pd.read_csv(annot_path)
     if "shift_l2" not in df.columns:
@@ -321,45 +373,30 @@ def run_celltype_trajectory_plots(
     plt.close(fig)
     print(f"Saved {traj_png}")
 
-    # Fine-type mean bar when pred_cell_type (or chosen group) is available.
-    mean_png = None
+    # Fine-type mean bars when pred_cell_type (or chosen group) is available.
     plot_df = df.copy()
     plot_df["_group"] = labels
     order_bar = [o for o in order if o in set(plot_df["_group"])]
-    if order_bar and "shift_l2" in plot_df.columns:
-        stat = (
-            plot_df.groupby("_group")["shift_l2"]
-            .agg(mean="mean", sem=lambda s: float(s.sem()), count="count")
-            .reindex(order_bar)
-        )
-        fig, ax = plt.subplots(figsize=(max(8, 0.7 * len(order_bar) + 2), 4.8))
-        colors = [pal[o] for o in order_bar]
-        ax.bar(
-            range(len(order_bar)),
-            stat["mean"].values,
-            yerr=stat["sem"].values,
-            color=colors,
-            capsize=4,
-        )
-        ax.set_xticks(range(len(order_bar)))
-        ax.set_xticklabels(order_bar, rotation=25, ha="right")
-        ax.set_ylabel("mean shift_l2 ± SEM")
-        ax.set_title(f"Mean embedding L2 shift by {resolved_group.replace('_', ' ')}")
-        for i, n_i in enumerate(stat["count"].values):
-            ax.text(
-                i,
-                float(stat["mean"].iloc[i]) + float(stat["sem"].iloc[i]) + 0.04,
-                f"n={int(n_i)}",
-                ha="center",
-                fontsize=8,
-            )
-        plt.tight_layout()
-        mean_png = dest / "l2_mean_by_pred_celltype.png"
-        fig.savefig(mean_png, dpi=160, bbox_inches="tight")
-        plt.close(fig)
-        print(f"Saved {mean_png}")
+    group_label = resolved_group.replace("_", " ")
+    mean_png = _plot_l2_mean_bar(
+        plot_df,
+        order_bar=order_bar,
+        pal=pal,
+        group_label=group_label,
+        out_path=dest / "l2_mean_by_pred_celltype.png",
+    )
+    counts = plot_df["_group"].value_counts()
+    order_n20 = [o for o in order_bar if int(counts.get(o, 0)) > 20]
+    mean_png_n20 = _plot_l2_mean_bar(
+        plot_df,
+        order_bar=order_n20,
+        pal=pal,
+        group_label=group_label,
+        out_path=dest / "l2_mean_by_pred_celltype_n_gt20.png",
+        title_suffix="n>20",
+    )
 
-    return traj_png, summary_path, mean_png
+    return traj_png, summary_path, mean_png, mean_png_n20
 
 
 def main() -> None:

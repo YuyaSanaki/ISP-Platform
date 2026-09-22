@@ -1,0 +1,1495 @@
+{
+  "version": "isp_expression_v2",
+  "description": "Pre-ISP major-lineage panel. v1 flat lists revised: split near-neighbor types, demote state/shared genes to support, and add anti-markers. Not a CellMarker dump. Final labels still require core-hit and cross-compartment checks in celltype_annotate_expression.py. Re-tokenize to apply; v1 datasets stay isp_expression_v1.",
+  "min_score": 0.2,
+  "min_margin": 0.05,
+  "min_core_detected": 2,
+  "support_weight": 0.35,
+  "anti_weight": 0.75,
+  "gates": {
+    "myeloid": {
+      "min_detected": 2,
+      "mouse": [
+        "Ptprc",
+        "Tyrobp",
+        "Lst1",
+        "Fcer1g",
+        "Aif1"
+      ],
+      "human": [
+        "PTPRC",
+        "TYROBP",
+        "LST1",
+        "FCER1G",
+        "AIF1"
+      ]
+    }
+  },
+  "types": {
+    "T_cell": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Cd3d",
+          "Cd3e",
+          "Cd3g",
+          "Trac",
+          "Trbc1",
+          "Trbc2",
+          "Lck"
+        ],
+        "support": [
+          "Cd2",
+          "Trdc"
+        ],
+        "anti": [
+          "Ms4a1",
+          "Cd79a"
+        ]
+      },
+      "human": {
+        "core": [
+          "CD3D",
+          "CD3E",
+          "CD3G",
+          "TRAC",
+          "TRBC1",
+          "TRBC2",
+          "LCK"
+        ],
+        "support": [
+          "CD2",
+          "TRDC"
+        ],
+        "anti": [
+          "MS4A1",
+          "CD79A"
+        ]
+      }
+    },
+    "B_cell": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Cd79a",
+          "Cd79b",
+          "Ms4a1",
+          "Cd37",
+          "Cd74"
+        ],
+        "support": [
+          "Cd19",
+          "Ighm"
+        ],
+        "anti": [
+          "Cd3d",
+          "Cd3e"
+        ]
+      },
+      "human": {
+        "core": [
+          "CD79A",
+          "CD79B",
+          "MS4A1",
+          "CD37",
+          "CD74"
+        ],
+        "support": [
+          "CD19",
+          "IGHM",
+          "HLA-DRA"
+        ],
+        "anti": [
+          "CD3D",
+          "CD3E"
+        ]
+      }
+    },
+    "Plasma_cell": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Jchain",
+          "Mzb1",
+          "Sdc1",
+          "Xbp1",
+          "Derl3"
+        ],
+        "support": [
+          "Ighm"
+        ],
+        "anti": [
+          "Ms4a1",
+          "Cd19"
+        ]
+      },
+      "human": {
+        "core": [
+          "JCHAIN",
+          "MZB1",
+          "SDC1",
+          "XBP1",
+          "DERL3"
+        ],
+        "support": [
+          "IGHM"
+        ],
+        "anti": [
+          "MS4A1",
+          "CD19"
+        ]
+      }
+    },
+    "NK_cell": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Ncr1",
+          "Klrk1",
+          "Klrd1",
+          "Prf1",
+          "Nkg7",
+          "Gzmb"
+        ],
+        "support": [
+          "Gzma"
+        ],
+        "anti": [
+          "Cd3d",
+          "Cd3e",
+          "Trac"
+        ]
+      },
+      "human": {
+        "core": [
+          "NKG7",
+          "KLRD1",
+          "KLRF1",
+          "GNLY",
+          "PRF1",
+          "GZMB"
+        ],
+        "support": [
+          "GZMA"
+        ],
+        "anti": [
+          "CD3D",
+          "CD3E",
+          "TRAC"
+        ]
+      }
+    },
+    "Monocyte": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Ly6c2",
+          "Ccr2",
+          "Lyz2",
+          "S100a8",
+          "S100a9",
+          "Plac8",
+          "Ctss"
+        ],
+        "support": [
+          "Nr4a1",
+          "Fcgr3"
+        ],
+        "anti": [
+          "Clec9a",
+          "Xcr1",
+          "Adgre1"
+        ]
+      },
+      "human": {
+        "core": [
+          "LYZ",
+          "S100A8",
+          "S100A9",
+          "S100A12",
+          "FCN1",
+          "CTSS",
+          "CD14"
+        ],
+        "support": [
+          "FCGR3A",
+          "CX3CR1",
+          "LST1"
+        ],
+        "anti": [
+          "CLEC9A",
+          "XCR1",
+          "CD1C"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "Macrophage": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Adgre1",
+          "Cd68",
+          "Csf1r",
+          "Mertk"
+        ],
+        "support": [
+          "Aif1",
+          "Tyrobp",
+          "Lst1",
+          "Fcer1g",
+          "Lyz2",
+          "Mrc1"
+        ],
+        "anti": [
+          "Clec9a",
+          "Xcr1",
+          "Ly6c2",
+          "S100a8",
+          "S100a9"
+        ]
+      },
+      "human": {
+        "core": [
+          "CD68",
+          "CSF1R",
+          "MSR1",
+          "MERTK"
+        ],
+        "support": [
+          "AIF1",
+          "TYROBP",
+          "LST1",
+          "FCER1G",
+          "LYZ",
+          "MRC1"
+        ],
+        "anti": [
+          "CLEC9A",
+          "XCR1",
+          "CD1C",
+          "S100A8",
+          "S100A9",
+          "FCN1"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "C1QC_APOE_macrophage": {
+      "display_name": "C1QC+ resident-like macrophage",
+      "tissue": "Immune",
+      "compartment": "immune",
+      "requires": {
+        "myeloid_compartment": true,
+        "microglia_core_negative_or_low": true
+      },
+      "mouse": {
+        "core": [
+          "C1qa",
+          "C1qb",
+          "C1qc",
+          "Apoe",
+          "Mertk"
+        ],
+        "support": [
+          "Folr2",
+          "Lyve1"
+        ],
+        "anti": [
+          "Ly6c2",
+          "S100a8",
+          "P2ry12",
+          "Tmem119"
+        ]
+      },
+      "human": {
+        "core": [
+          "C1QA",
+          "C1QB",
+          "C1QC",
+          "APOE",
+          "MERTK"
+        ],
+        "support": [
+          "FOLR2",
+          "LYVE1"
+        ],
+        "anti": [
+          "S100A8",
+          "FCN1",
+          "P2RY12",
+          "TMEM119"
+        ]
+      }
+    },
+    "cDC1": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Clec9a",
+          "Xcr1",
+          "Batf3",
+          "Irf8"
+        ],
+        "support": [
+          "Flt3"
+        ],
+        "anti": [
+          "S100a8",
+          "S100a9",
+          "Adgre1"
+        ]
+      },
+      "human": {
+        "core": [
+          "CLEC9A",
+          "XCR1",
+          "BATF3",
+          "IRF8"
+        ],
+        "support": [
+          "FLT3"
+        ],
+        "anti": [
+          "S100A8",
+          "S100A9",
+          "CD14"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "cDC2": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Cd209a",
+          "Sirpa",
+          "Clec10a"
+        ],
+        "support": [
+          "Flt3"
+        ],
+        "anti": [
+          "Clec9a",
+          "Xcr1",
+          "S100a8"
+        ]
+      },
+      "human": {
+        "core": [
+          "CD1C",
+          "CLEC10A",
+          "FCER1A"
+        ],
+        "support": [
+          "FLT3",
+          "SIRPA"
+        ],
+        "anti": [
+          "CLEC9A",
+          "XCR1",
+          "S100A8"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "pDC": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Siglech",
+          "Bst2",
+          "Ccr9",
+          "Tcf4"
+        ],
+        "support": [
+          "Irf8"
+        ],
+        "anti": [
+          "Clec9a",
+          "S100a8",
+          "Cd3d"
+        ]
+      },
+      "human": {
+        "core": [
+          "TCF4",
+          "IL3RA",
+          "LILRA4",
+          "CLEC4C"
+        ],
+        "support": [
+          "GZMB"
+        ],
+        "anti": [
+          "CLEC9A",
+          "S100A8",
+          "CD3D"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "Neutrophil": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "S100a8",
+          "S100a9",
+          "Retnlg",
+          "Csf3r",
+          "Cxcr2",
+          "Mmp8",
+          "Mmp9"
+        ],
+        "support": [],
+        "anti": [
+          "Adgre1",
+          "Cd68"
+        ]
+      },
+      "human": {
+        "core": [
+          "FCGR3B",
+          "CSF3R",
+          "CXCR2",
+          "CEACAM8",
+          "S100A8",
+          "S100A9"
+        ],
+        "support": [
+          "NAMPT",
+          "S100P"
+        ],
+        "anti": [
+          "CD68",
+          "CSF1R"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "Mast_cell": {
+      "tissue": "Immune",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "Cpa3",
+          "Kit",
+          "Tpsb2",
+          "Mcpt4",
+          "Hdc"
+        ],
+        "support": [
+          "Ms4a2",
+          "Gata2"
+        ],
+        "anti": [
+          "Cd3d",
+          "Ms4a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "TPSAB1",
+          "TPSB2",
+          "CPA3",
+          "HDC",
+          "MS4A2",
+          "GATA2"
+        ],
+        "support": [
+          "KIT"
+        ],
+        "anti": [
+          "CD3D",
+          "MS4A1"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true
+      }
+    },
+    "Microglia": {
+      "tissue": "Neural",
+      "compartment": "immune",
+      "mouse": {
+        "core": [
+          "P2ry12",
+          "Tmem119",
+          "Sall1",
+          "Hexb",
+          "Gpr34"
+        ],
+        "support": [
+          "Siglech",
+          "Cx3cr1",
+          "C1qa"
+        ],
+        "anti": [
+          "Ly6c2",
+          "Ccr2",
+          "S100a8"
+        ]
+      },
+      "human": {
+        "core": [
+          "P2RY12",
+          "TMEM119",
+          "SALL1",
+          "HEXB",
+          "GPR34"
+        ],
+        "support": [
+          "CX3CR1",
+          "C1QA"
+        ],
+        "anti": [
+          "FCN1",
+          "S100A8",
+          "CCR2"
+        ]
+      },
+      "requires": {
+        "myeloid_compartment": true,
+        "microglia_core_rescue": true
+      }
+    },
+    "Neuron": {
+      "tissue": "Neural",
+      "compartment": "neural",
+      "mouse": {
+        "core": [
+          "Rbfox3",
+          "Snap25",
+          "Syt1",
+          "Stmn2",
+          "Elavl3",
+          "Elavl4",
+          "Map2"
+        ],
+        "support": [
+          "Tubb3"
+        ],
+        "anti": [
+          "Gfap",
+          "Aldh1l1",
+          "Mbp"
+        ]
+      },
+      "human": {
+        "core": [
+          "RBFOX3",
+          "SNAP25",
+          "SYT1",
+          "STMN2",
+          "ELAVL3",
+          "ELAVL4",
+          "MAP2"
+        ],
+        "support": [
+          "TUBB3"
+        ],
+        "anti": [
+          "GFAP",
+          "ALDH1L1",
+          "MBP"
+        ]
+      }
+    },
+    "Astrocyte": {
+      "tissue": "Neural",
+      "compartment": "neural",
+      "mouse": {
+        "core": [
+          "Aldh1l1",
+          "Aqp4",
+          "Slc1a3",
+          "Slc1a2",
+          "Sox9",
+          "Glul"
+        ],
+        "support": [
+          "Gfap"
+        ],
+        "anti": [
+          "Snap25",
+          "Syt1",
+          "Mbp"
+        ]
+      },
+      "human": {
+        "core": [
+          "ALDH1L1",
+          "AQP4",
+          "SLC1A3",
+          "SLC1A2",
+          "SOX9",
+          "GLUL"
+        ],
+        "support": [
+          "GFAP"
+        ],
+        "anti": [
+          "SNAP25",
+          "SYT1",
+          "MBP"
+        ]
+      }
+    },
+    "Oligodendrocyte": {
+      "tissue": "Neural",
+      "compartment": "neural",
+      "mouse": {
+        "core": [
+          "Mbp",
+          "Plp1",
+          "Mobp",
+          "Mag",
+          "Cldn11",
+          "Mog"
+        ],
+        "support": [],
+        "anti": [
+          "Pdgfra",
+          "Cspg4",
+          "Gfap"
+        ]
+      },
+      "human": {
+        "core": [
+          "MBP",
+          "PLP1",
+          "MOBP",
+          "MAG",
+          "CLDN11",
+          "MOG"
+        ],
+        "support": [],
+        "anti": [
+          "PDGFRA",
+          "CSPG4",
+          "GFAP"
+        ]
+      }
+    },
+    "OPC": {
+      "tissue": "Neural",
+      "compartment": "neural",
+      "mouse": {
+        "core": [
+          "Pdgfra",
+          "Cspg4",
+          "Vcan"
+        ],
+        "support": [
+          "Sox10",
+          "Olig1",
+          "Olig2"
+        ],
+        "anti": [
+          "Mbp",
+          "Mog",
+          "Plp1"
+        ]
+      },
+      "human": {
+        "core": [
+          "PDGFRA",
+          "CSPG4",
+          "VCAN"
+        ],
+        "support": [
+          "SOX10",
+          "OLIG1",
+          "OLIG2"
+        ],
+        "anti": [
+          "MBP",
+          "MOG",
+          "PLP1"
+        ]
+      }
+    },
+    "Endothelial": {
+      "tissue": "Vascular",
+      "compartment": "endothelial",
+      "mouse": {
+        "core": [
+          "Pecam1",
+          "Cdh5",
+          "Cldn5",
+          "Kdr",
+          "Ramp2",
+          "Emcn",
+          "Vwf"
+        ],
+        "support": [
+          "Flt1"
+        ],
+        "anti": [
+          "Prox1",
+          "Pdpn",
+          "Lyve1"
+        ]
+      },
+      "human": {
+        "core": [
+          "PECAM1",
+          "CDH5",
+          "CLDN5",
+          "KDR",
+          "RAMP2",
+          "EMCN",
+          "VWF"
+        ],
+        "support": [
+          "FLT1"
+        ],
+        "anti": [
+          "PROX1",
+          "PDPN",
+          "LYVE1"
+        ]
+      }
+    },
+    "Lymphatic_endothelial": {
+      "tissue": "Vascular",
+      "compartment": "endothelial",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Prox1",
+          "Pdpn",
+          "Flt4",
+          "Ccl21a"
+        ],
+        "support": [
+          "Lyve1",
+          "Pecam1",
+          "Cdh5",
+          "Reln"
+        ],
+        "anti": []
+      },
+      "human": {
+        "core": [
+          "PROX1",
+          "PDPN",
+          "FLT4",
+          "CCL21"
+        ],
+        "support": [
+          "LYVE1",
+          "PECAM1",
+          "CDH5",
+          "RELN",
+          "NRP2"
+        ],
+        "anti": []
+      }
+    },
+    "Pericyte": {
+      "tissue": "Vascular",
+      "compartment": "stromal",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Rgs5",
+          "Pdgfrb",
+          "Cspg4",
+          "Mcam",
+          "Rbp1",
+          "Abcc9",
+          "Kcnj8"
+        ],
+        "support": [],
+        "anti": [
+          "Myh11",
+          "Cnn1",
+          "Col1a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "RGS5",
+          "PDGFRB",
+          "CSPG4",
+          "MCAM",
+          "RBP1",
+          "ABCC9",
+          "KCNJ8"
+        ],
+        "support": [],
+        "anti": [
+          "MYH11",
+          "CNN1",
+          "COL1A1"
+        ]
+      }
+    },
+    "Vascular_SMC": {
+      "tissue": "Muscle",
+      "compartment": "muscle",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Myh11",
+          "Cnn1",
+          "Actg2",
+          "Smtn",
+          "Lmod1"
+        ],
+        "support": [
+          "Tagln",
+          "Acta2"
+        ],
+        "anti": [
+          "Dcn",
+          "Lum",
+          "Col1a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "MYH11",
+          "CNN1",
+          "ACTG2",
+          "SMTN",
+          "LMOD1"
+        ],
+        "support": [
+          "TAGLN",
+          "ACTA2"
+        ],
+        "anti": [
+          "DCN",
+          "LUM",
+          "COL1A1"
+        ]
+      }
+    },
+    "Fibroblast": {
+      "tissue": "Stromal",
+      "compartment": "stromal",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Dcn",
+          "Lum",
+          "Col1a1",
+          "Col1a2",
+          "Col3a1",
+          "Col6a1",
+          "Dpt"
+        ],
+        "support": [
+          "Col6a2",
+          "Col6a3",
+          "C7",
+          "Pi16",
+          "Pdgfra"
+        ],
+        "anti": [
+          "Myh11",
+          "Cnn1",
+          "Pecam1"
+        ]
+      },
+      "human": {
+        "core": [
+          "DCN",
+          "LUM",
+          "COL1A1",
+          "COL1A2",
+          "COL3A1",
+          "COL6A1",
+          "DPT"
+        ],
+        "support": [
+          "COL6A2",
+          "COL6A3",
+          "C7",
+          "PI16",
+          "PDGFRA"
+        ],
+        "anti": [
+          "MYH11",
+          "CNN1",
+          "PECAM1"
+        ]
+      }
+    },
+    "Myofibroblast": {
+      "tissue": "Stromal",
+      "compartment": "stromal",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Col1a1",
+          "Col1a2",
+          "Col3a1",
+          "Dcn",
+          "Acta2",
+          "Tagln"
+        ],
+        "support": [
+          "Col6a1",
+          "Postn",
+          "Cthrc1",
+          "Tnc"
+        ],
+        "anti": [
+          "Myh11",
+          "Cnn1",
+          "Rgs5",
+          "Pdgfrb",
+          "Cspg4",
+          "Mcam",
+          "Pecam1"
+        ]
+      },
+      "human": {
+        "core": [
+          "COL1A1",
+          "COL1A2",
+          "COL3A1",
+          "DCN",
+          "ACTA2",
+          "TAGLN"
+        ],
+        "support": [
+          "COL6A1",
+          "POSTN",
+          "CTHRC1",
+          "TNC"
+        ],
+        "anti": [
+          "MYH11",
+          "CNN1",
+          "RGS5",
+          "PDGFRB",
+          "CSPG4",
+          "MCAM",
+          "PECAM1"
+        ]
+      }
+    },
+    "Cardiomyocyte": {
+      "tissue": "Muscle",
+      "compartment": "muscle",
+      "mouse": {
+        "core": [
+          "Tnnt2",
+          "Actc1",
+          "Ttn",
+          "Ryr2",
+          "Myh6",
+          "Myh7",
+          "Tnni3"
+        ],
+        "support": [
+          "Nppa"
+        ],
+        "anti": [
+          "Acta1",
+          "Ckm",
+          "Col1a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "TNNT2",
+          "ACTC1",
+          "TTN",
+          "RYR2",
+          "MYH6",
+          "MYH7",
+          "TNNI3"
+        ],
+        "support": [
+          "NPPA"
+        ],
+        "anti": [
+          "ACTA1",
+          "CKM",
+          "COL1A1"
+        ]
+      }
+    },
+    "Skeletal_myocyte": {
+      "tissue": "Muscle",
+      "compartment": "muscle",
+      "mouse": {
+        "core": [
+          "Acta1",
+          "Ckm",
+          "Des",
+          "Ttn",
+          "Mylpf"
+        ],
+        "support": [],
+        "anti": [
+          "Tnnt2",
+          "Myh6",
+          "Col1a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "ACTA1",
+          "CKM",
+          "DES",
+          "TTN",
+          "MYLPF"
+        ],
+        "support": [],
+        "anti": [
+          "TNNT2",
+          "MYH6",
+          "COL1A1"
+        ]
+      },
+      "states": {
+        "fiber_program": {
+          "min_detected": 2,
+          "fast": {
+            "mouse": {
+              "core": [
+                "Myh1",
+                "Myh2",
+                "Myh4",
+                "Tnnc2"
+              ]
+            },
+            "human": {
+              "core": [
+                "MYH1",
+                "MYH2",
+                "TNNC2"
+              ]
+            }
+          },
+          "slow": {
+            "mouse": {
+              "core": [
+                "Myh7",
+                "Tnnt1",
+                "Tnni1"
+              ]
+            },
+            "human": {
+              "core": [
+                "MYH7",
+                "TNNT1",
+                "TNNI1"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Hepatocyte": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Alb",
+          "Apoa1",
+          "Apob",
+          "Ttr",
+          "Fga",
+          "Fgb",
+          "Fgg"
+        ],
+        "support": [
+          "Cyp3a11",
+          "Cyp2e1"
+        ],
+        "anti": [
+          "Folr1",
+          "Kcnj13",
+          "Aqp1"
+        ]
+      },
+      "human": {
+        "core": [
+          "ALB",
+          "APOA1",
+          "APOB",
+          "TTR",
+          "FGA",
+          "FGB",
+          "FGG"
+        ],
+        "support": [
+          "CYP3A4"
+        ],
+        "anti": [
+          "FOLR1",
+          "KCNJ13",
+          "AQP1"
+        ]
+      }
+    },
+    "Alveolar_AT2": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "mouse": {
+        "core": [
+          "Sftpc",
+          "Sftpa1",
+          "Sftpb",
+          "Abca3",
+          "Napsa"
+        ],
+        "support": [
+          "Sftpd",
+          "Lamp3",
+          "Etv5"
+        ],
+        "anti": [
+          "Ager",
+          "Cav1",
+          "Krt5",
+          "Scgb1a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "SFTPC",
+          "SFTPA1",
+          "SFTPB",
+          "ABCA3",
+          "NAPSA"
+        ],
+        "support": [
+          "SFTPD",
+          "LAMP3",
+          "ETV5"
+        ],
+        "anti": [
+          "AGER",
+          "CAV1",
+          "KRT5",
+          "SCGB1A1"
+        ]
+      }
+    },
+    "Alveolar_AT1": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Ager",
+          "Cav1",
+          "Emp2",
+          "Pdpn",
+          "Hopx",
+          "Rtkn2"
+        ],
+        "support": [],
+        "anti": [
+          "Sftpc",
+          "Sftpb",
+          "Scgb1a1"
+        ]
+      },
+      "human": {
+        "core": [
+          "AGER",
+          "CAV1",
+          "EMP2",
+          "PDPN",
+          "HOPX",
+          "RTKN2"
+        ],
+        "support": [],
+        "anti": [
+          "SFTPC",
+          "SFTPB",
+          "SCGB1A1"
+        ]
+      }
+    },
+    "Enterocyte": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Alpi",
+          "Fabp1",
+          "Fabp2",
+          "Apoa1",
+          "Apoa4",
+          "Krt20",
+          "Vil1"
+        ],
+        "support": [
+          "Krt8",
+          "Krt18"
+        ],
+        "anti": [
+          "Ptprc",
+          "Cd3d"
+        ]
+      },
+      "human": {
+        "core": [
+          "ALPI",
+          "FABP1",
+          "FABP2",
+          "APOA1",
+          "APOA4",
+          "KRT20",
+          "VIL1"
+        ],
+        "support": [
+          "KRT8",
+          "KRT18"
+        ],
+        "anti": [
+          "PTPRC",
+          "CD3D"
+        ]
+      }
+    },
+    "Basal_keratinocyte": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "mouse": {
+        "core": [
+          "Krt5",
+          "Krt14",
+          "Krt15",
+          "Trp63"
+        ],
+        "support": [],
+        "anti": [
+          "Krt1",
+          "Krt10",
+          "Ivl"
+        ]
+      },
+      "human": {
+        "core": [
+          "KRT5",
+          "KRT14",
+          "KRT15",
+          "TP63"
+        ],
+        "support": [],
+        "anti": [
+          "KRT1",
+          "KRT10",
+          "IVL"
+        ]
+      }
+    },
+    "Suprabasal_keratinocyte": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "mouse": {
+        "core": [
+          "Krt1",
+          "Krt10",
+          "Ivl",
+          "Lor",
+          "Flg"
+        ],
+        "support": [],
+        "anti": [
+          "Trp63",
+          "Krt15"
+        ]
+      },
+      "human": {
+        "core": [
+          "KRT1",
+          "KRT10",
+          "IVL",
+          "LORICRIN",
+          "FLG"
+        ],
+        "support": [],
+        "anti": [
+          "TP63",
+          "KRT15"
+        ]
+      }
+    },
+    "Epithelial_general": {
+      "tissue": "Epithelial",
+      "compartment": "epithelial",
+      "assign": false,
+      "mouse": {
+        "core": [
+          "Epcam",
+          "Krt8",
+          "Krt18",
+          "Cdh1"
+        ],
+        "support": [],
+        "anti": [
+          "Ptprc",
+          "Pecam1"
+        ]
+      },
+      "human": {
+        "core": [
+          "EPCAM",
+          "KRT8",
+          "KRT18",
+          "CDH1"
+        ],
+        "support": [],
+        "anti": [
+          "PTPRC",
+          "PECAM1"
+        ]
+      }
+    },
+    "Erythroid": {
+      "tissue": "Blood",
+      "compartment": "blood",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Hba-a1",
+          "Hba-a2",
+          "Hbb-bs",
+          "Alas2",
+          "Gypa",
+          "Slc4a1",
+          "Klf1",
+          "Ahsp"
+        ],
+        "support": [],
+        "anti": [
+          "Pf4",
+          "Ppbp",
+          "Ptprc"
+        ]
+      },
+      "human": {
+        "core": [
+          "HBA1",
+          "HBA2",
+          "HBB",
+          "ALAS2",
+          "GYPA",
+          "SLC4A1",
+          "KLF1",
+          "AHSP"
+        ],
+        "support": [],
+        "anti": [
+          "PF4",
+          "PPBP",
+          "PTPRC"
+        ]
+      }
+    },
+    "Megakaryocyte": {
+      "tissue": "Blood",
+      "compartment": "blood",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Itga2b",
+          "Gp9",
+          "Gp1ba",
+          "Tubb1",
+          "Nfe2"
+        ],
+        "support": [
+          "Pf4",
+          "Ppbp"
+        ],
+        "anti": [
+          "Hbb-bs",
+          "Alas2",
+          "Ptprc"
+        ]
+      },
+      "human": {
+        "core": [
+          "ITGA2B",
+          "GP9",
+          "GP1BA",
+          "TUBB1",
+          "NFE2"
+        ],
+        "support": [
+          "PF4",
+          "PPBP"
+        ],
+        "anti": [
+          "HBB",
+          "ALAS2",
+          "PTPRC"
+        ]
+      }
+    },
+    "Choroid_plexus": {
+      "tissue": "Neural",
+      "compartment": "neural",
+      "min_core_detected": 3,
+      "mouse": {
+        "core": [
+          "Ttr",
+          "Aqp1",
+          "Folr1",
+          "Kcnj13",
+          "Otx2",
+          "Slc4a10"
+        ],
+        "support": [],
+        "anti": [
+          "Alb",
+          "Apob",
+          "Fga"
+        ]
+      },
+      "human": {
+        "core": [
+          "TTR",
+          "AQP1",
+          "FOLR1",
+          "KCNJ13",
+          "OTX2",
+          "SLC4A10"
+        ],
+        "support": [],
+        "anti": [
+          "ALB",
+          "APOB",
+          "FGA"
+        ]
+      }
+    }
+  }
+}

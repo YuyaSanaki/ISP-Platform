@@ -43,3 +43,4 @@ __pycache__/
 !/core/geneformer/dicts/orthologs/*_curated.tsv
 !/core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv
 !/core/geneformer/dicts/celltype_panels/isp_expression_v1.json
+!/core/geneformer/dicts/celltype_panels/isp_expression_v2.json

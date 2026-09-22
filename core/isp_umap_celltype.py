@@ -2,7 +2,7 @@
 
 Brain / token-rank marker panels were removed. Cell types must come from
 tokenize-time expression annotation (``celltype_annotate_expression`` →
-``cell_type`` + ``celltype_annotator=isp_expression_v1`` on the HF dataset).
+``cell_type`` + ``celltype_annotator=isp_expression_v2`` on the HF dataset).
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def apply_metadata_cell_types(
     if meta_col is None:
         logger.warning(
             "No cell_type metadata column; pred_cell_type=Unknown "
-            "(enable tokenizer.celltype_annotation / isp_expression_v1)"
+            "(enable tokenizer.celltype_annotation / isp_expression_v2)"
         )
         out["celltype_plot"] = out["pred_cell_type"]
         return out
@@ -212,6 +212,6 @@ def annotate_dataframe_with_cell_types(
 def predict_cell_types_from_input_ids(*_args, **_kwargs) -> pd.DataFrame:
     raise RuntimeError(
         "Token-rank brain cell-type panels were removed. "
-        "Enable tokenizer.celltype_annotation (isp_expression_v1) and use "
+        "Enable tokenizer.celltype_annotation (isp_expression_v2) and use "
         "annotate_dataframe_with_cell_types / prefer_metadata_celltype=auto."
     )

@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-22
+
+### Added
+
+- Pred L2 mean bar restricted to types with n>20: `l2_mean_by_pred_celltype_n_gt20.png`.
+- Pre-ISP panel `isp_expression_v2`: split near-neighbor types (AT1/AT2, cDC1/cDC2/pDC, basal/suprabasal keratinocyte), core/support/anti markers, and gates for core-hit count plus cross-compartment `Doublet_suspected` / `ambiguous_cross_compartment`. Fiber type is a `celltype_state` on `Skeletal_myocyte`. Mural and myeloid winners also store an in-group alternate in `celltype_state`. `celltype_confidence=low` when fewer than half of a type's core genes are in the Geneformer vocabulary. `C1QC_APOE_macrophage` replaces a broad resident-macrophage label. Existing tokenized datasets stay `isp_expression_v1` until re-tokenized.
+
+### Notes
+
+- Docker image / Compose default tag is `isp-platform:v1.3.1`.
+
 ## [1.3.0] - 2026-09-21
 
 ### Changed

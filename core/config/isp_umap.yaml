@@ -52,6 +52,7 @@ runtime:
 # When enabled, writes cluster_coexpr_analysis/ under the UMAP run dir:
 #   umap_joint_l2_cluster_celltype.png, umap_celltype_trajectories.png,
 #   l2_mean_by_pred_celltype.png (mean L2 desc; n>=2, no Ambiguous),
+#   l2_mean_by_pred_celltype_n_gt20.png (same; n>20 only),
 #   per_cell_cluster_l2_celltype.csv, joint_umap_coords.npy
 postprocess:
   enabled: false
