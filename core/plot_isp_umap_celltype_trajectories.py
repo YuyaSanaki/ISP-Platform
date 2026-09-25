@@ -134,6 +134,29 @@ def build_celltype_shift_summary(
     return summary.reset_index(drop=True)
 
 
+def _model_panel_label(run_dir: Path | None, annot_path: Path | None = None) -> str:
+    """Human-readable model/run label from output path (Mouse-Mouse vs Mouse-Human)."""
+    parts: list[str] = []
+    for p in (run_dir, annot_path):
+        if p is None:
+            continue
+        parts.extend(p.resolve().parts)
+    joined = "/".join(parts)
+    lower = joined.lower()
+    if "mouse-human" in lower or "mouse_human" in lower:
+        return "Mouse→Human Geneformer"
+    if "mouse-mouse" in lower or "mouse_mouse" in lower:
+        return "Mouse→Mouse Geneformer"
+    # Fall back to the isp_umap parent folder name when present.
+    for p in (run_dir, annot_path):
+        if p is None:
+            continue
+        for part in reversed(p.resolve().parts):
+            if part.startswith("2026") or "Mouse" in part or "mouse" in part:
+                return part
+    return ""
+
+
 def _plot_l2_mean_bar(
     plot_df: pd.DataFrame,
     *,
@@ -142,6 +165,7 @@ def _plot_l2_mean_bar(
     group_label: str,
     out_path: Path,
     title_suffix: str = "",
+    panel_label: str = "",
 ) -> Path | None:
     """Write mean±SEM shift_l2 bar chart for ``order_bar`` groups."""
     if not order_bar or "shift_l2" not in plot_df.columns:
@@ -159,14 +183,49 @@ def _plot_l2_mean_bar(
         yerr=stat["sem"].values,
         color=colors,
         capsize=4,
+        zorder=3,
     )
     ax.set_xticks(range(len(order_bar)))
     ax.set_xticklabels(order_bar, rotation=25, ha="right")
     ax.set_ylabel("mean shift_l2 ± SEM")
     title = f"Mean embedding L2 shift by {group_label}"
-    if title_suffix:
-        title = f"{title} ({title_suffix})"
+    extras = [x for x in (panel_label, title_suffix) if x]
+    if extras:
+        title = f"{title} ({', '.join(extras)})"
     ax.set_title(title)
+    # L-frame only (no box); ticks on both axes; light y-grid guidelines.
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    for spine in ("bottom", "left"):
+        ax.spines[spine].set_visible(True)
+        ax.spines[spine].set_color("black")
+        ax.spines[spine].set_linewidth(0.8)
+    ax.tick_params(
+        axis="y",
+        which="major",
+        direction="out",
+        length=4,
+        width=0.8,
+        colors="black",
+        left=True,
+        right=False,
+    )
+    ax.tick_params(
+        axis="x",
+        which="major",
+        direction="out",
+        length=5,
+        width=0.9,
+        colors="black",
+        bottom=True,
+        top=False,
+        labelbottom=True,
+    )
+    ax.xaxis.set_ticks_position("bottom")
+    ax.yaxis.set_ticks_position("left")
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, color="#d0d0d0", linewidth=0.6, linestyle="-")
+    ax.xaxis.grid(False)
     for i, n_i in enumerate(stat["count"].values):
         ax.text(
             i,
@@ -174,6 +233,7 @@ def _plot_l2_mean_bar(
             f"n={int(n_i)}",
             ha="center",
             fontsize=8,
+            zorder=4,
         )
     plt.tight_layout()
     fig.savefig(out_path, dpi=160, bbox_inches="tight")
@@ -223,6 +283,8 @@ def run_celltype_trajectory_plots(
     if not dest.is_absolute():
         dest = Path.cwd() / dest
     dest.mkdir(parents=True, exist_ok=True)
+
+    panel_label = _model_panel_label(run_dir, annot_path)
 
     labels = df[resolved_group].astype(str)
     detected = labels.map(is_detected_pred_label)
@@ -315,7 +377,10 @@ def run_celltype_trajectory_plots(
         for o in order
     ]
     ax.legend(handles=handles, frameon=False, fontsize=8, loc="best")
-    ax.set_title(f"ISP trajectories by {resolved_group.replace('_', ' ')}")
+    traj_title = f"ISP trajectories by {resolved_group.replace('_', ' ')}"
+    if panel_label:
+        traj_title = f"{traj_title} ({panel_label})"
+    ax.set_title(traj_title)
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
 
@@ -363,7 +428,10 @@ def run_celltype_trajectory_plots(
             ha="left",
             va="bottom",
         )
-    ax.set_title("Mean UMAP displacement by cell type")
+    mean_traj_title = "Mean UMAP displacement by cell type"
+    if panel_label:
+        mean_traj_title = f"{mean_traj_title} ({panel_label})"
+    ax.set_title(mean_traj_title)
     ax.set_xlabel("UMAP 1")
     ax.set_ylabel("UMAP 2")
 
@@ -384,6 +452,7 @@ def run_celltype_trajectory_plots(
         pal=pal,
         group_label=group_label,
         out_path=dest / "l2_mean_by_pred_celltype.png",
+        panel_label=panel_label,
     )
     counts = plot_df["_group"].value_counts()
     order_n20 = [o for o in order_bar if int(counts.get(o, 0)) > 20]
@@ -394,6 +463,7 @@ def run_celltype_trajectory_plots(
         group_label=group_label,
         out_path=dest / "l2_mean_by_pred_celltype_n_gt20.png",
         title_suffix="n>20",
+        panel_label=panel_label,
     )
 
     return traj_png, summary_path, mean_png, mean_png_n20

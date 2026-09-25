@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Pred L2 mean bar charts use an L-frame (no top/right spines), outward axis ticks, light horizontal y-grid, and a Mouse→Mouse / Mouse→Human Geneformer panel label in the title.
+
 ## [1.3.1] - 2026-09-22
 
 ### Added
