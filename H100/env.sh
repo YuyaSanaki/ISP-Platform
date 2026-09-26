@@ -70,7 +70,11 @@ _h100_source_conda() {
 
 h100_activate() {
   _h100_source_conda || return 1
+  # Site IntelPython deactivate.d hooks reference unset OCL_ICD_* vars; tolerate
+  # that when the caller has `set -u` (Pegasus job scripts).
+  set +u
   conda activate "${CONDA_ENV}"
+  set -u
 }
 
 echo "[H100] ISP_ROOT=${ISP_ROOT}  CONDA_ENV=${CONDA_ENV}"

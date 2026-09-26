@@ -35,6 +35,13 @@ def apply_endpoint_umap_rc() -> None:
     mpl.rcParams["text.color"] = "black"
     mpl.rcParams["xtick.direction"] = "out"
     mpl.rcParams["ytick.direction"] = "out"
+    # Match cluster_coexpr L2 bars (seaborn context="talk" scale).
+    mpl.rcParams["font.size"] = 14
+    mpl.rcParams["axes.titlesize"] = 16
+    mpl.rcParams["axes.labelsize"] = 14
+    mpl.rcParams["xtick.labelsize"] = 13
+    mpl.rcParams["ytick.labelsize"] = 13
+    mpl.rcParams["legend.fontsize"] = 13
 
 
 def style_spines(ax) -> None:
@@ -48,13 +55,13 @@ def style_spines(ax) -> None:
     for spine in ("bottom", "left"):
         ax.spines[spine].set_color("black")
         ax.spines[spine].set_linewidth(0.8)
-    ax.tick_params(labelsize=8, direction="out", colors="black", length=3.5, width=0.8)
+    ax.tick_params(labelsize=13, direction="out", colors="black", length=3.5, width=0.8)
 
 
 def style_umap_axes(ax) -> None:
     style_spines(ax)
-    ax.set_xlabel("UMAP-1", fontsize=9)
-    ax.set_ylabel("UMAP-2", fontsize=9)
+    ax.set_xlabel("UMAP-1", fontsize=14)
+    ax.set_ylabel("UMAP-2", fontsize=14)
 
 
 def save_white(fig, path: Path | str, *, dpi: int = 300) -> None:
@@ -137,14 +144,14 @@ def plot_isp_umap_scatter(
             )
 
     style_umap_axes(ax)
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title, fontsize=16)
     handles = [
-        Line2D([], [], marker="o", linestyle="", color=GREEN, label=f"{end_state} (n={len(end_xy)})", markersize=6),
-        Line2D([], [], marker="o", linestyle="", color=OCHRE, label=f"{start_state} (n={len(start_xy)})", markersize=6),
-        Line2D([], [], marker="o", linestyle="", color=NAVY, label=f"{pert_label} (n={len(pert_xy)})", markersize=6),
+        Line2D([], [], marker="o", linestyle="", color=GREEN, label=f"{end_state} (n={len(end_xy)})", markersize=7),
+        Line2D([], [], marker="o", linestyle="", color=OCHRE, label=f"{start_state} (n={len(start_xy)})", markersize=7),
+        Line2D([], [], marker="o", linestyle="", color=NAVY, label=f"{pert_label} (n={len(pert_xy)})", markersize=7),
     ]
     if show_arrows:
         handles.append(Line2D([], [], color=NAVY, lw=1.2, label="start → perturbed"))
-    ax.legend(handles=handles, frameon=False, fontsize=8, loc="best", markerscale=1.4)
+    ax.legend(handles=handles, frameon=False, fontsize=13, loc="best", markerscale=1.4)
     save_white(fig, out_path, dpi=300)
     plt.close(fig)

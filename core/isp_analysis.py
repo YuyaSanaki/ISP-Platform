@@ -36,7 +36,7 @@ def _plot_significant_lollipop(
     min_n_detections: int = 20,
     top_n: int = 15,
 ) -> None:
-    """Dual lollipop: significant genes with direction, shift, N_Detections, FDR."""
+    """Dual lollipop: significant genes by shift direction (gene names + stems only)."""
     required = {"Gene_name", "Shift_to_goal_end", "N_Detections", "Goal_end_FDR"}
     if not required.issubset(df.columns):
         print("[isp_analysis] Skipping significant_genes_lollipop.png (missing columns).")
@@ -55,101 +55,81 @@ def _plot_significant_lollipop(
         print("[isp_analysis] No significant genes; skipping significant_genes_lollipop.png")
         return
 
-    denom = int(n_isp_cells) if n_isp_cells and n_isp_cells > 0 else int(sig["N_Detections"].max())
-    denom = max(denom, 1)
-    sig["detect_pct"] = 100.0 * sig["N_Detections"] / denom
-
     robust = sig[sig["N_Detections"] >= min_n_detections]
     pos = robust[robust["Shift_to_goal_end"] > 0].nlargest(top_n, "Shift_to_goal_end")
     neg = robust[robust["Shift_to_goal_end"] < 0].nsmallest(top_n, "Shift_to_goal_end")
-    thin = sig[(sig["Shift_to_goal_end"] > 0) & (sig["N_Detections"] < min_n_detections)].nlargest(
-        5, "Shift_to_goal_end"
-    )
 
     pos_color = "#2a6f97"
     neg_color = "#9b2226"
+    gene_fs = 26
 
-    def _panel(ax, sub: pd.DataFrame, color: str, title: str) -> None:
+    def _label_width_in(names: list[str], fontsize: float) -> float:
+        if not names:
+            return 1.2
+        max_len = max(len(str(n)) for n in names)
+        return max(1.2, max_len * fontsize * 0.58 / 72.0 + 0.55)
+
+    pos_names = [] if pos.empty else pos["Gene_name"].astype(str).tolist()
+    neg_names = [] if neg.empty else neg["Gene_name"].astype(str).tolist()
+    # Widen canvas from longest gene symbols so y-labels never clip after tight crop.
+    fig_w = 10.5 + _label_width_in(pos_names, gene_fs) + _label_width_in(neg_names, gene_fs)
+    fig_h = 10.0
+
+    def _panel(ax, sub: pd.DataFrame, color: str, title: str, *, labels_side: str) -> None:
         if sub.empty:
             ax.set_axis_off()
-            ax.set_title(title + " (none)", fontsize=15, color=color)
+            ax.set_title(title + " (none)", fontsize=18, color=color)
             return
         sub = sub.iloc[::-1].reset_index(drop=True)
         y = np.arange(len(sub))
         x = sub["Shift_to_goal_end"].to_numpy()
-        ax.hlines(y, 0, x, color=color, lw=6.0, alpha=0.9)
-        ax.scatter(x, y, s=190, color=color, zorder=3, edgecolors="white", linewidths=1.5)
+        ax.hlines(y, 0, x, color=color, lw=5.5, alpha=0.9)
+        ax.scatter(x, y, s=200, color=color, zorder=3, edgecolors="white", linewidths=1.4)
         ax.set_yticks(y)
-        ax.set_yticklabels(sub["Gene_name"].tolist(), fontsize=16)
-        ax.set_xlabel(f"Shift ({label_start} → {label_end})", fontsize=15)
-        ax.set_title(title, fontsize=16, color=color, pad=10, fontweight="bold")
-        ax.tick_params(axis="x", labelsize=13)
+        ax.set_yticklabels(sub["Gene_name"].tolist(), fontsize=gene_fs)
+        ax.set_xlabel(f"Shift ({label_start} → {label_end})", fontsize=20)
+        ax.set_title(title, fontsize=18, color=color, pad=8, fontweight="bold", linespacing=1.15)
+        ax.tick_params(axis="x", labelsize=16)
         ax.axvline(0, color="#222", lw=1.2)
         ax.grid(axis="x", alpha=0.3, lw=1.0)
         ax.set_axisbelow(True)
 
         x_max = max(abs(float(x.min())), abs(float(x.max())), 1e-6)
-        toward = color == pos_color
-        for yi, (_, row) in zip(y, sub.iterrows()):
-            fdr = float(row["Goal_end_FDR"])
-            fdr_s = "≈0" if fdr == 0 else f"{fdr:.1e}"
-            note = (
-                f"{row['Shift_to_goal_end']:+.3f}   "
-                f"N={int(row['N_Detections'])}/{denom} ({row['detect_pct']:.0f}%)   "
-                f"FDR {fdr_s}"
-            )
-            if toward:
-                ax.text(x_max * 1.06, yi, note, va="center", ha="left", fontsize=12.5, color="#222")
-            else:
-                ax.text(-x_max * 1.06, yi, note, va="center", ha="right", fontsize=12.5, color="#222")
-        if toward:
-            ax.set_xlim(0, x_max * 2.55)
+        pad = x_max * 0.12
+        if labels_side == "left":
+            ax.set_xlim(0, x_max + pad)
+            ax.yaxis.tick_left()
+            ax.tick_params(axis="y", labelleft=True, labelright=False, labelsize=gene_fs)
+            for lab in ax.get_yticklabels():
+                lab.set_ha("right")
         else:
-            ax.set_xlim(-x_max * 2.55, 0)
+            ax.set_xlim(-(x_max + pad), 0)
+            ax.yaxis.tick_right()
+            ax.tick_params(axis="y", labelleft=False, labelright=True, labelsize=gene_fs)
+            for lab in ax.get_yticklabels():
+                lab.set_ha("left")
 
-    fig, axes = plt.subplots(1, 2, figsize=(18, 10), constrained_layout=True)
+    fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), layout="constrained")
     _panel(
         axes[0],
         pos,
         pos_color,
-        f"Toward {label_end} (+) · FDR<0.05 · N≥{min_n_detections} · top {top_n} by shift",
+        f"Toward {label_end} (+)\nFDR<0.05 · N≥{min_n_detections} · top {top_n}",
+        labels_side="left",
     )
     _panel(
         axes[1],
         neg,
         neg_color,
-        f"Away from {label_end} (−) · FDR<0.05 · N≥{min_n_detections} · top {top_n} by |shift|",
+        f"Away from {label_end} (−)\nFDR<0.05 · N≥{min_n_detections} · top {top_n}",
+        labels_side="right",
     )
+    # Keep main title just above panel titles (constrained layout owns the gap).
+    fig.suptitle("ISP significant genes", fontsize=22, fontweight="bold")
+    fig.get_layout_engine().set(h_pad=0.04, w_pad=0.02, hspace=0.02, wspace=0.03)
 
-    thin_lines = [f"Thin significant hits (N<{min_n_detections}) — high shift, low support:"]
-    if thin.empty:
-        thin_lines.append("  (none)")
-    else:
-        for _, row in thin.iterrows():
-            fdr = float(row["Goal_end_FDR"])
-            fdr_s = "≈0" if fdr == 0 else f"{fdr:.2e}"
-            thin_lines.append(
-                f"  {row['Gene_name']}: {row['Shift_to_goal_end']:+.4f}, "
-                f"N={int(row['N_Detections'])}/{denom} ({row['detect_pct']:.1f}%), FDR {fdr_s}"
-            )
-    fig.text(
-        0.01,
-        -0.02,
-        "\n".join(thin_lines),
-        ha="left",
-        va="top",
-        fontsize=12,
-        family="monospace",
-        color="#444",
-    )
-    fig.suptitle(
-        "ISP significant genes: name · direction · effect size · detection support",
-        fontsize=20,
-        y=1.03,
-        fontweight="bold",
-    )
     out = figures_dir / "significant_genes_lollipop.png"
-    fig.savefig(out, bbox_inches="tight", dpi=160)
+    fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.35)
     plt.close(fig)
     print(f"[isp_analysis] Wrote {out.name}")
 
@@ -286,35 +266,37 @@ def run_isp_figure_analysis(
 
     # --- 3. Top genes bar ---
     n_top = 25
-    fig, axes = plt.subplots(1, 2, figsize=(18, 8))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 10))
     top_pos = df.nlargest(n_top, "Shift_to_goal_end")
     colors_pos = ["red" if s == 1 else "steelblue" for s in top_pos["Sig"]]
     axes[0].barh(range(n_top), top_pos["Shift_to_goal_end"].values, color=colors_pos, edgecolor="white")
     axes[0].set_yticks(range(n_top))
-    axes[0].set_yticklabels(top_pos["Gene_name"].values, fontsize=9)
+    axes[0].set_yticklabels(top_pos["Gene_name"].values, fontsize=13)
     axes[0].invert_yaxis()
-    axes[0].set_xlabel("Shift to goal end")
-    axes[0].set_title(f"Top {n_top} toward goal ({label_end})")
+    axes[0].set_xlabel("Shift to goal end", fontsize=14)
+    axes[0].set_title(f"Top {n_top} toward goal ({label_end})", fontsize=14)
+    axes[0].tick_params(axis="x", labelsize=12)
     top_neg = df.nsmallest(n_top, "Shift_to_goal_end")
     colors_neg = ["red" if s == 1 else "coral" for s in top_neg["Sig"]]
     axes[1].barh(range(n_top), top_neg["Shift_to_goal_end"].values, color=colors_neg, edgecolor="white")
     axes[1].set_yticks(range(n_top))
-    axes[1].set_yticklabels(top_neg["Gene_name"].values, fontsize=9)
+    axes[1].set_yticklabels(top_neg["Gene_name"].values, fontsize=13)
     axes[1].invert_yaxis()
-    axes[1].set_xlabel("Shift to goal end")
-    axes[1].set_title(f"Top {n_top} away from goal ({label_end})")
-    plt.suptitle("Red = significant (FDR)", fontsize=10, y=0.02, color="red")
+    axes[1].set_xlabel("Shift to goal end", fontsize=14)
+    axes[1].set_title(f"Top {n_top} away from goal ({label_end})", fontsize=14)
+    axes[1].tick_params(axis="x", labelsize=12)
+    plt.suptitle("Red = significant (FDR)", fontsize=12, y=0.02, color="red")
     plt.tight_layout()
-    fig.savefig(figures_dir / "top_genes_barplot.png", bbox_inches="tight")
+    fig.savefig(figures_dir / "top_genes_barplot.png", bbox_inches="tight", dpi=160)
     plt.close(fig)
 
     # --- 3b. Top significant genes bar (bar color intensity = N_Detections) ---
     df_sig = df[df["Sig"] == 1]
     if not df_sig.empty:
         n_sig_top = min(25, len(df_sig))
-        fig = plt.figure(figsize=(19, 9))
+        fig = plt.figure(figsize=(14, 11))
         # Dedicated colorbar column so the legend never overlaps the panels
-        gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.045], wspace=0.38)
+        gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.05], wspace=0.45)
         axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])]
         cax = fig.add_subplot(gs[0, 2])
         n_cmap = plt.cm.Reds
@@ -343,10 +325,11 @@ def run_isp_figure_analysis(
             labels = [
                 f"{name}  (N={int(n)})" for name, n in zip(sub["Gene_name"].tolist(), n_det)
             ]
-            ax.set_yticklabels(labels, fontsize=10)
+            ax.set_yticklabels(labels, fontsize=13)
             ax.invert_yaxis()
-            ax.set_xlabel("Shift to goal end", fontsize=12)
-            ax.set_title(title, fontsize=13)
+            ax.set_xlabel("Shift to goal end", fontsize=14)
+            ax.set_title(title, fontsize=14)
+            ax.tick_params(axis="x", labelsize=12)
             ax.axvline(0, color="#333", lw=0.8)
             ax.grid(axis="x", alpha=0.25)
             ax.set_axisbelow(True)
@@ -369,15 +352,16 @@ def run_isp_figure_analysis(
         sqrt_ticks = np.linspace(float(n_norm.vmin), float(n_norm.vmax), 5)
         cbar.set_ticks(sqrt_ticks)
         cbar.set_ticklabels([f"{int(round(t * t))}" for t in sqrt_ticks])
-        cbar.set_label("N_Detections\n(√ scale; darker = more)", fontsize=11)
+        cbar.set_label("N_Detections\n(√ scale; darker = more)", fontsize=12)
+        cbar.ax.tick_params(labelsize=11)
 
         fig.suptitle(
             "Significant genes (FDR < 0.05) · bar color intensity ∝ √N_Detections",
-            fontsize=13,
+            fontsize=15,
             y=0.98,
         )
-        fig.subplots_adjust(left=0.12, right=0.94, top=0.90, bottom=0.08)
-        fig.savefig(figures_dir / "top_significant_genes_barplot.png", bbox_inches="tight")
+        fig.subplots_adjust(left=0.16, right=0.93, top=0.90, bottom=0.08)
+        fig.savefig(figures_dir / "top_significant_genes_barplot.png", bbox_inches="tight", dpi=160)
         plt.close(fig)
 
         # --- 3c. Significant genes lollipop (direction + N_Detections + FDR) ---

@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Pred L2 mean bar charts use an L-frame (no top/right spines), outward axis ticks, light horizontal y-grid, and a Mouse→Mouse / Mouse→Human Geneformer panel label in the title.
+- ISP UMAP scatter fonts match the pred L2 mean bar scale (seaborn talk-sized title/labels/ticks/legend).
+- ISP analysis significant-gene figures (`significant_genes_lollipop.png`, `top_significant_genes_barplot.png`, `top_genes_barplot.png`) use larger gene fonts and a more compact canvas; the lollipop shows gene names and stems only (no per-point shift/N/FDR annotations).
 
 ## [1.3.1] - 2026-09-22
 
