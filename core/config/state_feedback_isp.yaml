@@ -1,0 +1,104 @@
+# State-feedback ISP — Phase 1-2 (baselines + linear Delta-rank decoder)
+#
+# GENERIC BY DESIGN. Nothing below is specific to reprogramming factors:
+#   - `sequential.steps` is any list of steps, each with `type: overexpress|knockdown`
+#     and any gene symbols / Ensembl IDs present in your token dictionary.
+#   - `perturbation.state_key / start_state / end_state` are whatever labels your
+#     fine-tuned classifier was trained on.
+#   - `state_feedback.observed_state` names the state whose *observed* ranks supply
+#     the decoder's teacher signal (and the oracle ceiling). It defaults to `end_state`.
+# The values here are the paper's OSKM -> pluripotency case only as a worked example.
+# To reuse: swap dataset / model / states / steps. No code changes needed.
+
+paths:
+  dataset: data/bbrcv3/tokenize_human_native/tokenized_dataset/GSE147564_ft6k_qc_human_native_0.dataset
+  geneformer_model: data/bbrcv3/v2_ft_human_native/all_run1
+  output_root: data/bbrcv3/runs/state_feedback_phase12
+  output_date_subdir: true
+  output_time_subdir: true
+
+species:
+  model_organism: human
+  model: human_geneformer
+  human_variant: v2_104m
+  ortholog_policy: one2one
+
+perturbation:
+  state_key: disease
+  start_state: somatic
+  end_state: pluripotent
+  alt_states: []
+
+model:
+  type: CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 300
+  emb_layer: 0
+
+# Any number of steps, any genes, overexpress or knockdown.
+sequential:
+  steps:
+    - name: KLF4
+      type: overexpress
+      genes: [KLF4]
+    - name: MYC
+      type: overexpress
+      genes: [MYC]
+    - name: SOX2
+      type: overexpress
+      genes: [SOX2]
+    - name: POU5F1
+      type: overexpress
+      genes: [POU5F1]
+
+state_feedback:
+  # Conditions compared in one run. `oracle` is a ceiling (observed ranks pasted in),
+  # `null_feedback` is the zero-perturbation guardrail.
+  conditions:
+    - ordered_rank_edit
+    - norm
+    - delta_mlm
+    - linear_deltarank
+    - oracle
+    - null_feedback
+
+  # Teacher / ceiling source.
+  observed_state: pluripotent
+  observed_max_ncells: 3000
+  min_detection_count: 5
+
+  # Where feedback is injected in the chain.
+  feedback_after_step: 1
+  feedback_every_step: false
+  ctrl_reference: start      # start | previous
+
+  # Guardrails. `hysteresis` quantizes priorities onto an epsilon grid before a
+  # stable sort, so near-ties keep their original order (no jitter swaps).
+  hysteresis: 0.0
+  # Phase 1 parameter-free baselines only (the decoder uses decoder.max_shift_grid).
+  alpha: 1.0
+  baseline_max_shift: 0.1
+
+  decoder:
+    train_max_ncells: 200
+    max_genes_per_cell: 256
+    val_fraction: 0.2
+    epochs: 20
+    lr: 0.001
+    batch_size: 4096
+    lam_huber: 1.0
+    lam_pair: 0.5
+    lam_identity: 1.0
+    lam_smooth: 0.01
+    # Selected by held-out-gene val Spearman. Widened past 0.2 because val
+    # Spearman was still rising at the old upper bound; large values let the
+    # decoder move a gene most of the way across the encoding, so watch the
+    # null-drift and displacement columns when a big shift wins.
+    max_shift_grid: [0.05, 0.1, 0.2, 0.3, 0.5]
+    seed: 0
+
+runtime:
+  nproc: 1
+  forward_batch_size: auto

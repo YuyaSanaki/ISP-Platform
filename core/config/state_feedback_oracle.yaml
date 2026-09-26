@@ -1,0 +1,45 @@
+# State-feedback Phase 0 — Oracle go/no-go (BBRCv3 human_native)
+#
+#   python3 core/run_state_feedback_oracle.py --config core/config/state_feedback_oracle.yaml
+#   python3 core/run_state_feedback_oracle.py --config core/config/state_feedback_oracle.yaml --max-ncells 50
+
+paths:
+  dataset: data/bbrcv3/tokenize_human_native/tokenized_dataset/GSE147564_ft6k_qc_human_native_0.dataset
+  geneformer_model: data/bbrcv3/v2_ft_human_native/all_run1
+  output_root: data/bbrcv3/runs/state_feedback_phase0
+  output_time_subdir: true
+  output_date_subdir: true
+
+species:
+  model_organism: human
+  model: human_geneformer
+  human_variant: v2_104m
+  ortholog_policy: one2one
+
+perturbation:
+  state_key: disease
+  start_state: somatic
+  end_state: pluripotent
+  alt_states: []
+
+model:
+  type: CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 300
+  emb_layer: 0
+
+oracle:
+  # Observed ranks for fixed-gene-set permutation (endpoint surrogate on OSKM data)
+  observed_state: pluripotent
+  observed_max_ncells: 3000
+  oracle_after_step: 1
+  # Paper best order + a weak order for contrast
+  orders:
+    - K-M-S-O
+    - O-S-K-M
+
+runtime:
+  nproc: 1
+  forward_batch_size: auto
