@@ -81,6 +81,20 @@ state_feedback:
   alpha: 1.0
   baseline_max_shift: 0.1
 
+  # Direction-fidelity evaluation: scores every method against the observed Delta-rank
+  # on the held-out gene split. This is the PRIMARY Phase 2 axis. The endpoint shift
+  # cannot separate "permuted in the right direction" from "encoding was disturbed",
+  # and the oracle carries endpoint leakage, so neither settles the gate alone.
+  eval:
+    # full_chain  = features from all steps applied (matches decoder training)
+    # feedback_point = features at the step where feedback is actually injected
+    perturbation: full_chain
+    max_genes_per_cell: 512
+    topk: [50, 100, 500]
+    n_boot: 1000       # cell-level bootstrap for the CI on rho_linear - rho_baseline
+    n_perm: 10000      # paired sign-flip permutation test on per-cell rho differences
+    seed: 0
+
   decoder:
     train_max_ncells: 200
     max_genes_per_cell: 256

@@ -65,8 +65,10 @@ from state_feedback.decoder import (
     token_mask,
     train_delta_rank_decoder,
 )
+from state_feedback.evaluate import compare_methods, direction_fidelity_verdict
 from state_feedback.metrics import gap_closed_fraction, spearman_values
 from state_feedback.oracle_rerank import build_pseudobulk_rank_priority
+from state_feedback.samples import collect_eval_samples
 from state_feedback.teacher import observed_delta_rank, split_tokens
 
 ALL_CONDITIONS = (
@@ -133,11 +135,13 @@ def _apply_steps_at_once(
     token_by_step: Sequence[Sequence[int]],
     *,
     nproc: int,
+    n_steps: int | None = None,
 ):
-    """Apply every step's perturbation cumulatively (end state of the chain)."""
+    """Apply the first ``n_steps`` perturbations cumulatively (default: all)."""
     working = dataset
     workers = seq._gpu_resident_map_workers(nproc)
-    for step, tokens in zip(steps, token_by_step):
+    limit = len(steps) if n_steps is None else max(0, int(n_steps))
+    for step, tokens in list(zip(steps, token_by_step))[:limit]:
         working = working.map(
             seq._apply_typed_step,
             fn_kwargs={"tokens": list(tokens), "perturb_type": str(step["type"])},
@@ -344,6 +348,8 @@ def _build_decoder(
     token_by_step,
     teacher: Mapping[int, float],
     dec_cfg: Mapping[str, Any],
+    train_tokens: set[int],
+    val_tokens: set[int],
     *,
     layer_to_quant: int,
     pad_token_id: int,
@@ -354,14 +360,6 @@ def _build_decoder(
 ) -> tuple[Any, dict[str, Any]]:
     """Collect training samples, grid-search ``max_shift``, return best decoder."""
     seed = int(dec_cfg.get("seed", 0))
-    val_fraction = float(dec_cfg.get("val_fraction", 0.2))
-    train_tokens, val_tokens = split_tokens(
-        teacher.keys(), val_fraction=val_fraction, seed=seed
-    )
-    print(
-        f"Teacher tokens: {len(teacher)} (train={len(train_tokens)} val={len(val_tokens)})",
-        flush=True,
-    )
 
     train_pert = _apply_steps_at_once(start_ds, steps, token_by_step, nproc=nproc)
     data = fb.collect_training_samples(
@@ -446,6 +444,137 @@ def _build_decoder(
     return decoder, info
 
 
+def run_direction_fidelity(
+    model,
+    decoder,
+    start_ds,
+    steps,
+    token_by_step,
+    teacher: Mapping[int, float],
+    val_tokens: set[int],
+    eval_cfg: Mapping[str, Any],
+    out_dir: Path,
+    *,
+    mlm_model=None,
+    layer_to_quant: int,
+    pad_token_id: int,
+    model_input_size: int,
+    forward_batch_size: int,
+    nproc: int,
+    alpha: float,
+    max_shift: float,
+    feedback_after_step: int,
+) -> dict[str, Any]:
+    """Score every method against the observed Δrank on the held-out gene split.
+
+    This is the direction-sensitive counterpart to the endpoint shift: it asks
+    whether a method recovers the *direction* of observed rank displacement, which
+    the classifier-space shift cannot distinguish from mere encoding disturbance.
+    """
+    which = str(eval_cfg.get("perturbation", "full_chain"))
+    if which == "feedback_point":
+        n_steps = int(feedback_after_step)
+    elif which == "full_chain":
+        n_steps = None
+    else:
+        raise ValueError("state_feedback.eval.perturbation must be full_chain or feedback_point")
+    pert_ds = _apply_steps_at_once(
+        start_ds, steps, token_by_step, nproc=nproc, n_steps=n_steps
+    )
+
+    seed = int(eval_cfg.get("seed", 0))
+    samples = collect_eval_samples(
+        model,
+        start_ds,
+        pert_ds,
+        teacher,
+        layer_to_quant=layer_to_quant,
+        pad_token_id=pad_token_id,
+        model_input_size=model_input_size,
+        forward_batch_size=forward_batch_size,
+        mlm_model=mlm_model,
+        keep_tokens=val_tokens,
+        max_genes_per_cell=int(eval_cfg.get("max_genes_per_cell", 512)),
+        rows=None,
+        seed=seed,
+    )
+    print(
+        f"Direction-fidelity samples: {len(samples)} "
+        f"(held-out genes only, perturbation={which})",
+        flush=True,
+    )
+    if len(samples) == 0:
+        raise RuntimeError("No held-out-gene samples collected for direction fidelity")
+
+    result = compare_methods(
+        samples,
+        alpha=alpha,
+        max_shift=max_shift,
+        decoder=decoder,
+        topk=[int(k) for k in (eval_cfg.get("topk") or [50, 100, 500])],
+        n_boot=int(eval_cfg.get("n_boot", 1000)),
+        n_perm=int(eval_cfg.get("n_perm", 10000)),
+        seed=seed,
+    )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    calib_rows: list[dict[str, Any]] = []
+    cell_rows: list[dict[str, Any]] = []
+    method_rows: list[dict[str, Any]] = []
+    for row in result["methods"]:
+        for b in row.pop("_calibration_bins", []):
+            calib_rows.append({"method": row["method"], **b})
+        for rho in row.pop("_cellwise_spearman", []):
+            cell_rows.append({"method": row["method"], "cellwise_spearman": rho})
+        method_rows.append(row)
+
+    pd.DataFrame(method_rows).to_csv(out_dir / "direction_fidelity.csv", index=False)
+    pd.DataFrame(result["contrasts"]).to_csv(out_dir / "contrasts.csv", index=False)
+    pd.DataFrame(calib_rows).to_csv(out_dir / "calibration_bins.csv", index=False)
+    pd.DataFrame(cell_rows).to_csv(out_dir / "cellwise_spearman.csv", index=False)
+
+    verdict = direction_fidelity_verdict({"methods": method_rows, "contrasts": result["contrasts"]})
+    summary = {
+        "perturbation": which,
+        "n_samples": len(samples),
+        "n_held_out_genes_available": len(val_tokens),
+        "skipped_methods": result["skipped"],
+        "methods": method_rows,
+        "contrasts": result["contrasts"],
+        "verdict": verdict,
+        "not_computable_here": {
+            "within_gene_across_cells_spearman":
+                "undefined: the pseudobulk teacher is one constant per gene",
+            "perturbation_wise": "only one perturbation chain in this config",
+            "donor_batch_stratified":
+                "dataset has a single replicate and sample_id is collinear with state_key",
+            "matched_perturbation_oracle":
+                "no observed intermediate post-perturbation time point in this dataset",
+        },
+    }
+    (out_dir / "direction_fidelity.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+    for row in method_rows:
+        print(
+            f"  {row['method']:<18} pooled_rho={row['pooled_spearman']:+.4f} "
+            f"cellwise_median={row['cellwise_spearman_median']:+.4f} "
+            f"gene_rho={row['gene_aggregated_spearman']:+.4f} "
+            f"P@100_up={row.get('precision_at_100_up', float('nan')):.3f}",
+            flush=True,
+        )
+    nan = float("nan")
+    for c in result["contrasts"]:
+        print(
+            f"  Δρ vs {c['baseline']:<12} = {c.get('boot_delta_rho', nan):+.4f} "
+            f"[{c.get('boot_ci_low', nan):+.4f}, {c.get('boot_ci_high', nan):+.4f}] "
+            f"excludes0={c.get('boot_excludes_zero', nan)} "
+            f"p={c.get('perm_p_value', nan):.4g}",
+            flush=True,
+        )
+    print(f"Wrote {out_dir / 'direction_fidelity.csv'}", flush=True)
+    return summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -458,6 +587,17 @@ def main() -> int:
         type=Path,
         default=None,
         help="Reuse a trained decoder instead of fitting a new one.",
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Train/load the decoder and run direction-fidelity scoring only, "
+        "skipping the endpoint-shift conditions.",
+    )
+    parser.add_argument(
+        "--skip-direction-fidelity",
+        action="store_true",
+        help="Skip the direction-fidelity comparison.",
     )
     args = parser.parse_args()
 
@@ -588,9 +728,26 @@ def main() -> int:
 
     output_root.mkdir(parents=True, exist_ok=True)
 
+    eval_cfg = sf_cfg.get("eval") or {}
+    run_eval = not args.skip_direction_fidelity
+    if args.eval_only:
+        conditions = []
+
+    train_tokens, val_tokens = split_tokens(
+        teacher.keys(),
+        val_fraction=float(dec_cfg.get("val_fraction", 0.2)),
+        seed=int(dec_cfg.get("seed", 0)),
+    )
+    print(
+        f"Teacher tokens: {len(teacher)} (train={len(train_tokens)} val={len(val_tokens)})",
+        flush=True,
+    )
+
     decoder = None
     decoder_info: dict[str, Any] = {}
-    needs_decoder = any(c in {"linear_deltarank", "null_feedback"} for c in conditions)
+    needs_decoder = run_eval or any(
+        c in {"linear_deltarank", "null_feedback"} for c in conditions
+    )
     if needs_decoder:
         if args.decoder_checkpoint is not None:
             decoder = load_decoder(
@@ -608,6 +765,8 @@ def main() -> int:
                 token_by_step,
                 teacher,
                 dec_cfg,
+                train_tokens,
+                val_tokens,
                 layer_to_quant=layer_to_quant,
                 pad_token_id=pad_token_id,
                 model_input_size=model_input_size,
@@ -618,9 +777,34 @@ def main() -> int:
         seq._empty_cuda_cache()
 
     mlm_model = None
-    if "delta_mlm" in conditions:
+    if "delta_mlm" in conditions or run_eval:
         print(f"Loading pretrained MLM head: {backend.pretrained_model}", flush=True)
         mlm_model = gs.load_mlm_model(backend.pretrained_model)
+
+    fidelity: dict[str, Any] = {}
+    if run_eval:
+        print("=== direction fidelity (held-out genes, same teacher) ===", flush=True)
+        fidelity = run_direction_fidelity(
+            model,
+            decoder,
+            start_ds,
+            steps,
+            token_by_step,
+            teacher,
+            val_tokens,
+            eval_cfg,
+            output_root / "direction_fidelity",
+            mlm_model=mlm_model,
+            layer_to_quant=layer_to_quant,
+            pad_token_id=pad_token_id,
+            model_input_size=model_input_size,
+            forward_batch_size=forward_batch_size,
+            nproc=nproc,
+            alpha=alpha,
+            max_shift=baseline_max_shift,
+            feedback_after_step=feedback_after_step,
+        )
+        seq._empty_cuda_cache()
 
     common = dict(
         layer_to_quant=layer_to_quant,
@@ -721,6 +905,8 @@ def main() -> int:
     summary.to_csv(summary_path, index=False)
 
     def _final_median(condition: str) -> float:
+        if summary.empty:
+            return float("nan")
         sub = summary[(summary["condition"] == condition) & (summary["step"] > 0)]
         if sub.empty:
             return float("nan")
@@ -773,16 +959,31 @@ def main() -> int:
         "hysteresis": hysteresis,
         "decoder": decoder_info,
         "gate": gate_rows,
+        "direction_fidelity": fidelity.get("verdict", {}),
         "hard_gate": (
-            "Phase 2 gate: inspect gap_closed_fraction for linear_deltarank against "
-            "the oracle ceiling, plus decoder spearman_val and null drift. Phase 3 "
-            "(MLP / multi-step) only if linear clearly saturates below the ceiling."
+            "Phase 2 gate is two-axis. Primary axis is direction fidelity: the "
+            "linear decoder must beat norm and delta_mlm on held-out-gene Spearman "
+            "against the observed Delta-rank, with a bootstrap CI on the difference "
+            "that excludes zero. gap_closed_fraction against the oracle is a "
+            "feasibility ceiling only - the oracle feeds observed goal-state ranks "
+            "back in, so it carries endpoint leakage and is not a fidelity target. "
+            "Phase 3 (MLP / multi-step) only after the primary axis is settled."
         ),
     }
     (output_root / "run_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Wrote {summary_path}", flush=True)
     print(f"Wrote {gate_path}", flush=True)
-    print(json.dumps({"gate": gate_rows, "decoder": decoder_info.get("selected", {})}, indent=2), flush=True)
+    print(
+        json.dumps(
+            {
+                "gate_endpoint_shift": gate_rows,
+                "decoder": decoder_info.get("selected", {}),
+                "direction_fidelity": fidelity.get("verdict", {}),
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
     return 0
 
 

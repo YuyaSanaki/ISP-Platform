@@ -1,7 +1,7 @@
 """Metrics for State-feedback ISP: rank correlation, overlap, drift."""
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Mapping, Sequence
 
 
 def _average_ranks(values: Sequence[float]) -> list[float]:
@@ -104,3 +104,232 @@ def gap_closed_fraction(
     if span == 0.0:
         return float("nan")
     return float((float(method) - float(baseline)) / span)
+
+
+# --- direction-fidelity metrics -------------------------------------------------
+#
+# Everything below scores a predicted rank displacement against an observed one.
+# Sign convention throughout: displacement is in normalized rank units where
+# **negative = moved left = higher expression rank = "up"**, matching
+# ``rerank.base_rank_norm``. So "top up-movers" are the most negative values.
+
+
+def median_iqr(values: Sequence[float]) -> dict[str, float]:
+    """Median and interquartile range, ignoring NaN."""
+    vals = sorted(float(v) for v in values if float(v) == float(v))
+    n = len(vals)
+    if n == 0:
+        return {"n": 0.0, "median": float("nan"), "q25": float("nan"), "q75": float("nan"), "iqr": float("nan")}
+
+    def _q(p: float) -> float:
+        if n == 1:
+            return vals[0]
+        pos = p * (n - 1)
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return vals[lo] * (1.0 - frac) + vals[hi] * frac
+
+    q25, q75 = _q(0.25), _q(0.75)
+    return {"n": float(n), "median": _q(0.5), "q25": q25, "q75": q75, "iqr": q75 - q25}
+
+
+def _top_k_indices(scores: Sequence[float], k: int, *, up: bool) -> list[int]:
+    """Indices of the ``k`` most extreme scores (``up`` -> most negative)."""
+    order = sorted(range(len(scores)), key=lambda i: float(scores[i]), reverse=not up)
+    return order[: max(0, int(k))]
+
+
+def precision_at_k(
+    pred: Sequence[float],
+    obs: Sequence[float],
+    k: int,
+    *,
+    up: bool,
+) -> float:
+    """Overlap of predicted and observed top-``k`` movers, divided by ``k``.
+
+    With both sets of size ``k`` this equals the top-``k`` overlap fraction, so it
+    is reported once rather than under two names.
+    """
+    if len(pred) != len(obs):
+        raise ValueError("precision_at_k requires equal-length inputs")
+    k = int(k)
+    if k <= 0 or len(pred) < k:
+        return float("nan")
+    a = set(_top_k_indices(pred, k, up=up))
+    b = set(_top_k_indices(obs, k, up=up))
+    return float(len(a & b) / k)
+
+
+def ndcg_at_k(
+    pred: Sequence[float],
+    obs: Sequence[float],
+    k: int,
+    *,
+    up: bool,
+) -> float:
+    """NDCG@k with graded relevance = displacement magnitude in the chosen direction.
+
+    Relevance is ``max(0, -obs)`` for ``up`` and ``max(0, obs)`` for down, so genes
+    that did not move in the queried direction contribute no gain.
+    """
+    if len(pred) != len(obs):
+        raise ValueError("ndcg_at_k requires equal-length inputs")
+    k = int(k)
+    if k <= 0 or len(pred) < k:
+        return float("nan")
+    rel = [max(0.0, -float(o)) if up else max(0.0, float(o)) for o in obs]
+    ranked = _top_k_indices(pred, k, up=up)
+    dcg = sum(rel[i] / _log2(rank + 2) for rank, i in enumerate(ranked))
+    ideal = sorted(rel, reverse=True)[:k]
+    idcg = sum(r / _log2(rank + 2) for rank, r in enumerate(ideal))
+    if idcg <= 0.0:
+        return float("nan")
+    return float(dcg / idcg)
+
+
+def _log2(x: float) -> float:
+    from math import log2
+
+    return log2(x)
+
+
+def calibration_bins(
+    pred: Sequence[float],
+    obs: Sequence[float],
+    n_bins: int = 10,
+) -> list[dict[str, float]]:
+    """Mean observed displacement per quantile bin of predicted displacement.
+
+    A well-calibrated decoder gives bin means that increase monotonically with the
+    bin index; ``calibration_monotonicity`` reduces that to one number.
+    """
+    if len(pred) != len(obs):
+        raise ValueError("calibration_bins requires equal-length inputs")
+    n = len(pred)
+    if n == 0 or n_bins <= 0:
+        return []
+    order = sorted(range(n), key=lambda i: float(pred[i]))
+    bins: list[dict[str, float]] = []
+    for b in range(int(n_bins)):
+        lo = (b * n) // int(n_bins)
+        hi = ((b + 1) * n) // int(n_bins)
+        idx = order[lo:hi]
+        if not idx:
+            continue
+        bins.append(
+            {
+                "bin": float(b),
+                "n": float(len(idx)),
+                "pred_mean": float(sum(float(pred[i]) for i in idx) / len(idx)),
+                "obs_mean": float(sum(float(obs[i]) for i in idx) / len(idx)),
+            }
+        )
+    return bins
+
+
+def calibration_monotonicity(bins: Sequence[Mapping[str, float]]) -> float:
+    """Spearman between bin index and mean observed displacement."""
+    if len(bins) < 2:
+        return float("nan")
+    return spearman_values(
+        [float(b["bin"]) for b in bins], [float(b["obs_mean"]) for b in bins]
+    )
+
+
+def bootstrap_delta_rho(
+    groups: Sequence[int],
+    pred_a: Sequence[float],
+    pred_b: Sequence[float],
+    obs: Sequence[float],
+    *,
+    n_boot: int = 1000,
+    seed: int = 0,
+    ci: float = 0.95,
+) -> dict[str, float]:
+    """Bootstrap CI for ``rho(pred_a, obs) - rho(pred_b, obs)``, resampling ``groups``.
+
+    Resampling is by group (cell), not by sample, because genes within a cell share
+    one encoding and are not independent.
+    """
+    import random
+
+    by_group: dict[int, list[int]] = {}
+    for i, g in enumerate(groups):
+        by_group.setdefault(int(g), []).append(i)
+    keys = list(by_group)
+    point = spearman_values(pred_a, obs) - spearman_values(pred_b, obs)
+    undefined = {
+        "delta_rho": float(point),
+        "ci_low": float("nan"),
+        "ci_high": float("nan"),
+        "n_boot": 0.0,
+        "excludes_zero": float("nan"),
+    }
+    if len(keys) < 2:
+        return undefined
+
+    rng = random.Random(int(seed))
+    draws: list[float] = []
+    for _ in range(int(n_boot)):
+        idx: list[int] = []
+        for _ in range(len(keys)):
+            idx.extend(by_group[keys[rng.randrange(len(keys))]])
+        if len(idx) < 2:
+            continue
+        a = [pred_a[i] for i in idx]
+        b = [pred_b[i] for i in idx]
+        o = [obs[i] for i in idx]
+        d = spearman_values(a, o) - spearman_values(b, o)
+        if d == d:
+            draws.append(d)
+    if len(draws) < 2:
+        return {**undefined, "n_boot": float(len(draws))}
+    draws.sort()
+    alpha = (1.0 - float(ci)) / 2.0
+    lo = draws[max(0, int(alpha * len(draws)) - 1)]
+    hi = draws[min(len(draws) - 1, int((1.0 - alpha) * len(draws)))]
+    return {
+        "delta_rho": float(point),
+        "ci_low": float(lo),
+        "ci_high": float(hi),
+        "n_boot": float(len(draws)),
+        "excludes_zero": float(1.0 if (lo > 0.0 or hi < 0.0) else 0.0),
+    }
+
+
+def paired_sign_flip_test(
+    diffs: Sequence[float],
+    *,
+    n_perm: int = 10000,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Paired permutation test on per-group score differences.
+
+    Under H0 the two methods are equally aligned with the observation, so the sign
+    of each group's difference is exchangeable. Reports the two-sided p-value
+    alongside the effect size, which is the quantity to lead with.
+    """
+    import random
+
+    vals = [float(d) for d in diffs if float(d) == float(d)]
+    n = len(vals)
+    if n == 0:
+        return {"n": 0.0, "mean_diff": float("nan"), "p_value": float("nan")}
+    observed = sum(vals) / n
+    rng = random.Random(int(seed))
+    extreme = 0
+    for _ in range(int(n_perm)):
+        total = 0.0
+        for v in vals:
+            total += v if rng.random() < 0.5 else -v
+        if abs(total / n) >= abs(observed) - 1e-15:
+            extreme += 1
+    return {
+        "n": float(n),
+        "mean_diff": float(observed),
+        "median_diff": median_iqr(vals)["median"],
+        "frac_positive": float(sum(1 for v in vals if v > 0) / n),
+        "p_value": float((extreme + 1) / (int(n_perm) + 1)),
+    }

@@ -13,9 +13,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "core"))
 
 from state_feedback.metrics import (
+    bootstrap_delta_rho,
+    calibration_bins,
+    calibration_monotonicity,
     displacement_summary,
     gap_closed_fraction,
     is_two_cycle,
+    median_iqr,
+    ndcg_at_k,
+    paired_sign_flip_test,
+    precision_at_k,
     rank_displacement,
     spearman_values,
     topk_jaccard,
@@ -174,6 +181,245 @@ class TestTeacher(unittest.TestCase):
         self.assertEqual(train_a & val_a, set())
         self.assertEqual(len(train_a) + len(val_a), len(tokens))
         self.assertGreater(len(val_a), 0)
+
+
+class TestDirectionFidelityMetrics(unittest.TestCase):
+    def test_median_iqr(self):
+        stats = median_iqr([1.0, 2.0, 3.0, 4.0])
+        self.assertAlmostEqual(stats["median"], 2.5)
+        self.assertAlmostEqual(stats["q25"], 1.75)
+        self.assertAlmostEqual(stats["q75"], 3.25)
+        self.assertAlmostEqual(stats["iqr"], 1.5)
+        self.assertEqual(stats["n"], 4.0)
+
+    def test_median_iqr_drops_nan(self):
+        self.assertEqual(median_iqr([float("nan"), 5.0])["n"], 1.0)
+
+    def test_precision_at_k_perfect_and_worst(self):
+        obs = [-3.0, -2.0, -1.0, 1.0, 2.0, 3.0]
+        self.assertAlmostEqual(precision_at_k(obs, obs, 2, up=True), 1.0)
+        self.assertAlmostEqual(precision_at_k(obs, obs, 2, up=False), 1.0)
+        flipped = [-v for v in obs]
+        self.assertAlmostEqual(precision_at_k(flipped, obs, 2, up=True), 0.0)
+
+    def test_precision_at_k_direction_matters(self):
+        # up = most negative; down = most positive
+        obs = [-5.0, 0.0, 5.0]
+        self.assertAlmostEqual(precision_at_k(obs, obs, 1, up=True), 1.0)
+        self.assertAlmostEqual(precision_at_k([5.0, 0.0, -5.0], obs, 1, up=True), 0.0)
+
+    def test_precision_at_k_nan_when_k_too_large(self):
+        self.assertTrue(precision_at_k([1.0, 2.0], [1.0, 2.0], 5, up=True) != precision_at_k([1.0, 2.0], [1.0, 2.0], 5, up=True))
+
+    def test_ndcg_perfect_is_one(self):
+        obs = [-3.0, -2.0, -1.0, 0.0]
+        self.assertAlmostEqual(ndcg_at_k(obs, obs, 3, up=True), 1.0)
+
+    def test_ndcg_penalises_wrong_order(self):
+        obs = [-3.0, -2.0, -1.0, 0.0]
+        good = ndcg_at_k(obs, obs, 2, up=True)
+        bad = ndcg_at_k([0.0, -1.0, -2.0, -3.0], obs, 2, up=True)
+        self.assertGreater(good, bad)
+
+    def test_ndcg_nan_when_no_relevance(self):
+        obs = [1.0, 2.0, 3.0]  # nothing moved up
+        self.assertTrue(ndcg_at_k(obs, obs, 2, up=True) != ndcg_at_k(obs, obs, 2, up=True))
+
+    def test_calibration_bins_monotone(self):
+        pred = [float(i) for i in range(100)]
+        obs = [float(i) for i in range(100)]
+        bins = calibration_bins(pred, obs, 10)
+        self.assertEqual(len(bins), 10)
+        self.assertAlmostEqual(calibration_monotonicity(bins), 1.0)
+        self.assertEqual(sum(b["n"] for b in bins), 100.0)
+
+    def test_calibration_monotonicity_inverted(self):
+        pred = [float(i) for i in range(50)]
+        obs = [float(-i) for i in range(50)]
+        self.assertAlmostEqual(calibration_monotonicity(calibration_bins(pred, obs, 5)), -1.0)
+
+    def test_bootstrap_delta_rho_detects_clear_winner(self):
+        groups = [i // 10 for i in range(200)]
+        obs = [float((i * 37) % 200) for i in range(200)]
+        good = list(obs)
+        bad = [float((i * 91) % 200) for i in range(200)]
+        out = bootstrap_delta_rho(groups, good, bad, obs, n_boot=200, seed=1)
+        self.assertGreater(out["delta_rho"], 0.5)
+        self.assertEqual(out["excludes_zero"], 1.0)
+        self.assertGreater(out["ci_low"], 0.0)
+
+    def test_bootstrap_delta_rho_ties_include_zero(self):
+        groups = [i // 10 for i in range(200)]
+        obs = [float((i * 37) % 200) for i in range(200)]
+        out = bootstrap_delta_rho(groups, list(obs), list(obs), obs, n_boot=200, seed=1)
+        self.assertAlmostEqual(out["delta_rho"], 0.0)
+        self.assertEqual(out["excludes_zero"], 0.0)
+
+    def test_paired_sign_flip_detects_shift(self):
+        out = paired_sign_flip_test([0.3] * 40, n_perm=2000, seed=0)
+        self.assertAlmostEqual(out["mean_diff"], 0.3)
+        self.assertEqual(out["frac_positive"], 1.0)
+        self.assertLess(out["p_value"], 0.01)
+
+    def test_paired_sign_flip_null(self):
+        diffs = [0.2, -0.2] * 20
+        out = paired_sign_flip_test(diffs, n_perm=2000, seed=0)
+        self.assertAlmostEqual(out["mean_diff"], 0.0)
+        self.assertGreater(out["p_value"], 0.5)
+
+
+@unittest.skipUnless(HAS_TORCH, "torch not available")
+class TestEvaluate(unittest.TestCase):
+    def _samples(self, n_cells=6, n_genes=20, d=4):
+        from state_feedback.samples import EvalSamples
+
+        torch.manual_seed(0)
+        n = n_cells * n_genes
+        cell_index = [c for c in range(n_cells) for _ in range(n_genes)]
+        tokens = [1000 + g for _ in range(n_cells) for g in range(n_genes)]
+        target = torch.tensor(
+            [0.01 * (g - n_genes / 2) for _ in range(n_cells) for g in range(n_genes)],
+            dtype=torch.float32,
+        )
+        return EvalSamples(
+            cell_index=cell_index,
+            tokens=tokens,
+            base_rank=torch.rand(n),
+            target=target,
+            delta_h=torch.randn(n, d),
+            delta_norm=target.clone(),  # norm perfectly informative in this fixture
+            delta_self_logit=torch.randn(n),
+        )
+
+    def test_identity_and_random_are_uninformative(self):
+        from state_feedback.evaluate import evaluate_method, predicted_delta_rank
+
+        s = self._samples()
+        ident = predicted_delta_rank("identity", s, alpha=1.0, max_shift=0.1)
+        self.assertEqual(set(ident), {0.0})
+        row = evaluate_method("random", predicted_delta_rank("random", s, alpha=1.0, max_shift=0.1, seed=3), s)
+        self.assertLess(abs(row["pooled_spearman"]), 0.3)
+
+    def test_norm_sign_convention(self):
+        # delta_norm == target here, and a norm *increase* must predict a move left
+        # (negative displacement), so the correlation is negative by construction.
+        from state_feedback.evaluate import predicted_delta_rank
+        from state_feedback.metrics import spearman_values
+
+        s = self._samples()
+        pred = predicted_delta_rank("norm", s, alpha=1.0, max_shift=0.5)
+        self.assertLess(spearman_values(pred, s.target.tolist()), -0.9)
+
+    def test_bounded_by_max_shift(self):
+        from state_feedback.evaluate import predicted_delta_rank
+
+        s = self._samples()
+        for method in ("random", "norm", "delta_mlm"):
+            pred = predicted_delta_rank(method, s, alpha=10.0, max_shift=0.05, seed=0)
+            self.assertLessEqual(max(abs(p) for p in pred), 0.05 + 1e-9)
+
+    def test_delta_mlm_requires_features(self):
+        from state_feedback.evaluate import predicted_delta_rank
+
+        s = self._samples()
+        s.delta_self_logit = None
+        with self.assertRaises(ValueError):
+            predicted_delta_rank("delta_mlm", s, alpha=1.0, max_shift=0.1)
+
+    def test_linear_requires_decoder(self):
+        from state_feedback.evaluate import predicted_delta_rank
+
+        with self.assertRaises(ValueError):
+            predicted_delta_rank("linear_deltarank", self._samples(), alpha=1.0, max_shift=0.1)
+
+    def test_evaluate_method_reports_all_axes(self):
+        from state_feedback.evaluate import evaluate_method
+
+        s = self._samples()
+        row = evaluate_method("oracleish", s.target.tolist(), s, topk=[5])
+        self.assertAlmostEqual(row["pooled_spearman"], 1.0)
+        self.assertAlmostEqual(row["cellwise_spearman_median"], 1.0)
+        self.assertAlmostEqual(row["gene_aggregated_spearman"], 1.0)
+        self.assertAlmostEqual(row["precision_at_5_up"], 1.0)
+        self.assertAlmostEqual(row["precision_at_5_down"], 1.0)
+        self.assertAlmostEqual(row["calibration_monotonicity"], 1.0)
+        self.assertEqual(row["n_cells_scored"], 6.0)
+        self.assertEqual(row["n_genes_scored"], 20.0)
+
+    def test_compare_methods_skips_unavailable(self):
+        from state_feedback.evaluate import compare_methods
+
+        s = self._samples()
+        s.delta_self_logit = None
+        out = compare_methods(s, alpha=1.0, max_shift=0.1, decoder=None, n_boot=20, n_perm=50)
+        names = {r["method"] for r in out["methods"]}
+        self.assertEqual(names, {"identity", "random", "norm"})
+        self.assertEqual(set(out["skipped"]), {"delta_mlm", "linear_deltarank"})
+        self.assertEqual(out["contrasts"], [])
+
+    def test_compare_methods_contrasts_primary(self):
+        from state_feedback.decoder import DeltaRankDecoder
+        from state_feedback.evaluate import compare_methods, direction_fidelity_verdict
+
+        s = self._samples()
+        dec = DeltaRankDecoder(s.delta_h.size(1), max_shift=0.1)
+        out = compare_methods(s, alpha=1.0, max_shift=0.1, decoder=dec, n_boot=20, n_perm=50)
+        self.assertEqual({c["baseline"] for c in out["contrasts"]}, {"norm", "delta_mlm", "identity", "random"})
+        verdict = direction_fidelity_verdict(out)
+        # untrained decoder predicts zero, so it cannot beat an informative baseline
+        self.assertIn("norm", verdict["does_not_beat"])
+
+    def test_zscore_is_within_cell(self):
+        from state_feedback.evaluate import _zscore_within_cells
+
+        # cell 0 and cell 1 have different scales; z-scores must match
+        z = _zscore_within_cells([1.0, 2.0, 3.0, 100.0, 200.0, 300.0], [0, 0, 0, 1, 1, 1])
+        self.assertAlmostEqual(z[0], z[3], places=6)
+        self.assertAlmostEqual(z[2], z[5], places=6)
+
+
+@unittest.skipUnless(HAS_TORCH, "torch not available")
+class TestSampleSelection(unittest.TestCase):
+    def test_selection_is_deterministic_across_passes(self):
+        from state_feedback.samples import select_gene_indices
+
+        ids = list(range(100))
+        scorable = {i: 0.0 for i in range(100)}
+        a = select_gene_indices(ids, scorable, max_genes=10, seed=42)
+        b = select_gene_indices(ids, scorable, max_genes=10, seed=42)
+        self.assertEqual(a, b)
+        self.assertEqual(len(a), 10)
+        self.assertEqual(a, sorted(a))
+
+    def test_selection_respects_scorable_and_keep(self):
+        from state_feedback.samples import select_gene_indices
+
+        ids = [5, 6, 7, 8]
+        scorable = {5: 0.0, 7: 0.0, 8: 0.0}
+        self.assertEqual(select_gene_indices(ids, scorable, max_genes=0, seed=0), [0, 2, 3])
+        self.assertEqual(
+            select_gene_indices(ids, scorable, max_genes=0, seed=0, keep_tokens={7}), [2]
+        )
+
+    def test_token_subset_keeps_all_features_aligned(self):
+        from state_feedback.samples import EvalSamples
+
+        s = EvalSamples(
+            cell_index=[0, 0, 1],
+            tokens=[10, 11, 10],
+            base_rank=torch.tensor([0.0, 0.5, 1.0]),
+            target=torch.tensor([1.0, 2.0, 3.0]),
+            delta_h=torch.arange(6, dtype=torch.float32).reshape(3, 2),
+            delta_norm=torch.tensor([7.0, 8.0, 9.0]),
+            delta_self_logit=torch.tensor([-1.0, -2.0, -3.0]),
+        )
+        sub = s.token_subset({10})
+        self.assertEqual(sub.tokens, [10, 10])
+        self.assertEqual(sub.cell_index, [0, 1])
+        self.assertEqual(sub.target.tolist(), [1.0, 3.0])
+        self.assertEqual(sub.delta_norm.tolist(), [7.0, 9.0])
+        self.assertEqual(sub.delta_self_logit.tolist(), [-1.0, -3.0])
+        self.assertEqual(sub.delta_h.tolist(), [[0.0, 1.0], [4.0, 5.0]])
 
 
 @unittest.skipUnless(HAS_TORCH, "torch not available")
