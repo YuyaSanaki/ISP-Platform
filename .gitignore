@@ -10,6 +10,11 @@
 /figures/
 /notebooks/
 /mlruns/
+
+# Local notes, cluster handover and paper-review material (not for the public repo)
+/handoff.md
+/pegasus-handover/
+/review/
 mlflow.db
 *.db
 
