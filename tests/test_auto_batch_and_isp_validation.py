@@ -720,6 +720,192 @@ class TestBatchSizeYamlControls(unittest.TestCase):
                 self.assertEqual(cfg["sequential"]["steps"][1]["type"], "delete")
                 self.assertEqual(cfg["runtime"]["forward_batch_size"], "auto")
                 self.assertEqual(cfg["isp"]["max_ncells"], 200)
+                self.assertFalse(cfg["sequential"]["save_intermediate_datasets"])
+                self.assertNotIn("state_feedback", cfg)
+        finally:
+            _restore_modules(saved)
+
+
+def _write_isp_stage(run_dir: Path) -> None:
+    stage = run_dir / "stage_configs"
+    stage.mkdir(parents=True)
+    (stage / "isp.yaml").write_text(
+        "paths:\n  dataset: /app/data/x.dataset\n"
+        "  geneformer_model: /app/models/ft\n"
+        "perturbation:\n  state_key: disease\n  start_state: AD\n  end_state: WT\n"
+        "model:\n  type: CellClassifier\n  num_classes: 2\n"
+        "isp:\n  max_ncells: 500\n"
+        "runtime:\n  nproc: 4\n"
+        "species:\n  model_organism: mouse\n",
+        encoding="utf-8",
+    )
+
+
+class TestStateFeedbackIspWebui(unittest.TestCase):
+    def _steps(self, st):
+        st.session_state.clear()
+        st.session_state["seq_isp_n_steps"] = 2
+        st.session_state["seq_isp_step_0_type"] = "overexpress"
+        st.session_state["seq_isp_step_0_genes"] = "Pou5f1\nSox2"
+        st.session_state["seq_isp_step_1_type"] = "delete"
+        st.session_state["seq_isp_step_1_genes"] = "Igfbp2"
+
+    def test_command_wiring(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            self.assertEqual(app.RUN_FILES[app.RUN_TYPE_STATE_FEEDBACK_ISP], "state_feedback_isp.yaml")
+            self.assertTrue(app._default_config_path(app.RUN_TYPE_STATE_FEEDBACK_ISP).is_file())
+            cfg = Path("/tmp/fake_sf.yaml")
+            st.session_state.clear()
+            cmd, env = app._build_command_and_env(app.RUN_TYPE_STATE_FEEDBACK_ISP, cfg)
+            self.assertTrue(cmd[1].endswith("run_state_feedback_isp.py"))
+            self.assertEqual(cmd[2:], ["--config", str(cfg)])
+            self.assertEqual(env.get("STATE_FEEDBACK_ISP_CONFIG"), str(cfg))
+
+            st.session_state["sf_isp_decoder_checkpoint"] = "/runs/a/decoder/delta_rank_decoder.pt"
+            st.session_state["sf_isp_eval_only"] = True
+            cmd, _ = app._build_command_and_env(app.RUN_TYPE_STATE_FEEDBACK_ISP, cfg)
+            self.assertIn("--eval-only", cmd)
+            i = cmd.index("--decoder-checkpoint")
+            self.assertEqual(cmd[i + 1], "/runs/a/decoder/delta_rank_decoder.pt")
+        finally:
+            _restore_modules(saved)
+
+    def test_build_yaml_defaults(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / "pipeline_test"
+                _write_isp_stage(run_dir)
+                self._steps(st)
+                yaml_text, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIsNone(err, err)
+                cfg = __import__("yaml").safe_load(yaml_text)
+                self.assertTrue(cfg["paths"]["output_root"].endswith("state_feedback_isp"))
+                self.assertTrue(cfg["paths"]["output_time_subdir"])
+                self.assertFalse(cfg["paths"]["output_date_subdir"])
+                self.assertEqual(cfg["isp"]["max_ncells"], 500)
+                self.assertEqual(len(cfg["sequential"]["steps"]), 2)
+                sf = cfg["state_feedback"]
+                self.assertEqual(sf["conditions"], list(app._SF_ISP_CONDITIONS))
+                self.assertEqual(sf["observed_state"], "WT")
+                self.assertEqual(sf["feedback_after_step"], 1)
+                self.assertNotIn("specificity", sf)
+                # eval / decoder hyperparameters come from the core template
+                self.assertIn("max_shift_grid", sf["decoder"])
+                self.assertIn("n_boot", sf["eval"])
+        finally:
+            _restore_modules(saved)
+
+    def test_build_yaml_options_and_specificity(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / "pipeline_test"
+                _write_isp_stage(run_dir)
+                self._steps(st)
+                st.session_state.update(
+                    {
+                        "sf_isp_max_ncells": 50,
+                        "sf_isp_conditions": ["ordered_rank_edit", "linear_deltarank"],
+                        "sf_isp_observed_state": "AD",
+                        "sf_isp_feedback_after_step": 9,
+                        "sf_isp_spec_enabled": True,
+                        "sf_isp_spec_sets": "3F: Pou5f1 Sox2 Nanog\n# comment\nctl: Actb, Gapdh",
+                        "sf_isp_spec_sets_type": "overexpress",
+                        "sf_isp_spec_n_random": 10,
+                        "sf_isp_spec_random_size": 1,
+                        "sf_isp_spec_random_type": "delete",
+                        "sf_isp_spec_match_gene": "Igfbp2",
+                    }
+                )
+                yaml_text, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIsNone(err, err)
+                cfg = __import__("yaml").safe_load(yaml_text)
+                sf = cfg["state_feedback"]
+                self.assertEqual(cfg["isp"]["max_ncells"], 50)
+                self.assertEqual(sf["conditions"], ["ordered_rank_edit", "linear_deltarank"])
+                self.assertEqual(sf["observed_state"], "AD")
+                self.assertEqual(sf["feedback_after_step"], 1)  # clamped to n_steps - 1
+                spec = sf["specificity"]
+                self.assertTrue(spec["enabled"])
+                self.assertEqual(spec["sets"]["3F"], {"type": "overexpress",
+                                                      "genes": ["Pou5f1", "Sox2", "Nanog"]})
+                self.assertEqual(spec["sets"]["ctl"]["genes"], ["Actb", "Gapdh"])
+                self.assertEqual(spec["n_random"], 10)
+                self.assertEqual(spec["random_type"], "delete")
+                self.assertEqual(spec["random_match_detection"], "Igfbp2")
+        finally:
+            _restore_modules(saved)
+
+    def test_build_yaml_rejects_bad_input(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / "pipeline_test"
+                _write_isp_stage(run_dir)
+                self._steps(st)
+                st.session_state["sf_isp_spec_enabled"] = True
+                st.session_state["sf_isp_spec_sets"] = "no colon here"
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("name: GENE1", err)
+                self._steps(st)
+                st.session_state["seq_isp_step_1_genes"] = ""
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("at least one gene", err)
+                self._steps(st)
+                st.session_state["sf_isp_conditions"] = ["not_a_condition"]
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("at least one condition", err)
+
+                self._steps(st)
+                st.session_state["seq_isp_n_steps"] = 1
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("at least 2 steps", err)
+                st.session_state["sf_isp_conditions"] = ["ordered_rank_edit", "null_feedback"]
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIsNone(err, err)
+                st.session_state["sf_isp_conditions"] = list(app._SF_ISP_CONDITIONS)
+                st.session_state["sf_isp_eval_only"] = True
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIsNone(err, err)
+        finally:
+            _restore_modules(saved)
+
+    def test_discover_runs_and_load_summary(self):
+        import json
+
+        app, _st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "pipeline_test"
+                run = source / "state_feedback_isp" / "state_feedback_isp_010203"
+                (run / "decoder").mkdir(parents=True)
+                (run / "decoder" / "delta_rank_decoder.pt").write_bytes(b"x")
+                (run / "direction_fidelity").mkdir()
+                (run / "direction_fidelity" / "direction_fidelity.json").write_text(
+                    json.dumps({"verdict": {"pass": True, "partial_spearman_given_base": 0.2},
+                                "methods": [{"method": "linear_deltarank"}], "contrasts": []})
+                )
+                (run / "run_manifest.json").write_text(
+                    json.dumps({"steps": [{"type": "overexpress", "genes": ["Pou5f1"]}],
+                                "gate": [{"condition": "linear_deltarank"}], "decoder": {}})
+                )
+                empty = source / "state_feedback_isp" / "state_feedback_isp_000000"
+                empty.mkdir()
+
+                runs = app._discover_sf_isp_runs(source)
+                self.assertEqual({r.name for r in runs}, {run.name, empty.name})
+                decoders = app._discover_sf_isp_decoders(source)
+                self.assertEqual(decoders, [run / "decoder" / "delta_rank_decoder.pt"])
+                self.assertIn("overexpress:Pou5f1", app._sf_isp_decoder_label(decoders[0]))
+
+                summary = app._load_state_feedback_summary(run)
+                self.assertTrue(summary["verdict"]["pass"])
+                self.assertEqual(summary["gate"], [{"condition": "linear_deltarank"}])
+                self.assertNotIn("specificity_rows", summary)
+                self.assertEqual(app._load_state_feedback_summary(empty), {"run": empty})
+                self.assertEqual(app._discover_sf_isp_runs(Path(tmp) / "missing"), [])
         finally:
             _restore_modules(saved)
 
