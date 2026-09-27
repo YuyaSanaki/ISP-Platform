@@ -353,9 +353,10 @@ class TestEvaluate(unittest.TestCase):
         s.delta_self_logit = None
         out = compare_methods(s, alpha=1.0, max_shift=0.1, decoder=None, n_boot=20, n_perm=50)
         names = {r["method"] for r in out["methods"]}
-        self.assertEqual(names, {"identity", "random", "norm"})
+        self.assertEqual(names, {"identity", "random", "norm", "base_rank"})
         self.assertEqual(set(out["skipped"]), {"delta_mlm", "linear_deltarank"})
         self.assertEqual(out["contrasts"], [])
+        self.assertNotIn("base_rank_control", out)
 
     def test_compare_methods_contrasts_primary(self):
         from state_feedback.decoder import DeltaRankDecoder
@@ -364,10 +365,45 @@ class TestEvaluate(unittest.TestCase):
         s = self._samples()
         dec = DeltaRankDecoder(s.delta_h.size(1), max_shift=0.1)
         out = compare_methods(s, alpha=1.0, max_shift=0.1, decoder=dec, n_boot=20, n_perm=50)
-        self.assertEqual({c["baseline"] for c in out["contrasts"]}, {"norm", "delta_mlm", "identity", "random"})
+        self.assertEqual(
+            {c["baseline"] for c in out["contrasts"]},
+            {"norm", "delta_mlm", "base_rank", "identity", "random"},
+        )
+        self.assertIn("linear_partial", out["base_rank_control"])
         verdict = direction_fidelity_verdict(out)
         # untrained decoder predicts zero, so it cannot beat an informative baseline
         self.assertIn("norm", verdict["does_not_beat"])
+        self.assertFalse(verdict["pass"])
+        self.assertIn("adds_beyond_base_rank", verdict)
+
+    def test_verdict_requires_signal_beyond_base_rank(self):
+        from state_feedback.evaluate import direction_fidelity_verdict
+
+        contrasts = [
+            {"baseline": b, "boot_delta_rho": 0.1, "boot_ci_low": 0.05, "boot_ci_high": 0.15,
+             "boot_excludes_zero": True}
+            for b in ("norm", "delta_mlm")
+        ]
+        rows = [{"method": "linear_deltarank", "pooled_spearman": 0.4}]
+        no_partial = {"methods": rows, "contrasts": contrasts,
+                      "base_rank_control": {"linear_partial": {"partial": 0.01, "ci_low": -0.02,
+                                                               "ci_high": 0.04}}}
+        v = direction_fidelity_verdict(no_partial)
+        self.assertTrue(v["beats_required_baselines"])
+        self.assertFalse(v["adds_beyond_base_rank"])
+        self.assertFalse(v["pass"])
+        with_partial = dict(no_partial, base_rank_control={
+            "linear_partial": {"partial": 0.2, "ci_low": 0.15, "ci_high": 0.25}})
+        self.assertTrue(direction_fidelity_verdict(with_partial)["pass"])
+
+    def test_base_rank_method_is_crossfitted(self):
+        from state_feedback.evaluate import predicted_delta_rank
+        from state_feedback.metrics import spearman_values
+
+        s = self._samples()
+        s.target = (s.base_rank - 0.5).clone()
+        pred = predicted_delta_rank("base_rank", s, alpha=1.0, max_shift=1.0)
+        self.assertGreater(spearman_values(pred, s.target.tolist()), 0.9)
 
     def test_zscore_is_within_cell(self):
         from state_feedback.evaluate import _zscore_within_cells

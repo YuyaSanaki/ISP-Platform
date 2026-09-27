@@ -14,7 +14,11 @@ Methods and their intended role:
 | ``random`` | rank-independent noise | none | permutation null |
 | ``norm`` | Δ‖h‖₂ | none | unsupervised scalar representation baseline |
 | ``delta_mlm`` | Δ self-logit | none | pretrained-head differential baseline |
+| ``base_rank`` | r_base only | cross-fitted bin means | base-rank control |
 | ``linear_deltarank`` | [Δh, r_base] | supervised | primary method |
+
+Every method also reports its Spearman after removing base rank
+(``partial_spearman_given_base``); see ``state_feedback.controls``.
 
 Sign convention: negative displacement = moved left = higher expression rank.
 """
@@ -25,6 +29,11 @@ from typing import Any, Mapping, Sequence
 
 import torch
 
+from state_feedback.controls import (
+    base_rank_control,
+    crossfit_base_only,
+    partial_spearman_given_base,
+)
 from state_feedback.metrics import (
     bootstrap_delta_rho,
     calibration_bins,
@@ -39,6 +48,7 @@ from state_feedback.samples import EvalSamples
 
 NULL_METHODS = ("identity", "random")
 BASELINE_METHODS = ("norm", "delta_mlm")
+BASE_RANK_METHOD = "base_rank"
 PRIMARY_METHOD = "linear_deltarank"
 DEFAULT_TOPK = (50, 100, 500)
 
@@ -104,6 +114,9 @@ def predicted_delta_rank(
             raise ValueError("delta_mlm requires self-logit features (pass mlm_model)")
         z = _zscore_within_cells(samples.delta_self_logit.tolist(), samples.cell_index)
         return [_maybe_clamp(-alpha * v, max_shift, bound) for v in z]
+    if method == BASE_RANK_METHOD:
+        pred = crossfit_base_only(samples.base_rank.tolist(), samples.target.tolist(), samples.tokens)
+        return [_maybe_clamp(v, max_shift, bound) for v in pred.tolist()]
     if method == PRIMARY_METHOD:
         if decoder is None:
             raise ValueError("linear_deltarank requires a trained decoder")
@@ -183,6 +196,9 @@ def evaluate_method(
         "method": method,
         "n_samples": len(pred),
         "pooled_spearman": spearman_values(pred, obs),
+        "partial_spearman_given_base": partial_spearman_given_base(
+            pred, obs, samples.base_rank.tolist()
+        ),
     }
 
     cell_rhos = _cellwise_spearman(pred, obs, samples.cell_index)
@@ -224,7 +240,7 @@ def compare_methods(
 ) -> dict[str, Any]:
     """Score every method on the shared sample set and contrast against baselines."""
     if methods is None:
-        methods = [*NULL_METHODS, *BASELINE_METHODS, PRIMARY_METHOD]
+        methods = [*NULL_METHODS, *BASELINE_METHODS, BASE_RANK_METHOD, PRIMARY_METHOD]
     available = [
         m
         for m in methods
@@ -251,7 +267,7 @@ def compare_methods(
     contrasts: list[dict[str, Any]] = []
     if PRIMARY_METHOD in preds:
         obs = samples.target.tolist()
-        for other in (*BASELINE_METHODS, *NULL_METHODS):
+        for other in (*BASELINE_METHODS, BASE_RANK_METHOD, *NULL_METHODS):
             if other not in preds:
                 continue
             boot = bootstrap_delta_rho(
@@ -275,7 +291,13 @@ def compare_methods(
                 }
             )
 
-    return {"methods": rows, "contrasts": contrasts, "skipped": skipped}
+    result: dict[str, Any] = {"methods": rows, "contrasts": contrasts, "skipped": skipped}
+    if PRIMARY_METHOD in preds:
+        extra = {m: preds[m] for m in BASELINE_METHODS if m in preds}
+        result["base_rank_control"] = base_rank_control(
+            samples, decoder, extra=extra, n_boot=n_boot, seed=seed
+        )
+    return result
 
 
 def _cellwise_spearman_map(
@@ -301,8 +323,11 @@ def _cellwise_spearman_map(
 def direction_fidelity_verdict(result: Mapping[str, Any]) -> dict[str, Any]:
     """Reduce the comparison to the Phase 2 direction-fidelity axis.
 
-    Passing requires the primary decoder to beat *both* parameter-free baselines
-    with a bootstrap CI on Δρ that excludes zero. Beating the nulls only shows the
+    Passing requires the primary decoder to (1) beat *both* parameter-free
+    baselines with a bootstrap CI on Δρ that excludes zero, and (2) add signal
+    beyond base rank: its partial Spearman given base rank must have a CI above
+    zero. (2) is needed because a base-rank-only predictor can match the decoder's
+    pooled Spearman with an endpoint teacher. Beating the nulls only shows the
     method does something, not that it reads biology.
     """
     by_method = {r["method"]: r for r in result.get("methods", [])}
@@ -324,6 +349,16 @@ def direction_fidelity_verdict(result: Mapping[str, Any]) -> dict[str, Any]:
     verdict["does_not_beat"] = fails
     evaluated = set(beats) | set(fails)
     required = [b for b in BASELINE_METHODS if b in evaluated]
-    verdict["pass"] = bool(required) and all(b in beats for b in required)
+    beats_baselines = bool(required) and all(b in beats for b in required)
+
+    partial = (result.get("base_rank_control") or {}).get("linear_partial") or {}
+    verdict["partial_spearman_given_base"] = partial.get("partial", float("nan"))
+    verdict["partial_ci_low"] = partial.get("ci_low", float("nan"))
+    verdict["partial_ci_high"] = partial.get("ci_high", float("nan"))
+    adds_beyond_base = bool(partial) and partial.get("ci_low", float("nan")) > 0
+    verdict["adds_beyond_base_rank"] = adds_beyond_base
+
+    verdict["beats_required_baselines"] = beats_baselines
+    verdict["pass"] = beats_baselines and adds_beyond_base
     verdict["required_baselines"] = required
     return verdict

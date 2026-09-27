@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +56,7 @@ from geneformer.species_context import (
 from sequential_oe import parse_sequential_steps
 import run_sequential_isp as seq
 
+from state_feedback import controls
 from state_feedback import feedback as fb
 from state_feedback import gene_states as gs
 from state_feedback.decoder import (
@@ -533,7 +535,18 @@ def run_direction_fidelity(
     pd.DataFrame(calib_rows).to_csv(out_dir / "calibration_bins.csv", index=False)
     pd.DataFrame(cell_rows).to_csv(out_dir / "cellwise_spearman.csv", index=False)
 
-    verdict = direction_fidelity_verdict({"methods": method_rows, "contrasts": result["contrasts"]})
+    base_control = result.get("base_rank_control") or {}
+    if base_control:
+        pd.DataFrame(
+            [{"method": m, **{k: v for k, v in r.items() if k != "stratified_by_base"},
+              **{f"stratum_{i}_spearman": x for i, x in enumerate(r["stratified_by_base"])}}
+             for m, r in base_control["methods"].items()]
+        ).to_csv(out_dir / "base_rank_control.csv", index=False)
+
+    verdict = direction_fidelity_verdict(
+        {"methods": method_rows, "contrasts": result["contrasts"],
+         "base_rank_control": base_control}
+    )
     summary = {
         "perturbation": which,
         "n_samples": len(samples),
@@ -541,11 +554,13 @@ def run_direction_fidelity(
         "skipped_methods": result["skipped"],
         "methods": method_rows,
         "contrasts": result["contrasts"],
+        "base_rank_control": base_control,
         "verdict": verdict,
         "not_computable_here": {
             "within_gene_across_cells_spearman":
                 "undefined: the pseudobulk teacher is one constant per gene",
-            "perturbation_wise": "only one perturbation chain in this config",
+            "perturbation_wise":
+                "see perturbation_specificity/ (state_feedback.specificity) when enabled",
             "donor_batch_stratified":
                 "dataset has a single replicate and sample_id is collinear with state_key",
             "matched_perturbation_oracle":
@@ -557,6 +572,7 @@ def run_direction_fidelity(
     for row in method_rows:
         print(
             f"  {row['method']:<18} pooled_rho={row['pooled_spearman']:+.4f} "
+            f"partial_rho={row.get('partial_spearman_given_base', float('nan')):+.4f} "
             f"cellwise_median={row['cellwise_spearman_median']:+.4f} "
             f"gene_rho={row['gene_aggregated_spearman']:+.4f} "
             f"P@100_up={row.get('precision_at_100_up', float('nan')):.3f}",
@@ -571,7 +587,198 @@ def run_direction_fidelity(
             f"p={c.get('perm_p_value', nan):.4g}",
             flush=True,
         )
+    if base_control:
+        lp = base_control.get("linear_partial", {})
+        print(
+            f"  base-rank control: base-only rho={base_control['base_only_pooled_spearman']:+.4f} "
+            f"linear partial rho={lp.get('partial', nan):+.4f} "
+            f"[{lp.get('ci_low', nan):+.4f}, {lp.get('ci_high', nan):+.4f}]",
+            flush=True,
+        )
     print(f"Wrote {out_dir / 'direction_fidelity.csv'}", flush=True)
+    return summary
+
+
+def run_perturbation_specificity(
+    cfg: Mapping[str, Any],
+    spec_cfg: Mapping[str, Any],
+    model,
+    decoder,
+    start_ds,
+    steps,
+    token_by_step,
+    teacher: Mapping[int, float],
+    val_tokens: set[int],
+    eval_cfg: Mapping[str, Any],
+    out_dir: Path,
+    *,
+    layer_to_quant: int,
+    pad_token_id: int,
+    model_input_size: int,
+    forward_batch_size: int,
+    nproc: int,
+) -> dict[str, Any]:
+    """Feed the same decoder Δh from other perturbations; does its signal beyond
+    base rank depend on the perturbation?
+
+    Conditions: ``configured`` (the config's steps, cumulative), each named set in
+    ``specificity.sets``, and ``n_random`` random draws of ``random_size`` teacher
+    genes perturbed with ``random_type``. ``random_match_detection`` restricts the
+    random pool to genes detected in 0.5-2x as many start cells as that gene (a
+    delete of an undetected gene changes nothing). Every perturbed gene of every
+    condition is removed from the scored set, so all conditions share one gene set.
+    """
+    seed = int(eval_cfg.get("seed", 0))
+    n_boot = int(spec_cfg.get("n_boot", eval_cfg.get("n_boot", 1000)))
+    max_genes = int(eval_cfg.get("max_genes_per_cell", 512))
+
+    plans: dict[str, tuple[list[dict[str, Any]], list[list[int]], list[str]]] = {
+        "configured": (
+            list(steps),
+            [list(t) for t in token_by_step],
+            [f"{s['type']}:{g}" for s in steps for g in s["genes"]],
+        ),
+    }
+    named_tokens: set[int] = {t for ts in token_by_step for t in ts}
+    for name, spec in (spec_cfg.get("sets") or {}).items():
+        genes = [str(g) for g in spec["genes"]]
+        ptype = str(spec.get("type", "overexpress"))
+        tokens, resolved = seq._resolve_gene_tokens(cfg, genes)
+        if len(tokens) != len(genes):
+            raise ValueError(f"specificity set {name!r}: resolved {resolved} for {genes}")
+        named_tokens.update(tokens)
+        plans[str(name)] = (
+            [{"index": 1, "name": str(name), "type": ptype, "genes": genes}],
+            [list(tokens)],
+            [f"{ptype}:{g}" for g in genes],
+        )
+
+    n_random = int(spec_cfg.get("n_random", 0))
+    random_size = int(spec_cfg.get("random_size", 1))
+    random_type = str(spec_cfg.get("random_type", "overexpress"))
+    pool = sorted(set(int(t) for t in teacher) - named_tokens)
+    match_info: dict[str, Any] | None = None
+    match_gene = spec_cfg.get("random_match_detection")
+    if match_gene:
+        ref_token = seq._resolve_gene_tokens(cfg, [str(match_gene)])[0][0]
+        detection = controls.detection_rate(start_ds["input_ids"])
+        ref = detection.get(int(ref_token), 0.0)
+        pool = controls.detection_matched_pool(pool, detection, ref)
+        match_info = {"gene": str(match_gene), "detection_rate": ref, "pool_size": len(pool)}
+        print(f"Random pool matched to {match_gene} (detection {ref:.3f}): {len(pool)} genes",
+              flush=True)
+    if n_random and len(pool) < random_size:
+        raise ValueError(f"random pool has {len(pool)} genes; need {random_size}")
+    rng = random.Random(seed)
+    for r in range(n_random):
+        tokens = rng.sample(pool, random_size)
+        plans[f"random{r}"] = (
+            [{"index": 1, "name": f"random{r}", "type": random_type,
+              "genes": [str(t) for t in tokens]}],
+            [tokens],
+            [f"{random_type}:token:{t}" for t in tokens],
+        )
+
+    excluded = {t for _, tbs, _ in plans.values() for ts in tbs for t in ts}
+    keep = set(int(t) for t in val_tokens) - excluded
+    print(f"Specificity: {len(plans)} conditions, {len(keep)} scored held-out genes",
+          flush=True)
+
+    rows: list[dict[str, Any]] = []
+    kept_samples: dict[str, Any] = {}
+    for name, (st, tbs, genes) in plans.items():
+        pert = _apply_steps_at_once(start_ds, st, tbs, nproc=nproc)
+        samples = collect_eval_samples(
+            model, start_ds, pert, teacher,
+            layer_to_quant=layer_to_quant, pad_token_id=pad_token_id,
+            model_input_size=model_input_size, forward_batch_size=forward_batch_size,
+            mlm_model=None, keep_tokens=keep, max_genes_per_cell=max_genes, seed=seed,
+        )
+        seq._empty_cuda_cache()
+        rep = controls.base_rank_control(samples, decoder, n_boot=n_boot, seed=seed)
+        lp = rep["linear_partial"]
+        row = {
+            "condition": name,
+            "genes": " ".join(genes),
+            "n_samples": rep["n_samples"],
+            "mean_delta_h_norm": rep["mean_delta_h_norm"],
+            "linear_pooled_spearman": rep["methods"]["linear_deltarank"]["pooled_spearman"],
+            "linear_partial": lp["partial"],
+            "linear_partial_ci_low": lp["ci_low"],
+            "linear_partial_ci_high": lp["ci_high"],
+            "delta_h_only_partial":
+                rep["methods"]["delta_h_only"]["partial_spearman_given_base"],
+            "delta_h_shuffled_partial":
+                rep["methods"]["delta_h_shuffled"]["partial_spearman_given_base"],
+            "base_only_pooled_spearman": rep["base_only_pooled_spearman"],
+        }
+        rows.append(row)
+        print(
+            f"  [{name}] samples={row['n_samples']} |dh|={row['mean_delta_h_norm']:.3f} "
+            f"partial={row['linear_partial']:+.3f} "
+            f"[{row['linear_partial_ci_low']:+.3f}, {row['linear_partial_ci_high']:+.3f}] "
+            f"dh_only={row['delta_h_only_partial']:+.3f}",
+            flush=True,
+        )
+        if not name.startswith("random"):
+            kept_samples[name] = samples
+
+    random_rows = [r for r in rows if r["condition"].startswith("random")]
+    vs_random = [
+        {"condition": r["condition"], "linear_partial": r["linear_partial"],
+         "delta_h_only_partial": r["delta_h_only_partial"],
+         **controls.versus_random(r["linear_partial"], [x["linear_partial"] for x in random_rows]),
+         **{f"delta_h_only_{k}": v for k, v in controls.versus_random(
+             r["delta_h_only_partial"], [x["delta_h_only_partial"] for x in random_rows]).items()
+            if k in ("random_mean", "random_max", "n_random_ge", "empirical_p")}}
+        for r in rows if not r["condition"].startswith("random")
+    ] if random_rows else []
+
+    contrasts: list[dict[str, Any]] = []
+    names = list(kept_samples)
+    linear = {n: controls.decoder_variants(decoder, s, seed=seed)["linear_deltarank"]
+              for n, s in kept_samples.items()}
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            sa, sb = kept_samples[a], kept_samples[b]
+            ia = {k: j for j, k in enumerate(zip(sa.cell_index, sa.tokens))}
+            ib = {k: j for j, k in enumerate(zip(sb.cell_index, sb.tokens))}
+            common = sorted(set(ia) & set(ib))
+            xa = [ia[k] for k in common]
+            xb = [ib[k] for k in common]
+            diff = controls.bootstrap_partial_diff(
+                linear[a][xa], linear[b][xb],
+                sa.target.cpu().numpy()[xa], sa.base_rank.cpu().numpy()[xa],
+                [sa.cell_index[j] for j in xa], n_boot=n_boot, seed=seed,
+            )
+            contrasts.append({"a": a, "b": b, "n_common": len(common), **diff})
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(out_dir / "perturbation_specificity.csv", index=False)
+    pd.DataFrame(vs_random).to_csv(out_dir / "vs_random.csv", index=False)
+    pd.DataFrame(contrasts).to_csv(out_dir / "specificity_contrasts.csv", index=False)
+    summary = {
+        "conditions": {n: p[2] for n, p in plans.items()},
+        "n_scored_genes": len(keep),
+        "n_start_cells": len(start_ds),
+        "random": {"n": n_random, "size": random_size, "type": random_type,
+                   "match": match_info},
+        "rows": rows,
+        "vs_random": vs_random,
+        "contrasts": contrasts,
+    }
+    (out_dir / "perturbation_specificity.json").write_text(json.dumps(summary, indent=2) + "\n")
+    for v in vs_random:
+        print(
+            f"  {v['condition']} vs {v['random_n']} random: partial={v['linear_partial']:+.3f} "
+            f"random mean={v['random_mean']:+.3f} max={v['random_max']:+.3f} "
+            f"p={v['empirical_p']:.3f}",
+            flush=True,
+        )
+    for c in contrasts:
+        print(f"  {c['a']} - {c['b']}: {c['diff']:+.3f} [{c['ci_low']:+.3f}, {c['ci_high']:+.3f}]",
+              flush=True)
+    print(f"Wrote {out_dir / 'perturbation_specificity.csv'}", flush=True)
     return summary
 
 
@@ -598,6 +805,12 @@ def main() -> int:
         "--skip-direction-fidelity",
         action="store_true",
         help="Skip the direction-fidelity comparison.",
+    )
+    parser.add_argument(
+        "--specificity",
+        action="store_true",
+        help="Run the perturbation-specificity control even if "
+        "state_feedback.specificity.enabled is false.",
     )
     args = parser.parse_args()
 
@@ -806,6 +1019,32 @@ def main() -> int:
         )
         seq._empty_cuda_cache()
 
+    spec_cfg = sf_cfg.get("specificity") or {}
+    specificity: dict[str, Any] = {}
+    if args.specificity or bool(spec_cfg.get("enabled", False)):
+        if decoder is None:
+            raise ValueError("perturbation specificity needs a decoder (train or --decoder-checkpoint)")
+        print("=== perturbation specificity (same decoder, other perturbations) ===", flush=True)
+        specificity = run_perturbation_specificity(
+            cfg,
+            spec_cfg,
+            model,
+            decoder,
+            start_ds,
+            steps,
+            token_by_step,
+            teacher,
+            val_tokens,
+            eval_cfg,
+            output_root / "perturbation_specificity",
+            layer_to_quant=layer_to_quant,
+            pad_token_id=pad_token_id,
+            model_input_size=model_input_size,
+            forward_batch_size=forward_batch_size,
+            nproc=nproc,
+        )
+        seq._empty_cuda_cache()
+
     common = dict(
         layer_to_quant=layer_to_quant,
         pad_token_id=pad_token_id,
@@ -960,11 +1199,14 @@ def main() -> int:
         "decoder": decoder_info,
         "gate": gate_rows,
         "direction_fidelity": fidelity.get("verdict", {}),
+        "perturbation_specificity": specificity.get("vs_random", []),
         "hard_gate": (
             "Phase 2 gate is two-axis. Primary axis is direction fidelity: the "
             "linear decoder must beat norm and delta_mlm on held-out-gene Spearman "
             "against the observed Delta-rank, with a bootstrap CI on the difference "
-            "that excludes zero. gap_closed_fraction against the oracle is a "
+            "that excludes zero, and its partial Spearman given base rank must have "
+            "a CI above zero (a base-rank-only predictor can match the pooled "
+            "Spearman). gap_closed_fraction against the oracle is a "
             "feasibility ceiling only - the oracle feeds observed goal-state ranks "
             "back in, so it carries endpoint leakage and is not a fidelity target. "
             "Phase 3 (MLP / multi-step) only after the primary axis is settled."

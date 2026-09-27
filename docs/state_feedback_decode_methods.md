@@ -232,9 +232,10 @@ Implemented, generic (no OSKM hardcoding anywhere in `core/state_feedback/`):
 | `core/state_feedback/teacher.py` | observed Δrank from pseudobulk positions; gene-level train/val split |
 | `core/state_feedback/decoder.py` | `DeltaRankDecoder`, training loop, `max_shift` grid search, null drift |
 | `core/state_feedback/feedback.py` | rerank strategies + training-sample collection |
-| `core/run_state_feedback_isp.py` | runner comparing all conditions in one run |
+| `core/state_feedback/controls.py` | base-rank control (partial ρ, cross-fitted base-only predictor) and perturbation-specificity helpers |
+| `core/run_state_feedback_isp.py` | runner comparing all conditions in one run; optional perturbation-specificity stage |
 | `core/config/state_feedback_isp.yaml` | config (OSKM values are a worked example only) |
-| `tests/test_state_feedback_phase12.py` | 34 tests (39 with Phase 0) — all pass in Docker |
+| `tests/test_state_feedback_phase12.py`, `tests/test_state_feedback_controls.py` | with `test_state_feedback_oracle.py`: 81 tests, all pass in Docker |
 
 **How to run** (host `spark-943a`, Docker):
 
@@ -245,8 +246,16 @@ ISP_PLATFORM_IMAGE=isp-platform:latest DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
 # tests
 ISP_PLATFORM_IMAGE=isp-platform:latest DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
   docker compose run --rm --no-deps sequential_isp \
-  python3 -m unittest tests.test_state_feedback_phase12 tests.test_state_feedback_oracle
+  python3 -m unittest tests.test_state_feedback_phase12 tests.test_state_feedback_controls tests.test_state_feedback_oracle
+# perturbation specificity with an existing decoder (no retraining, no endpoint conditions)
+  python3 core/run_state_feedback_isp.py --config ... --eval-only --specificity \
+    --decoder-checkpoint <run>/decoder/delta_rank_decoder.pt
 ```
+
+The specificity stage (`state_feedback.specificity`, off by default) writes
+`<run>/perturbation_specificity/` (`perturbation_specificity.csv`, `vs_random.csv`,
+`specificity_contrasts.csv`, `.json`). `direction_fidelity/` also gets
+`base_rank_control.csv`, and `direction_fidelity.json` a `base_rank_control` block.
 
 `--conditions` selects a subset (conditions are mutually independent, so they can be
 split across jobs). Wall time at n=50 was ~26 min end to end; ~4 min per condition,
@@ -292,11 +301,12 @@ Oracle-A は goal-state の観測 rank を次入力に入れるため endpoint �
 
 | 軸 | Pass の目安 | 意味 | 現状 |
 |---|---|---|---|
-| **Direction fidelity**（主軸） | linear の held-out ρ が norm・ΔMLM を明確に上回る（bootstrap CI が 0 を跨がない） | Δh から観測 rank displacement の**方向**を読めている | **PASS** |
+| **Direction fidelity**（主軸） | linear の held-out ρ が norm・ΔMLM を明確に上回る（bootstrap CI が 0 を跨がない）**かつ** base rank を除いた partial ρ の CI が 0 を跨がない | Δh から観測 rank displacement の**方向**を、元の位置だけで説明できる分を超えて読めている | **PASS**（partial ρ 0.24、下記） |
+| Perturbation specificity | 評価対象の摂動の partial ρ がランダム摂動の分布を上回る | 上乗せが採点遺伝子の性質ではなく摂動の Δh に依存する | **PASS**（BBRC・Asano とも全ランダム組を上回る） |
 | Effect prioritization | top-up/down の precision@K・NDCG@K が baseline を上回る | biologically relevant movers を優先できている | PASS（up 方向。down は弱い） |
 | Calibration | Δr̂ の大きさと observed Δr の大きさが単調対応 | 順位変化量を過度に誇張・圧縮していない | 単調性 PASS、**magnitude は圧縮**（下記） |
 | Null stability | null rerank が不変、または定義済み許容範囲内 | 無根拠な drift を導入しない | PASS（完全不変） |
-| External validity | held-out perturbation / donor / dataset でも優位 | teacher 固有の shortcut でない | **未検証**（データ不足） |
+| External validity | held-out perturbation / donor / dataset でも優位 | teacher 固有の shortcut でない | **一部検証**（別 dataset・別種: Asano PIPseq。donor / batch holdout は未） |
 | Classifier consistency | endpoint shift が direction fidelity と少なくとも弱く正に相関 | downstream score が補助指標として整合 | **不整合**（下記） |
 
 #### Direction fidelity 実測（n=50, held-out genes 2,189 / 25,047 samples, 同一教師・同一 split・同一単位）
@@ -328,19 +338,68 @@ chance level は `K / n_genes` なので P@100 ≈ 0.046、P@500 ≈ 0.228。lin
 1. **Calibration は単調だが magnitude が圧縮されている。** 予測レンジ −0.073…+0.163 に対し観測レンジ −0.192…+0.096。左方向（up）の移動量を過小に、右方向を過大に見積もる。方向は正しく、量は信用できない。
 2. **down 方向が弱い。** P@100 down = 0.100（2.2× chance）で ΔMLM と同値、P@50 down = 0.040（1.75× chance）。優位性は主に up-mover の同定に由来する。endpoint 教師の "down" 側は他遺伝子が左に動いた結果の相対的押し出し（compositional）で特異性が低いことと整合する。
 3. **endpoint shift と direction fidelity が整合しない。** `delta_mlm` は endpoint shift 最高（gap closed 21.8%）でありながら direction fidelity は chance 以下（ρ = −0.016）。Classifier consistency 軸は満たされていない。endpoint shift は本問題では補助指標にもならない。
-4. **external validity 未検証。** 下記「現 dataset で計算できないもの」参照。
+4. **external validity は一部のみ。** 下記「外部妥当性」「現 dataset で計算できないもの」参照。
+
+#### Base-rank 対照（2026-09-27 追加。pooled ρ の読み方を改める）
+
+endpoint 教師では、遺伝子が細胞内で元々どの位置にいたか（base rank）だけで観測 Δrank の多くが予測できる（上位の遺伝子は下がり、下位の遺伝子は上がる）。base rank だけを使う予測器（20 分位 bin の平均 Δrank、token の偶奇で 2 分割して交差適合 = `base_rank`）は、pooled ρ で linear とほぼ並ぶ。
+
+| n=300, BBRC | pooled ρ | partial ρ given base rank [95% CI] |
+|---|---|---|
+| `linear_deltarank` | 0.437 | **0.242** [0.234, 0.250] |
+| `base_rank`（交差適合） | 0.422 | 0 以下（位置以外の情報を持たない。5 細胞 smoke で −0.06） |
+| linear、Δh を細胞内でシャッフル | — | 0.010 |
+| linear、base を 0.5 に固定（Δh のみ） | — | ≈ linear と同値 |
+| `norm` / `delta_mlm` | 0.040 / −0.013 | — |
+
+- partial ρ = base rank の 20 分位 bin ごとに、予測と観測の順位からそれぞれ bin 平均を引いた後の相関。「元の位置を超えて Δh が足している分」
+- **上の実測表の pooled ρ 0.419 の大部分は base rank で説明される。** decoder の Δh 由来の上乗せは partial ρ ≈ 0.24。判定基準にこれを加えた（`direction_fidelity_verdict` の `adds_beyond_base_rank`）
+- Δh をシャッフルすると上乗せは消え、base を固定しても残る。上乗せは Δh の向きに由来する
+
+#### 摂動特異性（同じ decoder に別の摂動の Δh を入れる）
+
+decoder（OSKM の Δh で学習）・teacher・held-out gene・細胞は固定し、Δh を作る摂動だけを変える。上乗せが採点遺伝子の性質だけなら、摂動によらず同じ値になるはず。摂動した遺伝子は全条件で採点から除外。
+
+| BBRC | partial ρ n=50 [95% CI] | partial ρ n=300 [95% CI] |
+|---|---|---|
+| OSKM（config の chain） | 0.229 [0.210, 0.248] | 0.241 [0.234, 0.250] |
+| OSKM 同時 OE | 0.228 [0.208, 0.246] | 0.240 [0.233, 0.249] |
+| 3F（POU5F1, SOX2, NANOG） | 0.249 [0.230, 0.269] | 0.264 [0.256, 0.273] |
+| 7F（NANOG, POU5F1, SOX2, ESRRB, LIN28A, DPPA4, TERT） | 0.289 [0.274, 0.306] | 0.307 [0.300, 0.315] |
+| ランダム OE 4 genes（n=50: 30 組, n=300: 10 組）平均 ± SD（最大） | 0.075 ± 0.026（0.156） | 0.075 ± 0.028（0.128） |
+
+- 4 条件とも全ランダム組を上回る（経験的 p は組数で決まる最小値: n=50 で 0.032、n=300 で 0.091）
+- 7F > 3F > OSKM（n=300: 7F − OSKM = +0.067 [+0.063, +0.071]、3F − OSKM = +0.024 [+0.021, +0.027]）。これは「model 空間で somatic → pluripotent の endpoint 方向により揃う」という意味に限る。decoder は OSKM で学習し 3F・7F と因子を共有するため、reprogramming 効率の比較ではない
+- OSKM の chain と同時 OE の差は +0.001 [+0.000, +0.002]。この指標では順序の効果は見えない
+- ランダム OE の partial が 0 でない（0.075）のは、どの OE でも一部は endpoint 方向に揃うため
+
+#### 外部妥当性: Asano PIPseq（mouse 大動脈 scRNA-seq, AD → WT）
+
+mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized dataset。摂動は Igfbp2 delete、observed_state = WT。hidden size が違うため decoder は Asano 上で学習し直した（他のハイパーパラメータは BBRC と同一）。
+
+| Asano | n=50 | n=300 |
+|---|---|---|
+| linear pooled ρ / base-only（交差適合） | 0.229 / 0.159 | 0.235 / 0.171 |
+| linear partial ρ [95% CI] | 0.133 [0.110, 0.155] | 0.125 [0.116, 0.135] |
+| Δρ vs norm | +0.104 [+0.075, +0.132] | +0.114 [+0.103, +0.125] |
+| ランダム delete 1 gene（Igfbp2 と検出頻度 0.5〜2 倍）partial 平均（最大） | 0.006（0.027）, 30 組 | 0.007（0.028）, 10 組 |
+
+- 別の種・別の遷移・別の FT モデルでも「norm・ΔMLM を上回り、base rank を超える上乗せがあり、ランダム摂動を上回る」形は再現した。大きさに依存しない Δh のみの partial でも Igfbp2 はランダムと分離する
+- 効果は BBRC の約半分。AD と WT の差自体が小さく、混合細胞集団の pseudobulk なので細胞組成の差も teacher に混じりうる
+- ランダム delete は検出頻度では揃えたが、細胞内の順位は揃えていない。decoder は Igfbp2 の Δh で学習している
+- PIPseq のみなので batch holdout はしていない
 
 #### 現 dataset で計算できないもの（黙って省略せず明記する）
 
 | 解析 | 不可の理由 |
 |---|---|
 | within-gene / across-cells Spearman | pseudobulk teacher は**遺伝子ごとに定数**なので細胞方向の分散がゼロ。定義不能。gene 単位の一致は gene-aggregated ρ で測り、gene identity 記憶は held-out gene split 自体が対照になる |
-| perturbation-wise | 本 config は perturbation chain 1 本のみ |
+| perturbation-wise（観測側） | 摂動ごとの観測 post-perturbation rank が無い。decoder 側の摂動特異性は上記の対照で見ている |
 | donor / batch 層別 | `replicate` は `Rep1` 単一、`sample_id` は `state_key` と完全共線 |
 | Oracle-B (matched perturbation) | OSKM 誘導後の観測中間時点が無い |
 | cell-state-pair / dataset holdout | 別 transition / 別 dataset の FT モデルが未整備 |
 
-**external validity 用の候補資産:** `~/20260624Geneformer-Platform/output/20260822/.../Asano_Mouse-Mouse_0.dataset` は同一スキーマで `3w`/`5w` × `WT`/`AD` × replicate `1st`/`2nd`/`PIPseq` を持つ。**別の biological transition かつ batch 構造あり**なので、held-out transition と batch holdout の両方に使える。ただし対応する fine-tuned mouse モデルが見つかっていないため、FT から必要。
+**batch holdout 用の候補資産:** Asano mouse dataset は `3w`/`5w` × `WT`/`AD` × replicate `1st`/`2nd`/`PIPseq` を持つ。上の外部妥当性は PIPseq のみの FT モデルで行った。batch holdout には replicate をまたぐ FT と評価が別途必要。
 
 #### 現時点で証明できていること / いないこと
 
@@ -348,24 +407,27 @@ chance level は `K / n_genes` なので P@100 ≈ 0.046、P@500 ≈ 0.228。lin
 
 - Oracle-A reranking は endpoint classifier 空間を大きく動かせる（feasibility）
 - `null_feedback` は完全な恒等置換であり、decoder は無根拠な drift を作らない（変位 0.0 / Spearman 1.0 / top-100 Jaccard 1.0 / shift 0.0000）。解析 null drift は非ゼロ（0.004）だが `base_rank_norm` の単調関数なので順序不変
-- linear decoder は held-out gene 上で観測 Δrank に対し pooled ρ = 0.419、cell-wise median ρ = 0.443 を示し、`norm` / `delta_mlm` を bootstrap CI が 0 を跨がない差で上回る（50/50 細胞で優位）
+- linear decoder は held-out gene 上で観測 Δrank に対し pooled ρ = 0.419、cell-wise median ρ = 0.443 を示し、`norm` / `delta_mlm` を bootstrap CI が 0 を跨がない差で上回る（50/50 細胞で優位）。ただし pooled ρ の大部分は base rank で説明でき、Δh 由来の上乗せは partial ρ ≈ 0.24（n=300 で CI [0.234, 0.250]）
+- その上乗せは摂動に依存する（初期化カクテル 0.24〜0.31 対 ランダム OE 0.075）
+- 同じ手順で別の種・別の遷移（Asano PIPseq）でも、小さいながら同じ形が再現する（partial ρ ≈ 0.13、ランダム delete ≈ 0.01）
 - endpoint shift は direction-sensitive な decoder 評価として**不十分**（`delta_mlm` が endpoint 最高かつ direction chance 以下）
 
 **まだ証明できていないこと:**
 
-- decoder の優位性が別 perturbation / donor / batch / dataset に一般化するか
+- decoder を学習に使っていない摂動へ持ち込んだときに通用するか（現在はどちらの dataset でも評価対象の摂動で学習）
+- donor / batch をまたいで一般化するか
 - 変位の **大きさ** が信用できるか（単調だが圧縮されている）
 - down 方向（発現順位低下）を特異的に捉えられているか
 - multi-step state-feedback が単発 feedback を越えて有益かつ安定か（cycle detection / convergence stopping の配線が前提）
 
 #### 次にやること（優先順）
 
-1. `max_ncells: 300` で Phase 0 Oracle-A confirmation と direction fidelity を再測（現在の CI は n=50 細胞 bootstrap）
+1. `max_ncells: 300` で Phase 0 Oracle-A confirmation を再測（direction fidelity と摂動特異性は n=300 で再測済み、結論は n=50 と同じ）
 2. `max_shift` grid をさらに上へ（val Spearman は 0.5 で `0.458` と**まだ伸びている**。ただし 0.5 は encoding の半分を 1 step で動かせる幅なので、生物学的妥当性の上限も併せて決める）
 3. calibration の magnitude 圧縮を是正（Huber 重み / 出力スケールの再検討）
 4. down 方向の弱さの原因究明（compositional な押し出しか、教師の非対称性か）
 5. Oracle-B 用の reprogramming time-course dataset を用意
-6. Asano mouse dataset で FT → external transition / batch holdout
+6. Asano: batch holdout（replicate をまたぐ FT）と、in-cell rank も揃えたランダム delete
 7. multi-step へ進む場合は先に cycle detection と convergence stopping を runner に配線
 8. **Phase 3 (MLP) は上記が済み、かつ linear が Oracle-B gap を残した場合のみ**
 
@@ -380,7 +442,9 @@ chance level は `K / n_genes` なので P@100 ≈ 0.046、P@500 ≈ 0.228。lin
 | Random bounded shift | rank-independent noise。permutation null |
 | Norm reranking | Parameter-free unsupervised scalar baseline（勝てなければ decoder の主張が成立しない） |
 | ΔMLM + inertia | Pretrained-head differential baseline |
+| Base-rank only | 20 分位 bin の平均 Δrank（交差適合）。endpoint 教師で位置だけから取れる分の対照。主法はこれを partial ρ で超える必要がある |
 | Linear residual Δrank | **主法** |
+| Linear, other perturbations | 同じ decoder に別の摂動・ランダム摂動の Δh。上乗せの摂動特異性の対照 |
 | MLP residual Δrank | Phase 3 のみ。上限比較 |
 | **Oracle-A (endpoint rank)** | 理論上限 / feasibility。**endpoint leakage を含むため fidelity 目標ではない** |
 | **Oracle-B (matched perturbation)** | 同一摂動の実測 post-perturbation rank。leakage なしの fidelity 目標（データ待ち） |

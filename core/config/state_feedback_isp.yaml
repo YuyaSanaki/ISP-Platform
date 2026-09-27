@@ -95,6 +95,26 @@ state_feedback:
     n_perm: 10000      # paired sign-flip permutation test on per-cell rho differences
     seed: 0
 
+  # Perturbation-specificity control (off by default; `--specificity` forces it on).
+  # The same decoder is fed Delta-h from other perturbations. If its signal beyond
+  # base rank (partial Spearman given base rank) came from the scored genes alone,
+  # every perturbation would score alike. Conditions: `configured` (the steps above,
+  # cumulative), each named set (applied at once), and `n_random` draws of
+  # `random_size` teacher genes. For `random_type: delete`, set
+  # `random_match_detection` to a gene so random targets are detected in 0.5-2x as
+  # many start cells (deleting an undetected gene changes nothing).
+  specificity:
+    enabled: false
+    sets:
+      OSKM: {type: overexpress, genes: [POU5F1, SOX2, KLF4, MYC]}
+      3F_OSN: {type: overexpress, genes: [POU5F1, SOX2, NANOG]}
+      7F: {type: overexpress, genes: [NANOG, POU5F1, SOX2, ESRRB, LIN28A, DPPA4, TERT]}
+    n_random: 30
+    random_size: 4
+    random_type: overexpress   # overexpress | delete | knockdown
+    random_match_detection: null
+    n_boot: 1000
+
   decoder:
     train_max_ncells: 200
     max_genes_per_cell: 256
