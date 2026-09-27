@@ -1,0 +1,30 @@
+{
+  "source": "Ensembl BioMart",
+  "release": 116,
+  "retrieved_at": "2026-08-07",
+  "release_confirmed_at": "2026-08-11",
+  "release_confirmation": "Ensembl REST /info/software -> {\"release\": 116}",
+  "query": {
+    "dataset": "mmusculus_gene_ensembl",
+    "filter": "with_hsapiens_homolog",
+    "attributes": [
+      "ensembl_gene_id",
+      "hsapiens_homolog_ensembl_gene",
+      "hsapiens_homolog_orthology_type"
+    ],
+    "script": "scripts/download_mouse_human_orthologs.sh"
+  },
+  "tables": {
+    "mouse_to_human.tsv": {
+      "rows": 25788,
+      "sha256": "eb7e74b2be9d8965a787422e5046cab6f53c05e7c9c14666d9f73952a72a24dd",
+      "derivation": "BioMart query above; version suffixes stripped; all orthology types kept; sort -u"
+    },
+    "human_to_mouse.tsv": {
+      "rows": 25788,
+      "sha256": "28bbe8231c01af5189c126cddd4a852ed14ab7957e3da8ae60f20af667eb101a",
+      "derivation": "Column swap of mouse_to_human.tsv (same rows, reversed direction)"
+    }
+  },
+  "used_by": "ISP Platform v1.0.0 paper runs (BBRCv2 tokenization, 2026-08-12)"
+}

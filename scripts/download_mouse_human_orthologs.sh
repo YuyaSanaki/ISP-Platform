@@ -1,16 +1,50 @@
 #!/usr/bin/env bash
-# Download mouse → human Ensembl ortholog pairs via Ensembl BioMart.
-# Output: core/geneformer/dicts/orthologs/mouse_to_human.tsv
+# Install mouse ↔ human Ensembl ortholog tables.
+# Output: core/geneformer/dicts/orthologs/{mouse_to_human,human_to_mouse}.tsv
 #   columns: source_id, target_id, orthology_type
+#
+# Default: use the pinned tables shipped in the repository (Ensembl release 116,
+# retrieved 2026-08-07; see ensembl_release.json) and verify them against
+# SHA256SUMS. No network access.
+#
+# ORTHOLOG_REFRESH=1: query the live Ensembl BioMart instead. The live release
+# changes over time, so the result will usually not match SHA256SUMS and
+# conversions will differ from the paper runs.
+#
 # Symbol aliases and corrected Ensembl pairs (e.g. Igfbp2) remain in
 # mouse_to_human_curated.tsv and override BioMart rows when merged at load time.
 #
 # Many-to-many handling is applied at load time via species.ortholog_policy
 # (one2one | best_of_n | legacy_sum). This script keeps all BioMart rows.
 set -euo pipefail
-ROOT="${GENEFORMER_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-OUT="${ROOT}/core/geneformer/dicts/orthologs/mouse_to_human.tsv"
-mkdir -p "$(dirname "$OUT")"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="${GENEFORMER_ROOT:-$REPO_ROOT}"
+PINNED_DIR="${REPO_ROOT}/core/geneformer/dicts/orthologs"
+OUT_DIR="${ROOT}/core/geneformer/dicts/orthologs"
+OUT="${OUT_DIR}/mouse_to_human.tsv"
+mkdir -p "${OUT_DIR}"
+
+if [[ "${ORTHOLOG_REFRESH:-0}" != "1" ]]; then
+  for f in SHA256SUMS ensembl_release.json mouse_to_human.tsv human_to_mouse.tsv; do
+    if [[ ! -f "${PINNED_DIR}/${f}" ]]; then
+      echo "ERROR: pinned ortholog file missing: ${PINNED_DIR}/${f}" >&2
+      echo "Restore it from git, or set ORTHOLOG_REFRESH=1 to query live BioMart." >&2
+      exit 1
+    fi
+    if [[ "${PINNED_DIR}" != "${OUT_DIR}" ]]; then
+      cp -f "${PINNED_DIR}/${f}" "${OUT_DIR}/${f}"
+    fi
+  done
+  if ! (cd "${OUT_DIR}" && sha256sum --check --strict SHA256SUMS); then
+    echo "ERROR: ortholog tables in ${OUT_DIR} do not match SHA256SUMS." >&2
+    echo "Restore them with: git checkout -- core/geneformer/dicts/orthologs/" >&2
+    exit 1
+  fi
+  echo "Pinned Ensembl ortholog tables verified (release 116, retrieved 2026-08-07): ${OUT_DIR}"
+  exit 0
+fi
+
+echo "ORTHOLOG_REFRESH=1 — querying live Ensembl BioMart (tables will not match the pinned release)."
 QUERY_FILE="$(mktemp)"
 TMP="$(mktemp)"
 trap 'rm -f "${QUERY_FILE}" "${TMP}"' EXIT
@@ -102,3 +136,14 @@ mv "${REV_OUT}.new" "${REV_OUT}"
 echo "Wrote ${REV_LINES} reverse Ensembl pairs to ${REV_OUT}"
 echo "Curated reverse aliases: ${ROOT}/core/geneformer/dicts/orthologs/human_to_mouse_curated.tsv"
 echo "Note: species.ortholog_policy filters many-to-many at load (default: one2one)."
+
+if [[ -f "${PINNED_DIR}/SHA256SUMS" ]]; then
+  if (cd "${OUT_DIR}" && sha256sum --check --status SHA256SUMS 2>/dev/null); then
+    echo "Live tables are identical to the pinned release."
+  else
+    echo "WARNING: live tables differ from the pinned release (SHA256SUMS)." >&2
+    echo "  New hashes:" >&2
+    (cd "${OUT_DIR}" && sha256sum mouse_to_human.tsv human_to_mouse.tsv) >&2
+    echo "  To adopt them, update SHA256SUMS and ensembl_release.json and commit both tables." >&2
+  fi
+fi

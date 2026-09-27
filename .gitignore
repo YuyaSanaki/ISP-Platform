@@ -41,4 +41,8 @@ __pycache__/
 !/core/geneformer/dicts/**/
 !/core/geneformer/dicts/**/README.md
 !/core/geneformer/dicts/orthologs/*_curated.tsv
+!/core/geneformer/dicts/orthologs/human_to_mouse.tsv
+!/core/geneformer/dicts/orthologs/mouse_to_human.tsv
+!/core/geneformer/dicts/orthologs/SHA256SUMS
+!/core/geneformer/dicts/orthologs/ensembl_release.json
 !/core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv

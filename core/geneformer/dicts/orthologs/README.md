@@ -5,13 +5,33 @@ Optional third column `orthology_type` (from BioMart) is used when present.
 
 | File | Use |
 |------|-----|
-| `mouse_to_human.tsv` | Full Ensembl mouse→human map (`scripts/download_mouse_human_orthologs.sh`; includes `orthology_type`) |
+| `mouse_to_human.tsv` | Full Ensembl mouse→human map, **pinned in git** (Ensembl 116; includes `orthology_type`) |
 | `mouse_to_human_curated.tsv` | Symbol aliases + corrected Ensembl pairs (merged **after** main table; overrides BioMart) |
-| `human_to_mouse.tsv` | Human→mouse Ensembl pairs (same download; includes `orthology_type`) |
+| `human_to_mouse.tsv` | Human→mouse Ensembl pairs, **pinned in git** (column swap of `mouse_to_human.tsv`) |
+| `SHA256SUMS` / `ensembl_release.json` | Checksums and provenance of the two pinned tables |
 | `human_to_mouse_curated.tsv` | Human symbol aliases → mouse Ensembl |
 | `drosophila_to_*.tsv` | Full fly→human / fly→mouse maps (`scripts/download_drosophila_orthologs.sh`; includes `orthology_type`) |
 | `core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv` | Fly symbol → `FBgn` for ISP (`p53`/`Tp53`→`FBgn0039044`, `Brca2`→`FBgn0050169`) |
 | `*_curated.tsv` | Same merge rule for every conversion pair |
+
+## Pinned mouse↔human tables
+
+The two mouse↔human tables are distributed with the repository so that conversions are
+reproducible. They were retrieved from Ensembl BioMart on 2026-08-07 (release 116; 25,788 rows
+each) and are the tables used for the ISP Platform v1.0.0 paper runs.
+
+| File | SHA-256 |
+|------|---------|
+| `human_to_mouse.tsv` | `28bbe8231c01af5189c126cddd4a852ed14ab7957e3da8ae60f20af667eb101a` |
+| `mouse_to_human.tsv` | `eb7e74b2be9d8965a787422e5046cab6f53c05e7c9c14666d9f73952a72a24dd` |
+
+Verify: `cd core/geneformer/dicts/orthologs && sha256sum -c SHA256SUMS`.
+
+`scripts/download_mouse_human_orthologs.sh` (and the Docker build) verifies these tables and
+does not contact BioMart. `ORTHOLOG_REFRESH=1` replaces them with a live BioMart query; the live
+release changes over time, so the result will not match `SHA256SUMS` and conversions will
+differ. To adopt a new release, commit the new tables together with updated `SHA256SUMS` and
+`ensembl_release.json`. Fly tables (`drosophila_to_*.tsv`) are still fetched from live BioMart.
 
 **Fly aliases:** do not invent mammal gene names (`Igfbp2`) for fly IDs. `FBgn0283477` is SF2, not IGFBP2; `FBgn0004644` is hedgehog (`hh`), not p53. True fly p53 (`FBgn0039044`) is BioMart `ortholog_one2many` to the p53 family → dropped under default `one2one`.
 

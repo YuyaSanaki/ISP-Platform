@@ -13,9 +13,16 @@
 #   all      — default + fly ortholog tables (BioMart; slower).
 #   none     — no-op (Dockerfile dry-run / CI without network).
 #
+# Mouse↔human ortholog tables are pinned in the repository (Ensembl 116,
+# SHA256SUMS) and are copied in every profile, including none; no BioMart access.
+#
 # Optional:
 #   HF_TOKEN / HUGGING_FACE_HUB_TOKEN — if HF rate-limits anonymous downloads.
-#   SKIP_ORTHOLOGS=1 — skip BioMart ortholog fetch even in default/all.
+#   SKIP_ORTHOLOGS=1 — skip the SHA-256 check of the pinned tables and the fly
+#                      BioMart fetch in all.
+#   ORTHOLOG_REFRESH=1 — replace the pinned mouse↔human tables with a live
+#                        BioMart query (not reproducible; see
+#                        download_mouse_human_orthologs.sh).
 #
 # Failures exit non-zero with a clear message (set -e).
 set -euo pipefail
@@ -32,11 +39,15 @@ mkdir -p \
   "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs" \
   "$GENEFORMER_ROOT/core/geneformer/dicts/drosophila"
 
-# Ship tiny curated overrides with the image even when BioMart is skipped.
+# Ship curated overrides and the pinned mouse↔human tables with the image.
 seed_curated_from_repo() {
   local src dst
   for src in \
     "$REPO_ROOT/core/geneformer/dicts/orthologs/"*_curated.tsv \
+    "$REPO_ROOT/core/geneformer/dicts/orthologs/mouse_to_human.tsv" \
+    "$REPO_ROOT/core/geneformer/dicts/orthologs/human_to_mouse.tsv" \
+    "$REPO_ROOT/core/geneformer/dicts/orthologs/SHA256SUMS" \
+    "$REPO_ROOT/core/geneformer/dicts/orthologs/ensembl_release.json" \
     "$REPO_ROOT/core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv"
   do
     [[ -f "$src" ]] || continue
@@ -88,7 +99,7 @@ case "$PROFILE" in
         bash "$SCRIPT_DIR/download_drosophila_orthologs.sh"
       fi
     else
-      echo "SKIP_ORTHOLOGS=1 — BioMart ortholog tables not fetched."
+      echo "SKIP_ORTHOLOGS=1 — pinned ortholog tables copied without SHA-256 check; fly tables not fetched."
     fi
     ;;
 esac
@@ -121,10 +132,8 @@ if [[ "$PROFILE" != "minimal" ]]; then
   verify_model "$GENEFORMER_ROOT/models/human-Geneformer-V2-104M"
   verify "$GENEFORMER_ROOT/core/geneformer/dicts/human/token_dictionary_gc104M.pkl"
   verify "$GENEFORMER_ROOT/core/geneformer/dicts/human/gene_median_dictionary_gc104M.pkl"
-  if [[ "${SKIP_ORTHOLOGS:-0}" != "1" ]]; then
-    verify "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs/mouse_to_human.tsv"
-    verify "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs/human_to_mouse.tsv"
-  fi
+  verify "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs/mouse_to_human.tsv"
+  verify "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs/human_to_mouse.tsv"
 fi
 
 if [[ "$PROFILE" == "all" && "${SKIP_ORTHOLOGS:-0}" != "1" ]]; then
