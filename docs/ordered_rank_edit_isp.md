@@ -11,6 +11,8 @@ Multi-step ISP has two forms on this platform:
 | **Ordered rank-edit ISP** (this page) | The edited gene-rank tokens only | this page |
 | **State-feedback ISP** | A new gene order built from the model output after each step (same gene set) | [state_feedback_decode_methods.md](state_feedback_decode_methods.md) |
 
+How the two differ, and why only the final encoding (which genes, in what order) sets the final shift here, is explained in [ordered_rank_edit_and_state_feedback_isp.md](ordered_rank_edit_and_state_feedback_isp.md) (v1.0.1).
+
 This is **not** the same as simultaneous group ISP (all genes in one cocktail). Ordered OE of A then B puts **B leftmost** (highest rank); simultaneous OE of `[A, B]` puts **A leftmost**.
 
 **Former name.** This feature was called *Sequential ISP*. The old names still work: `core/run_sequential_isp.py`, the Compose service `sequential_isp`, and a `sequential:` block in the config (read when `ordered_rank_edit:` is absent). New runs write to `ordered_rank_edit_isp/` / `ordered_rank_edit_isp_<UTC>/`. Existing `sequential_isp/` output folders are left as they are.

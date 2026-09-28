@@ -1,5 +1,7 @@
 # State-feedback ISP v10.1 — permutation decoder 設計
 
+User-facing guide (how it works, conditions, Web UI settings): [ordered_rank_edit_and_state_feedback_isp.md](ordered_rank_edit_and_state_feedback_isp.md) (v1.0.1). This page is the design and validation record.
+
 ## 問題の正確な定義
 
 State-feedback ISP は「hidden state から発現量を復元する」問題**ではない**。
