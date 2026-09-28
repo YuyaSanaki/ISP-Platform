@@ -29,7 +29,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Auto-batch cache task: `ordered_rank_edit_isp_group` (the first run re-probes the GPU).
 
   The old names still work: `core/run_sequential_isp.py` and `core/sequential_oe.py` are aliases, the `sequential_isp` Compose service is kept, and a `sequential:` config block is read when `ordered_rank_edit:` is absent. State-feedback ISP configs now list their steps under `state_feedback.steps`; a top-level `sequential.steps` is still read.
-- Renamed from **Geneformer Platform** to **ISP³ Platform**. GitHub repo is now `ISP-Platform`; Docker image / Compose service is `isp-platform:v1.0.0` (env `ISP_PLATFORM_IMAGE`).
+- Renamed from **Geneformer Platform** to **ISP³ Platform**. GitHub repo is now `ISP-Platform`; Docker image / Compose service is `isp-platform` (env `ISP_PLATFORM_IMAGE`).
+- Compose default image is `isp-platform:v1.0.1`. The image is rebuilt because the build now requires `typing-extensions>=4.13` and verifies the pinned ortholog tables.
 - Mouse↔human Ensembl ortholog tables (`human_to_mouse.tsv`, `mouse_to_human.tsv`; release 116, retrieved 2026-08-07) are now distributed in the repository with `SHA256SUMS` and `ensembl_release.json`. `scripts/download_mouse_human_orthologs.sh` and the Docker build verify these pinned tables offline instead of querying the live BioMart; `ORTHOLOG_REFRESH=1` restores the live query.
 
 ## [1.0.0] - 2026-09-02

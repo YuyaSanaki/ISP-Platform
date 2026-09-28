@@ -7,7 +7,7 @@
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.0.1 · Docker image `isp-platform:v1.0.0`
+**Release:** v1.0.1 · Docker image `isp-platform:v1.0.1`
 
 
 Run tokenize, fine-tune, ISP, UMAP, and multi-step multi-gene ISP from the **CLI** or **Web UI**, both on Docker Compose and Streamlit. Multi-step ISP comes in two forms: **Ordered rank-edit ISP** (OE/KD steps applied in order on the gene-rank tokens; each step is scored against the original start state, nothing is fed back) and **State-feedback ISP** (after each step the model output reorders the genes before the next step).
