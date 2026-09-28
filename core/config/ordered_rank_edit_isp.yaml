@@ -1,9 +1,10 @@
 # =============================================================================
-# Sequential ISP — chain group OE and/or KD on start-state cells
-# Default path: /app/core/config/sequential_isp.yaml
-# CLI: python3 core/run_sequential_isp.py --config …
-# Docker: docker compose run --rm sequential_isp
-# WebUI: Run type "Sequential ISP"
+# Ordered rank-edit ISP — apply group OE and/or KD steps in order on start-state cells
+# Default path: /app/core/config/ordered_rank_edit_isp.yaml
+# CLI: python3 core/run_ordered_rank_edit_isp.py --config …
+# Docker: docker compose run --rm ordered_rank_edit_isp
+# WebUI: Run type "Ordered rank-edit ISP"
+# (Configs with the old `sequential:` block are still accepted.)
 # =============================================================================
 
 paths:
@@ -34,7 +35,7 @@ isp:
   max_ncells: 2000
   emb_layer: 0
 
-sequential:
+ordered_rank_edit:
   # Ordered steps; each is a group perturbation applied on the previous encoding.
   # type: overexpress (OE, length-preserving move-to-front) | delete (KD)
   # genes: symbols or Ensembl IDs
@@ -53,7 +54,7 @@ sequential:
         - Igfbp2
 
 runtime:
-  # Sequential scoring runs original + perturbed forwards. Auto uses a separate
+  # Scoring runs original + perturbed forwards. Auto uses a separate
   # dual-forward probe (not the genome-wide ISP cache) to avoid OOM.
   forward_batch_size: auto
   nproc: 8

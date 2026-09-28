@@ -194,7 +194,7 @@ def resolve_forward_batch_size(
     """Turn forward_batch_size="auto" into a number measured on this GPU.
 
     ``n_forwards`` sizes the probe to the peak of the real scoring loop.
-    Group / sequential ISP holds a perturbed forward and an original forward;
+    Group / Ordered rank-edit ISP holds a perturbed forward and an original forward;
     pass ``n_forwards=2`` and a distinct ``task`` so that cache is not reused
     from a single-forward genome-wide ISP calibration (that mismatch OOMs).
     """
@@ -755,7 +755,7 @@ def quant_cos_sims(model,
         outputs, mini_max_len = compute_batch_embeddings(perturbation_minibatch)
 
         # Clone the layer we keep so the full hidden-state stack can be freed
-        # before the original-encoding forward (group / sequential scoring).
+        # before the original-encoding forward (group / rank-edit scoring).
         minibatch_emb = batched_layer_embs(outputs, layer_to_quant).clone()
         del outputs
 

@@ -15,7 +15,7 @@
 # GPU policy (resource-aware):
 #   - tokenize: CPU only (no idle GPU claim)
 #   - platform_webui: 1 GPU (Streamlit itself is CPU; Run job = in-container subprocess needing CUDA)
-#   - pipeline / finetune / isp / isp_umap / sequential_isp: all GPUs (one-shot jobs)
+#   - pipeline / finetune / isp / isp_umap / ordered_rank_edit_isp: all GPUs (one-shot jobs)
 # No Jupyter service — use CLI / Web UI (same as Mouse-Geneformer-WebUI).
 #
 # Models / volumes:
@@ -177,15 +177,21 @@ services:
       - --config
       - /app/core/config/isp_umap.yaml
 
-  # Sequential ISP (OE and/or KD chain): docker compose run --rm sequential_isp
-  sequential_isp:
+  # Ordered rank-edit ISP (ordered OE and/or KD steps):
+  #   docker compose run --rm ordered_rank_edit_isp
+  ordered_rank_edit_isp: &ordered-rank-edit-isp
     <<: *geneformer-gpu
-    container_name: isp_platform_sequential_isp
+    container_name: isp_platform_ordered_rank_edit_isp
     environment:
       <<: *geneformer-env
-      SEQUENTIAL_ISP_CONFIG: /app/core/config/sequential_isp.yaml
+      ORDERED_RANK_EDIT_ISP_CONFIG: /app/core/config/ordered_rank_edit_isp.yaml
     command:
       - python3
-      - /app/core/run_sequential_isp.py
+      - /app/core/run_ordered_rank_edit_isp.py
       - --config
-      - /app/core/config/sequential_isp.yaml
+      - /app/core/config/ordered_rank_edit_isp.yaml
+
+  # Former name of ordered_rank_edit_isp, kept for existing scripts.
+  sequential_isp:
+    <<: *ordered-rank-edit-isp
+    container_name: isp_platform_sequential_isp

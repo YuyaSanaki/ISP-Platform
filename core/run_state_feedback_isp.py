@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """State-feedback ISP Phase 1-2 — rerank baselines and the Delta-rank decoder.
 
-Generic: the perturbation is whatever ``sequential.steps`` lists (any genes,
+Generic: the perturbation is whatever ``state_feedback.steps`` lists (any genes,
 overexpress or knockdown), the states are whatever ``perturbation.state_key`` /
 ``start_state`` / ``end_state`` name in the user's fine-tuned dataset. Nothing
 here is specific to reprogramming factors.
@@ -20,7 +20,7 @@ Conditions compared in one run:
 All conditions are scored with the **cell-mean cosine** goal-state shift
 (``strip_leading=0``) so a permuted encoding stays comparable with an
 unpermuted one. That metric differs from the group-rank-aligned score used by
-``run_sequential_isp.py``; compare within this run, not against paper tables.
+``run_ordered_rank_edit_isp.py``; compare within this run, not against paper tables.
 
 Usage:
   python3 core/run_state_feedback_isp.py --config core/config/state_feedback_isp.yaml
@@ -53,8 +53,8 @@ from geneformer.species_context import (
     log_species_banner,
     species_from_config,
 )
-from sequential_oe import parse_sequential_steps
-import run_sequential_isp as seq
+from ordered_rank_edit import config_block, parse_steps
+import run_ordered_rank_edit_isp as ore
 
 from state_feedback import controls
 from state_feedback import feedback as fb
@@ -116,7 +116,7 @@ def _score_cell_mean(
     batch_state: list[int],
 ) -> pd.DataFrame:
     """Goal-state shift that does not assume perturbed genes sit at the front."""
-    return seq.compute_cell_mean_goal_state_shifts(
+    return ore.compute_cell_mean_goal_state_shifts(
         model,
         start_ds,
         working,
@@ -142,11 +142,11 @@ def _apply_steps_at_once(
 ):
     """Apply the first ``n_steps`` perturbations cumulatively (default: all)."""
     working = dataset
-    workers = seq._gpu_resident_map_workers(nproc)
+    workers = ore._gpu_resident_map_workers(nproc)
     limit = len(steps) if n_steps is None else max(0, int(n_steps))
     for step, tokens in list(zip(steps, token_by_step))[:limit]:
         working = working.map(
-            seq._apply_typed_step,
+            ore._apply_typed_step,
             fn_kwargs={"tokens": list(tokens), "perturb_type": str(step["type"])},
             num_proc=workers,
         )
@@ -180,7 +180,7 @@ def run_condition(
     With ``feedback_every_step`` the chain runs under a ``FeedbackGuard`` (cycle halt,
     convergence stop, event cap); per-cell halts go to ``feedback_guard.csv``.
     """
-    workers = seq._gpu_resident_map_workers(nproc)
+    workers = ore._gpu_resident_map_workers(nproc)
     guard = (
         FeedbackGuard(len(start_ds), multi_step)
         if rerank_fn is not None and feedback_every_step
@@ -201,7 +201,7 @@ def run_condition(
         ptype = str(step["type"])
         pre_step = working
         working = working.map(
-            seq._apply_typed_step,
+            ore._apply_typed_step,
             fn_kwargs={"tokens": list(tokens), "perturb_type": ptype},
             num_proc=workers,
         )
@@ -237,7 +237,7 @@ def run_condition(
             f"median={stats['median']:.6f} n={int(stats['n'])}",
             flush=True,
         )
-        seq._empty_cuda_cache()
+        ore._empty_cuda_cache()
 
         do_feedback = (
             rerank_fn is not None
@@ -310,7 +310,7 @@ def run_condition(
             f"{guard_note}",
             flush=True,
         )
-        seq._empty_cuda_cache()
+        ore._empty_cuda_cache()
 
     if guard is not None:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -352,7 +352,7 @@ def run_null_feedback(
         hysteresis=hysteresis,
     )
     working = fb.replace_input_ids(
-        start_ds, new_ids, num_proc=seq._gpu_resident_map_workers(nproc)
+        start_ds, new_ids, num_proc=ore._gpu_resident_map_workers(nproc)
     )
     df = _score_cell_mean(
         model,
@@ -688,7 +688,7 @@ def run_perturbation_specificity(
     for name, spec in (spec_cfg.get("sets") or {}).items():
         genes = [str(g) for g in spec["genes"]]
         ptype = str(spec.get("type", "overexpress"))
-        tokens, resolved = seq._resolve_gene_tokens(cfg, genes)
+        tokens, resolved = ore._resolve_gene_tokens(cfg, genes)
         if len(tokens) != len(genes):
             raise ValueError(f"specificity set {name!r}: resolved {resolved} for {genes}")
         named_tokens.update(tokens)
@@ -705,7 +705,7 @@ def run_perturbation_specificity(
     match_info: dict[str, Any] | None = None
     match_gene = spec_cfg.get("random_match_detection")
     if match_gene:
-        ref_token = seq._resolve_gene_tokens(cfg, [str(match_gene)])[0][0]
+        ref_token = ore._resolve_gene_tokens(cfg, [str(match_gene)])[0][0]
         detection = controls.detection_rate(start_ds["input_ids"])
         ref = detection.get(int(ref_token), 0.0)
         pool = controls.detection_matched_pool(pool, detection, ref)
@@ -739,7 +739,7 @@ def run_perturbation_specificity(
             model_input_size=model_input_size, forward_batch_size=forward_batch_size,
             mlm_model=None, keep_tokens=keep, max_genes_per_cell=max_genes, seed=seed,
         )
-        seq._empty_cuda_cache()
+        ore._empty_cuda_cache()
         rep = controls.base_rank_control(samples, decoder, n_boot=n_boot, seed=seed)
         lp = rep["linear_partial"]
         row = {
@@ -865,7 +865,6 @@ def main() -> int:
     mdl = cfg.get("model") or {}
     isp_cfg = cfg.get("isp") or {}
     runtime = cfg.get("runtime") or {}
-    seq_cfg = cfg.get("sequential") or {}
     sf_cfg = cfg.get("state_feedback") or {}
     dec_cfg = sf_cfg.get("decoder") or {}
 
@@ -905,23 +904,24 @@ def main() -> int:
 
     log_species_banner(species_from_config(cfg))
 
-    steps = parse_sequential_steps(seq_cfg)
+    # Configs from before the rename list the steps under `sequential:`.
+    steps = parse_steps(sf_cfg) or parse_steps(config_block(cfg))
     if not steps:
         raise ValueError(
-            "state-feedback ISP needs explicit sequential.steps (genes + type per step)"
+            "state-feedback ISP needs explicit state_feedback.steps (genes + type per step)"
         )
 
     from datasets import load_from_disk
 
     print(f"Loading dataset: {dataset_path}", flush=True)
     dataset = load_from_disk(str(dataset_path))
-    start_ds = seq._select_start_cells(dataset, state_key, start_state, max_ncells)
+    start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
     print(f"Start cells ({start_state}): n={len(start_ds)}", flush=True)
 
     obs_cap = int(sf_cfg.get("observed_max_ncells") or max_ncells or 3000)
-    obs_ds = seq._select_start_cells(dataset, state_key, observed_state, obs_cap)
+    obs_ds = ore._select_start_cells(dataset, state_key, observed_state, obs_cap)
     print(f"Observed-state cells ({observed_state}): n={len(obs_ds)}", flush=True)
-    teacher_ctrl_ds = seq._select_start_cells(dataset, state_key, start_state, obs_cap)
+    teacher_ctrl_ds = ore._select_start_cells(dataset, state_key, start_state, obs_cap)
     teacher = observed_delta_rank(
         teacher_ctrl_ds["input_ids"],
         obs_ds["input_ids"],
@@ -947,7 +947,7 @@ def main() -> int:
 
     fbs_raw = args.forward_batch_size or runtime.get("forward_batch_size", "auto")
     species_default = default_isp_forward_batch_size(backend.max_input_size)
-    forward_batch_size = seq.resolve_sequential_forward_batch_size(
+    forward_batch_size = ore.resolve_dual_forward_batch_size(
         coerce_batch_size(fbs_raw, default=species_default),
         model,
         start_ds,
@@ -963,7 +963,7 @@ def main() -> int:
         "alt_states": list(pert.get("alt_states") or []),
     }
     centroid_states = [start_state, goal_state, *list(pert.get("alt_states") or [])]
-    centroid_ds = seq._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
+    centroid_ds = ore._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
     state_embs = isp.get_cell_state_avg_embs(
         model,
         centroid_ds,
@@ -971,13 +971,13 @@ def main() -> int:
         layer_to_quant,
         pad_token_id,
         forward_batch_size,
-        seq._gpu_resident_map_workers(nproc),
+        ore._gpu_resident_map_workers(nproc),
     )
-    seq._empty_cuda_cache()
+    ore._empty_cuda_cache()
 
     token_by_step: list[list[int]] = []
     for step in steps:
-        tokens, resolved = seq._resolve_gene_tokens(cfg, step["genes"])
+        tokens, resolved = ore._resolve_gene_tokens(cfg, step["genes"])
         token_by_step.append(list(tokens))
         print(
             f"Step {step['index']} {step['type']} {step['name']}: "
@@ -1033,7 +1033,7 @@ def main() -> int:
                 nproc=nproc,
                 out_dir=output_root / "decoder",
             )
-        seq._empty_cuda_cache()
+        ore._empty_cuda_cache()
 
     mlm_model = None
     if "delta_mlm" in conditions or run_eval:
@@ -1063,7 +1063,7 @@ def main() -> int:
             max_shift=baseline_max_shift,
             feedback_after_step=feedback_after_step,
         )
-        seq._empty_cuda_cache()
+        ore._empty_cuda_cache()
 
     spec_cfg = sf_cfg.get("specificity") or {}
     specificity: dict[str, Any] = {}
@@ -1089,7 +1089,7 @@ def main() -> int:
             forward_batch_size=forward_batch_size,
             nproc=nproc,
         )
-        seq._empty_cuda_cache()
+        ore._empty_cuda_cache()
 
     common = dict(
         layer_to_quant=layer_to_quant,

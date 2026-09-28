@@ -162,7 +162,7 @@ WORKSPACE = Path(os.environ.get("WEBUI_WORKSPACE", ROOT / "data" / "streamlit_wo
 RUN_TYPE_PIPELINE = "Pipeline (E2E)"
 RUN_TYPE_FT_BATCH = "FT batch size (calibrate)"
 RUN_TYPE_ISP_UMAP = "ISP UMAP"
-RUN_TYPE_SEQUENTIAL_ISP = "Sequential ISP"
+RUN_TYPE_ORDERED_RANK_EDIT_ISP = "Ordered rank-edit ISP"
 RUN_TYPE_STATE_FEEDBACK_ISP = "State-feedback ISP"
 
 ISP_UMAP_POSITION_DIRECT = "Direct UMAP (default)"
@@ -175,14 +175,14 @@ RUN_FILES = {
     RUN_TYPE_PIPELINE: "pipeline.yaml",
     RUN_TYPE_FT_BATCH: "ft_batch_calibrate.yaml",
     RUN_TYPE_ISP_UMAP: "isp_umap.yaml",
-    RUN_TYPE_SEQUENTIAL_ISP: "sequential_isp.yaml",
+    RUN_TYPE_ORDERED_RANK_EDIT_ISP: "ordered_rank_edit_isp.yaml",
     RUN_TYPE_STATE_FEEDBACK_ISP: "state_feedback_isp.yaml",
 }
 
 # Run types that share Study name / Data input with Pipeline.
 _STUDY_RUN_TYPES = frozenset({RUN_TYPE_PIPELINE, RUN_TYPE_FT_BATCH})
-# Run types built from a past pipeline ISP run + the sequential step widgets.
-_SEQ_STEP_RUN_TYPES = frozenset({RUN_TYPE_SEQUENTIAL_ISP, RUN_TYPE_STATE_FEEDBACK_ISP})
+# Run types built from a past pipeline ISP run + the shared OE/KD step widgets.
+_STEP_RUN_TYPES = frozenset({RUN_TYPE_ORDERED_RANK_EDIT_ISP, RUN_TYPE_STATE_FEEDBACK_ISP})
 
 _SF_ISP_CONDITIONS = (
     "ordered_rank_edit",
@@ -204,14 +204,15 @@ _SF_ISP_CONDITION_HELP = {
 }
 _SF_ISP_DEFAULT_MAX_NCELLS = 300
 _SF_ISP_OUTPUT_SUBDIR = "state_feedback_isp"
+_ORE_ISP_OUTPUT_SUBDIR = "ordered_rank_edit_isp"
 _SF_ISP_DECODER_TRAIN = "Train a new decoder in this run"
 
-_SEQ_ISP_TYPE_LABELS = {
+_STEP_TYPE_LABELS = {
     "overexpress": "overexpress (OE) — move genes to front of ranks",
     "delete": "delete (KD) — remove genes from the rank encoding",
 }
-_DEFAULT_SEQ_ISP_STEPS = 2
-_MAX_SEQ_ISP_STEPS = 12
+_DEFAULT_ISP_STEPS = 2
+_MAX_ISP_STEPS = 12
 
 FT_BATCH_RESULT_FILENAME = "recommended_train_batch_size.json"
 FT_BATCH_RESULT_MARKER = "RECOMMENDED_TRAIN_BATCH_SIZE="
@@ -459,9 +460,9 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
         else:
             cmd.append("--no-trajectory-arrows")
         env["ISP_UMAP_CONFIG"] = cfg
-    elif run_label == RUN_TYPE_SEQUENTIAL_ISP:
-        cmd = ["python3", str(CORE / "run_sequential_isp.py"), "--config", cfg]
-        env["SEQUENTIAL_ISP_CONFIG"] = cfg
+    elif run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
+        cmd = ["python3", str(CORE / "run_ordered_rank_edit_isp.py"), "--config", cfg]
+        env["ORDERED_RANK_EDIT_ISP_CONFIG"] = cfg
     elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
         cmd = ["python3", str(CORE / "run_state_feedback_isp.py"), "--config", cfg]
         checkpoint = str(st.session_state.get("sf_isp_decoder_checkpoint") or "").strip()
@@ -490,14 +491,14 @@ def _guess_output_roots(run_label: str, cfg: dict) -> list[Path]:
             roots.append(Path(source))
             roots.append(Path(source) / "isp_umap")
         roots.append(ROOT / "output")
-    elif run_label == RUN_TYPE_SEQUENTIAL_ISP:
-        source = str(st.session_state.get("seq_isp_source_run_dir") or "").strip()
+    elif run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
+        source = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
         if source:
-            roots.append(Path(source) / "sequential_isp")
+            roots.append(Path(source) / _ORE_ISP_OUTPUT_SUBDIR)
             roots.append(Path(source))
         roots.append(ROOT / "output")
     elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
-        source = str(st.session_state.get("seq_isp_source_run_dir") or "").strip()
+        source = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
         if source:
             roots.append(Path(source) / _SF_ISP_OUTPUT_SUBDIR)
             roots.append(Path(source))
@@ -541,7 +542,9 @@ def _discover_figures_dirs(roots: list[str | Path], run_label: str) -> list[Path
         root = Path(raw)
         if not root.is_dir():
             continue
-        if root.name.startswith(("pipeline_", "isp_", "sequential_isp_")):
+        if root.name.startswith(
+            ("pipeline_", "isp_", "ordered_rank_edit_isp_", "sequential_isp_")
+        ):
             add(root / "figures")
             if run_label == RUN_TYPE_ISP_UMAP:
                 umaps = [p for p in root.glob("umap_*.png") if p.is_file()]
@@ -967,17 +970,17 @@ def _render_isp_umap_source_picker() -> None:
             st.rerun()
 
 
-def _seq_isp_collect_steps() -> list[dict]:
-    """Read sequential-step widgets into YAML-ready step dicts."""
-    n = int(st.session_state.get("seq_isp_n_steps") or _DEFAULT_SEQ_ISP_STEPS)
-    n = max(1, min(_MAX_SEQ_ISP_STEPS, n))
+def _isp_steps_collect() -> list[dict]:
+    """Read OE/KD step widgets into YAML-ready step dicts."""
+    n = int(st.session_state.get("isp_steps_n") or _DEFAULT_ISP_STEPS)
+    n = max(1, min(_MAX_ISP_STEPS, n))
     steps: list[dict] = []
     for i in range(n):
-        ptype = str(st.session_state.get(f"seq_isp_step_{i}_type") or "overexpress")
-        if ptype not in _SEQ_ISP_TYPE_LABELS:
+        ptype = str(st.session_state.get(f"isp_steps_{i}_type") or "overexpress")
+        if ptype not in _STEP_TYPE_LABELS:
             ptype = "overexpress"
-        genes = _parse_genes_to_perturb_text(st.session_state.get(f"seq_isp_step_{i}_genes"))
-        name = str(st.session_state.get(f"seq_isp_step_{i}_name") or "").strip()
+        genes = _parse_genes_to_perturb_text(st.session_state.get(f"isp_steps_{i}_genes"))
+        name = str(st.session_state.get(f"isp_steps_{i}_name") or "").strip()
         step: dict = {"type": ptype, "genes": genes}
         if name:
             step["name"] = name
@@ -985,23 +988,26 @@ def _seq_isp_collect_steps() -> list[dict]:
     return steps
 
 
-def _seq_isp_selected_batch_size() -> int | str:
-    if st.session_state.get("seq_isp_batch_mode", BATCH_MODE_AUTO) == BATCH_MODE_MANUAL:
-        return int(st.session_state.get("seq_isp_batch_size", DEFAULT_MANUAL_BATCH_SIZE))
+def _isp_steps_selected_batch_size() -> int | str:
+    if st.session_state.get("isp_steps_batch_mode", BATCH_MODE_AUTO) == BATCH_MODE_MANUAL:
+        return int(st.session_state.get("isp_steps_batch_size", DEFAULT_MANUAL_BATCH_SIZE))
     return "auto"
 
 
-def _seq_isp_cfg_from_pipeline_run(
+def _isp_steps_cfg_from_pipeline_run(
     run_dir: Path,
     *,
     output_subdir: str,
     max_ncells_key: str,
     output_time_subdir: bool,
 ) -> tuple[dict | None, str | None]:
-    """Config dict shared by Sequential and State-feedback ISP (pipeline ISP stage + steps)."""
-    steps = _seq_isp_collect_steps()
+    """Config dict shared by Ordered rank-edit and State-feedback ISP (pipeline ISP stage).
+
+    Steps are left to the caller (``ordered_rank_edit.steps`` / ``state_feedback.steps``).
+    """
+    steps = _isp_steps_collect()
     if not steps or any(not s.get("genes") for s in steps):
-        return None, "Each sequential step needs at least one gene (symbol or Ensembl ID)."
+        return None, "Each step needs at least one gene (symbol or Ensembl ID)."
     cfg = _load_isp_stage_cfg(run_dir)
     if not cfg:
         return None, f"Missing stage_configs/isp.yaml under `{run_dir}`."
@@ -1042,9 +1048,8 @@ def _seq_isp_cfg_from_pipeline_run(
             "max_ncells": max_ncells,
             "emb_layer": int(isp_block.get("emb_layer", 0)),
         },
-        "sequential": {"steps": steps},
         "runtime": {
-            "forward_batch_size": _seq_isp_selected_batch_size(),
+            "forward_batch_size": _isp_steps_selected_batch_size(),
             "nproc": int(runtime.get("nproc", 8)),
         },
     }
@@ -1055,22 +1060,24 @@ def _dump_run_yaml(cfg: dict) -> str:
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
-def _build_sequential_isp_yaml_from_pipeline_run(
+def _build_ordered_rank_edit_isp_yaml_from_pipeline_run(
     run_dir: Path,
 ) -> tuple[str | None, str | None]:
-    """Build sequential ISP YAML from a pipeline ISP stage + step widgets."""
-    out, err = _seq_isp_cfg_from_pipeline_run(
+    """Build Ordered rank-edit ISP YAML from a pipeline ISP stage + step widgets."""
+    out, err = _isp_steps_cfg_from_pipeline_run(
         run_dir,
-        output_subdir="sequential_isp",
-        max_ncells_key="seq_isp_max_ncells",
+        output_subdir=_ORE_ISP_OUTPUT_SUBDIR,
+        max_ncells_key="ore_isp_max_ncells",
         output_time_subdir=False,
     )
     if err:
         return None, err
-    out["sequential"] = {
-        "save_intermediate_datasets": bool(st.session_state.get("seq_isp_save_datasets", False)),
-        **out["sequential"],
+    runtime = out.pop("runtime")
+    out["ordered_rank_edit"] = {
+        "save_intermediate_datasets": bool(st.session_state.get("ore_isp_save_datasets", False)),
+        "steps": _isp_steps_collect(),
     }
+    out["runtime"] = runtime
     return _dump_run_yaml(out), None
 
 
@@ -1105,8 +1112,8 @@ def _sf_isp_template_block() -> dict:
 def _build_state_feedback_isp_yaml_from_pipeline_run(
     run_dir: Path,
 ) -> tuple[str | None, str | None]:
-    """State-feedback ISP YAML: Sequential ISP inputs + a ``state_feedback`` block."""
-    out, err = _seq_isp_cfg_from_pipeline_run(
+    """State-feedback ISP YAML: pipeline ISP inputs + a ``state_feedback`` block (with steps)."""
+    out, err = _isp_steps_cfg_from_pipeline_run(
         run_dir,
         output_subdir=_SF_ISP_OUTPUT_SUBDIR,
         max_ncells_key="sf_isp_max_ncells",
@@ -1114,7 +1121,8 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
     )
     if err:
         return None, err
-    n_steps = len(out["sequential"]["steps"])
+    steps = _isp_steps_collect()
+    n_steps = len(steps)
     conditions = [
         c for c in (st.session_state.get("sf_isp_conditions") or _SF_ISP_CONDITIONS)
         if c in _SF_ISP_CONDITIONS
@@ -1127,8 +1135,10 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
             "Feedback is applied between steps, so the endpoint conditions need at least 2 "
             "steps. Add a step, or turn on direction-fidelity only."
         )
-    sf = _sf_isp_template_block()
-    sf.pop("specificity", None)
+    template = _sf_isp_template_block()
+    template.pop("steps", None)
+    template.pop("specificity", None)
+    sf = {"steps": steps, **template}
     observed = str(st.session_state.get("sf_isp_observed_state") or "").strip()
     sf.update(
         {
@@ -1224,21 +1234,21 @@ def _load_state_feedback_summary(run: Path) -> dict:
     return out
 
 
-def _apply_sequential_isp_from_pipeline_run(run_dir: Path) -> str | None:
-    yaml_text, err = _build_sequential_isp_yaml_from_pipeline_run(run_dir)
+def _apply_ordered_rank_edit_isp_from_pipeline_run(run_dir: Path) -> str | None:
+    yaml_text, err = _build_ordered_rank_edit_isp_yaml_from_pipeline_run(run_dir)
     if err:
         return err
     st.session_state["yaml_editor"] = yaml_text
-    st.session_state["seq_isp_source_run_dir"] = str(run_dir.resolve())
+    st.session_state["isp_steps_source_run_dir"] = str(run_dir.resolve())
     return None
 
 
-def _render_sequential_isp_source_picker() -> None:
+def _render_isp_steps_source_picker() -> None:
     """Column-1 UI: pick a past pipeline ISP run (dataset + FT model + states)."""
     st.subheader("ISP source run")
     st.caption(
         "Select a completed **Pipeline (E2E)** folder that has ISP "
-        "(`stage_configs/isp.yaml`). Sequential / State-feedback ISP reuse that run’s tokenized "
+        "(`stage_configs/isp.yaml`). Ordered rank-edit / State-feedback ISP reuse that run’s tokenized "
         "dataset, fine-tuned model, and start/end states — not a fresh Data input zip."
     )
     runs = _discover_isp_pipeline_runs()
@@ -1252,7 +1262,7 @@ def _render_sequential_isp_source_picker() -> None:
 
     labels = {_format_isp_run_label(p): str(p.resolve()) for p in runs}
     options = list(labels.keys())
-    current_path = str(st.session_state.get("seq_isp_source_run_dir") or "")
+    current_path = str(st.session_state.get("isp_steps_source_run_dir") or "")
     default_idx = 0
     for i, lab in enumerate(options):
         if labels[lab] == current_path:
@@ -1263,11 +1273,11 @@ def _render_sequential_isp_source_picker() -> None:
         "Past ISP / pipeline run",
         options,
         index=default_idx,
-        key="seq_isp_run_select_label",
+        key="isp_steps_run_select_label",
         help="Pipeline run directories that include an ISP stage config.",
     )
     run_dir = Path(labels[chosen_label])
-    st.session_state["seq_isp_source_run_dir"] = str(run_dir.resolve())
+    st.session_state["isp_steps_source_run_dir"] = str(run_dir.resolve())
     st.code(str(run_dir), language="text")
 
     cfg = _load_isp_stage_cfg(run_dir)
@@ -1283,128 +1293,129 @@ def _render_sequential_isp_source_picker() -> None:
         st.caption(f"model: `{paths.get('geneformer_model')}`")
 
 
-def _render_sequential_isp_controls() -> None:
+def _render_ordered_rank_edit_isp_controls() -> None:
     """Run-type column: ordered OE / KD steps + batch size."""
     st.info(
-        "Chains **group OE and/or KD** on start-state cells. Each step is applied "
-        "on the previous step’s rank encoding (token space), then scored as "
-        "`goal_state_shift` toward the pipeline end state. Outputs go under "
-        "`{pipeline_run}/sequential_isp/`."
+        "Applies **group OE and/or KD** steps in order on start-state cells. Each step "
+        "edits the previous step’s gene ranks (token space); after each step the "
+        "`goal_state_shift` toward the pipeline end state is scored against the original "
+        "start encoding. Model outputs are not fed back into the next step (that is "
+        "**State-feedback ISP**). Outputs go under `{pipeline_run}/ordered_rank_edit_isp/`."
     )
     st.caption(
         "OE = length-preserving move-to-front (later OE genes sit leftmost). "
         "KD = delete those genes from the encoding. Mixed OE+KD is allowed."
     )
-    st.session_state.setdefault("seq_isp_save_datasets", False)
-    st.session_state.setdefault("seq_isp_max_ncells", _DEFAULT_ISP_MAX_NCELLS)
+    st.session_state.setdefault("ore_isp_save_datasets", False)
+    st.session_state.setdefault("ore_isp_max_ncells", _DEFAULT_ISP_MAX_NCELLS)
 
-    _render_seq_isp_step_widgets()
+    _render_isp_steps_widgets()
 
     st.number_input(
         "max_ncells (start-state cells)",
         min_value=1,
         max_value=100_000,
         step=100,
-        key="seq_isp_max_ncells",
+        key="ore_isp_max_ncells",
     )
     st.checkbox(
         "Save intermediate perturbed datasets",
-        key="seq_isp_save_datasets",
+        key="ore_isp_save_datasets",
         help="Off by default (host RAM / disk). Needed only if you will plot UMAP from a step.",
     )
-    _render_seq_isp_batch_widgets()
-    _render_seq_isp_ready_status()
+    _render_isp_steps_batch_widgets()
+    _render_isp_steps_ready_status()
 
-    if st.button("Apply run + steps to Config YAML", type="secondary", key="seq_isp_apply_btn"):
-        run_dir = Path(str(st.session_state.get("seq_isp_source_run_dir") or ""))
-        err = _apply_sequential_isp_from_pipeline_run(run_dir) if run_dir.is_dir() else (
+    if st.button("Apply run + steps to Config YAML", type="secondary", key="ore_isp_apply_btn"):
+        run_dir = Path(str(st.session_state.get("isp_steps_source_run_dir") or ""))
+        err = _apply_ordered_rank_edit_isp_from_pipeline_run(run_dir) if run_dir.is_dir() else (
             "Select a past Pipeline ISP run in the left column."
         )
         if err:
             st.error(err)
         else:
-            st.success(f"Filled Sequential ISP config from `{run_dir.name}`.")
+            st.success(f"Filled Ordered rank-edit ISP config from `{run_dir.name}`.")
             st.rerun()
 
 
-def _render_seq_isp_ready_status() -> None:
-    source = st.session_state.get("seq_isp_source_run_dir")
-    steps = _seq_isp_collect_steps()
+def _render_isp_steps_ready_status() -> None:
+    source = st.session_state.get("isp_steps_source_run_dir")
+    steps = _isp_steps_collect()
     ready_steps = bool(steps) and all(s.get("genes") for s in steps)
     if source and ready_steps:
         labels = [f"{s['type']}:{'+'.join(s['genes'][:3])}" for s in steps]
         st.success(f"Ready: `{Path(source).name}` · {' → '.join(labels)}")
     elif source:
-        st.warning("Enter genes for every sequential step.")
+        st.warning("Enter genes for every step.")
     else:
         st.warning("Select a past ISP / pipeline run in the left column.")
 
 
-def _render_seq_isp_step_widgets() -> None:
-    """Ordered OE / KD step widgets (shared by Sequential and State-feedback ISP)."""
-    st.session_state.setdefault("seq_isp_n_steps", _DEFAULT_SEQ_ISP_STEPS)
+def _render_isp_steps_widgets() -> None:
+    """Ordered OE / KD step widgets (shared by Ordered rank-edit and State-feedback ISP)."""
+    st.session_state.setdefault("isp_steps_n", _DEFAULT_ISP_STEPS)
     st.number_input(
-        "Number of sequential steps",
+        "Number of steps",
         min_value=1,
-        max_value=_MAX_SEQ_ISP_STEPS,
+        max_value=_MAX_ISP_STEPS,
         step=1,
-        key="seq_isp_n_steps",
+        key="isp_steps_n",
         help="Each step is one group perturbation (one or more genes, OE or KD).",
     )
-    n_steps = int(st.session_state.get("seq_isp_n_steps") or _DEFAULT_SEQ_ISP_STEPS)
+    n_steps = int(st.session_state.get("isp_steps_n") or _DEFAULT_ISP_STEPS)
     for i in range(n_steps):
         st.markdown(f"**Step {i + 1}**")
-        st.session_state.setdefault(f"seq_isp_step_{i}_type", "overexpress")
-        st.session_state.setdefault(f"seq_isp_step_{i}_name", "")
-        st.session_state.setdefault(f"seq_isp_step_{i}_genes", "")
+        st.session_state.setdefault(f"isp_steps_{i}_type", "overexpress")
+        st.session_state.setdefault(f"isp_steps_{i}_name", "")
+        st.session_state.setdefault(f"isp_steps_{i}_genes", "")
         c_type, c_name = st.columns(2)
         with c_type:
             st.selectbox(
                 "type",
-                list(_SEQ_ISP_TYPE_LABELS.keys()),
-                key=f"seq_isp_step_{i}_type",
-                format_func=lambda v: _SEQ_ISP_TYPE_LABELS.get(v, v),
+                list(_STEP_TYPE_LABELS.keys()),
+                key=f"isp_steps_{i}_type",
+                format_func=lambda v: _STEP_TYPE_LABELS.get(v, v),
             )
         with c_name:
             st.text_input(
                 "name (optional)",
-                key=f"seq_isp_step_{i}_name",
+                key=f"isp_steps_{i}_name",
                 placeholder=f"step{i + 1:02d}",
             )
         st.text_area(
             "genes (one per line; group)",
-            key=f"seq_isp_step_{i}_genes",
+            key=f"isp_steps_{i}_genes",
             height=80,
             placeholder="Pou5f1\nSox2\nKlf4\nMyc",
         )
 
 
-def _render_seq_isp_batch_widgets() -> None:
-    st.session_state.setdefault("seq_isp_batch_mode", BATCH_MODE_AUTO)
-    st.session_state.setdefault("seq_isp_batch_size", DEFAULT_MANUAL_BATCH_SIZE)
+def _render_isp_steps_batch_widgets() -> None:
+    st.session_state.setdefault("isp_steps_batch_mode", BATCH_MODE_AUTO)
+    st.session_state.setdefault("isp_steps_batch_size", DEFAULT_MANUAL_BATCH_SIZE)
     c_mode, c_size = st.columns(2)
     with c_mode:
         st.radio(
             "GPU batch size",
             [BATCH_MODE_AUTO, BATCH_MODE_MANUAL],
-            key="seq_isp_batch_mode",
+            key="isp_steps_batch_mode",
             horizontal=True,
             help=(
-                "Auto measures this GPU with a dual-forward probe matching sequential "
+                "Auto measures this GPU with a dual-forward probe matching per-step "
                 "scoring (does not reuse genome-wide ISP’s 1-forward cache)."
             ),
         )
     with c_size:
-        if st.session_state.get("seq_isp_batch_mode") == BATCH_MODE_MANUAL:
+        if st.session_state.get("isp_steps_batch_mode") == BATCH_MODE_MANUAL:
             st.number_input(
                 "forward_batch_size",
                 min_value=1,
                 max_value=4096,
                 step=8,
-                key="seq_isp_batch_size",
+                key="isp_steps_batch_size",
             )
         else:
-            st.caption("Measured at startup for sequential dual-forward scoring, then cached.")
+            st.caption("Measured at startup for per-step dual-forward scoring, then cached.")
 
 
 def _render_state_feedback_isp_controls() -> None:
@@ -1437,7 +1448,7 @@ def _render_state_feedback_isp_controls() -> None:
     st.session_state.setdefault("sf_isp_spec_random_type", "overexpress")
     st.session_state.setdefault("sf_isp_spec_match_gene", "")
 
-    _render_seq_isp_step_widgets()
+    _render_isp_steps_widgets()
 
     st.number_input(
         "max_ncells (start-state cells)",
@@ -1448,7 +1459,7 @@ def _render_state_feedback_isp_controls() -> None:
         help="Every condition runs GPU forwards over these cells; 300 is the tested default.",
     )
 
-    source = str(st.session_state.get("seq_isp_source_run_dir") or "").strip()
+    source = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
     decoders = _discover_sf_isp_decoders(Path(source)) if source else []
     labels = {_SF_ISP_DECODER_TRAIN: ""}
     for ckpt in decoders:
@@ -1480,7 +1491,7 @@ def _render_state_feedback_isp_controls() -> None:
             format_func=lambda c: _SF_ISP_CONDITION_HELP.get(c, c),
             disabled=bool(st.session_state.get("sf_isp_eval_only")),
         )
-        n_steps = int(st.session_state.get("seq_isp_n_steps") or _DEFAULT_SEQ_ISP_STEPS)
+        n_steps = int(st.session_state.get("isp_steps_n") or _DEFAULT_ISP_STEPS)
         last_feedback_step = max(1, n_steps - 1)
         if int(st.session_state.get("sf_isp_feedback_after_step") or 1) > last_feedback_step:
             st.session_state["sf_isp_feedback_after_step"] = last_feedback_step
@@ -1539,14 +1550,14 @@ def _render_state_feedback_isp_controls() -> None:
         with c_sets:
             st.selectbox(
                 "Named-set type",
-                list(_SEQ_ISP_TYPE_LABELS.keys()),
+                list(_STEP_TYPE_LABELS.keys()),
                 key="sf_isp_spec_sets_type",
             )
             st.number_input("Random draws", min_value=0, max_value=500, key="sf_isp_spec_n_random")
         with c_rand:
             st.selectbox(
                 "Random type",
-                list(_SEQ_ISP_TYPE_LABELS.keys()),
+                list(_STEP_TYPE_LABELS.keys()),
                 key="sf_isp_spec_random_type",
             )
             st.number_input(
@@ -1561,8 +1572,8 @@ def _render_state_feedback_isp_controls() -> None:
             ),
         )
 
-    _render_seq_isp_batch_widgets()
-    _render_seq_isp_ready_status()
+    _render_isp_steps_batch_widgets()
+    _render_isp_steps_ready_status()
 
     if st.button("Apply run + steps to Config YAML", type="secondary", key="sf_isp_apply_btn"):
         run_dir = Path(source)
@@ -1574,7 +1585,7 @@ def _render_state_feedback_isp_controls() -> None:
             st.error(err)
         else:
             st.session_state["yaml_editor"] = yaml_text
-            st.session_state["seq_isp_source_run_dir"] = str(run_dir.resolve())
+            st.session_state["isp_steps_source_run_dir"] = str(run_dir.resolve())
             st.success(f"Filled State-feedback ISP config from `{run_dir.name}`.")
             st.rerun()
 
@@ -1877,21 +1888,21 @@ def _render_run_directory_output(run_label: str) -> None:
             "**Run job** measures this GPU (~1 min) and prints a recommended "
             "`runtime.train_batch_size`. Switch to **Pipeline (E2E)** and paste it there."
         )
-    elif run_label in _SEQ_STEP_RUN_TYPES:
-        source = st.session_state.get("seq_isp_source_run_dir")
+    elif run_label in _STEP_RUN_TYPES:
+        source = st.session_state.get("isp_steps_source_run_dir")
         if source:
             st.code(f"{run_label} source run\n{source}", language="text")
-        steps = _seq_isp_collect_steps()
+        steps = _isp_steps_collect()
         if steps:
             lines = []
             for i, s in enumerate(steps, start=1):
                 genes = "+".join(s.get("genes") or []) or "(no genes)"
                 lines.append(f"{i}. {s.get('type', 'overexpress')} {genes}")
             st.code("steps\n" + "\n".join(lines), language="text")
-        if run_label == RUN_TYPE_SEQUENTIAL_ISP:
+        if run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
             st.caption(
                 "**Run job** writes per-step `goal_state_shift` CSVs under "
-                "`<selected pipeline run>/sequential_isp/`."
+                "`<selected pipeline run>/ordered_rank_edit_isp/`."
             )
         else:
             checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
@@ -3608,8 +3619,8 @@ def _render_analysis_panel() -> None:
         run_sel_c1 = st.session_state.get("run_type_sel", RUN_TYPE_PIPELINE)
         if run_sel_c1 == RUN_TYPE_ISP_UMAP:
             _render_isp_umap_source_picker()
-        elif run_sel_c1 in _SEQ_STEP_RUN_TYPES:
-            _render_sequential_isp_source_picker()
+        elif run_sel_c1 in _STEP_RUN_TYPES:
+            _render_isp_steps_source_picker()
         else:
             st.subheader("Study name")
             st.text_input(
@@ -3904,8 +3915,8 @@ def _render_analysis_panel() -> None:
             else:
                 st.warning("Select a past ISP / pipeline run in the left column.")
 
-        elif run_sel == RUN_TYPE_SEQUENTIAL_ISP:
-            _render_sequential_isp_controls()
+        elif run_sel == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
+            _render_ordered_rank_edit_isp_controls()
 
         elif run_sel == RUN_TYPE_STATE_FEEDBACK_ISP:
             _render_state_feedback_isp_controls()
@@ -3984,11 +3995,11 @@ def _render_analysis_panel() -> None:
     proc = st.session_state.get("active_proc")
     busy = proc is not None and proc.poll() is None
     url_busy = bool(st.session_state.get("url_fetch_active"))
-    # FT calibrate / ISP UMAP / Sequential ISP do not need a fresh 10x zip upload.
+    # FT calibrate / ISP UMAP / step-based ISP do not need a fresh 10x zip upload.
     study_data_required = run_label not in (
         RUN_TYPE_FT_BATCH,
         RUN_TYPE_ISP_UMAP,
-        *_SEQ_STEP_RUN_TYPES,
+        *_STEP_RUN_TYPES,
     )
     if not study_data_required:
         clear_browser_upload_lock = True
@@ -3998,18 +4009,18 @@ def _render_analysis_panel() -> None:
             str(st.session_state.get("isp_umap_source_run_dir") or "").strip()
             and str(st.session_state.get("isp_umap_gene") or "").strip()
         )
-    seq_isp_ready = True
-    if run_label in _SEQ_STEP_RUN_TYPES:
-        seq_steps = _seq_isp_collect_steps()
-        seq_isp_ready = bool(
-            str(st.session_state.get("seq_isp_source_run_dir") or "").strip()
-            and seq_steps
-            and all(s.get("genes") for s in seq_steps)
+    isp_steps_ready = True
+    if run_label in _STEP_RUN_TYPES:
+        isp_steps = _isp_steps_collect()
+        isp_steps_ready = bool(
+            str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
+            and isp_steps
+            and all(s.get("genes") for s in isp_steps)
         )
     # Block Run only while import/URL/job is actually in progress — not after
     # a successful load (imported_now). Disabling on imported_now left Run stuck
     # until the user changed Run type to force a rerun.
-    run_blocked = busy or isp_states_invalid or not isp_umap_ready or not seq_isp_ready
+    run_blocked = busy or isp_states_invalid or not isp_umap_ready or not isp_steps_ready
     if study_data_required:
         run_blocked = run_blocked or import_pending or url_busy
     run_clicked = False
@@ -4025,10 +4036,10 @@ def _render_analysis_panel() -> None:
                 "Disabled until you select a past ISP / pipeline run and a gene "
                 "in the left column."
             )
-        elif run_label in _SEQ_STEP_RUN_TYPES and not seq_isp_ready:
+        elif run_label in _STEP_RUN_TYPES and not isp_steps_ready:
             st.caption(
                 "Disabled until you select a past ISP / pipeline run and enter "
-                "genes for every sequential step."
+                "genes for every step."
             )
         elif not study_data_required:
             st.caption(
@@ -4076,9 +4087,9 @@ def _render_analysis_panel() -> None:
             "then click **Run job** again."
         )
         run_clicked = False
-    elif run_clicked and run_label in _SEQ_STEP_RUN_TYPES and not seq_isp_ready:
+    elif run_clicked and run_label in _STEP_RUN_TYPES and not isp_steps_ready:
         st.warning(
-            "Select a past Pipeline ISP run and enter genes for every sequential step, "
+            "Select a past Pipeline ISP run and enter genes for every step, "
             "then click **Run job** again."
         )
         run_clicked = False
@@ -4129,11 +4140,11 @@ def _render_analysis_panel() -> None:
                 if source.is_dir():
                     st.session_state["isp_umap_source_run_dir"] = str(source.resolve())
                 st.session_state["isp_umap_gene"] = gene
-        elif run_label in _SEQ_STEP_RUN_TYPES:
-            source = Path(str(st.session_state.get("seq_isp_source_run_dir") or ""))
+        elif run_label in _STEP_RUN_TYPES:
+            source = Path(str(st.session_state.get("isp_steps_source_run_dir") or ""))
             build = (
-                _build_sequential_isp_yaml_from_pipeline_run
-                if run_label == RUN_TYPE_SEQUENTIAL_ISP
+                _build_ordered_rank_edit_isp_yaml_from_pipeline_run
+                if run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP
                 else _build_state_feedback_isp_yaml_from_pipeline_run
             )
             prepared, apply_err = build(source)
@@ -4143,7 +4154,7 @@ def _render_analysis_panel() -> None:
             else:
                 yaml_text = prepared or yaml_text
                 if source.is_dir():
-                    st.session_state["seq_isp_source_run_dir"] = str(source.resolve())
+                    st.session_state["isp_steps_source_run_dir"] = str(source.resolve())
 
         if not prep_failed:
             try:
@@ -4198,16 +4209,21 @@ def _render_analysis_panel() -> None:
                         f"ISP UMAP from pipeline run `{source}` · gene=`{gene}` "
                         "(writes under that run’s `isp_umap/`)."
                     )
-                elif run_label == RUN_TYPE_SEQUENTIAL_ISP:
-                    source = st.session_state.get("seq_isp_source_run_dir")
-                    n_steps = len((cfg_obj.get("sequential") or {}).get("steps") or [])
+                elif run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
+                    source = st.session_state.get("isp_steps_source_run_dir")
+                    block = cfg_obj.get("ordered_rank_edit") or cfg_obj.get("sequential") or {}
+                    n_steps = len(block.get("steps") or [])
                     st.info(
-                        f"Sequential ISP from pipeline run `{source}` · {n_steps} step(s) "
-                        "(writes under that run’s `sequential_isp/`)."
+                        f"Ordered rank-edit ISP from pipeline run `{source}` · {n_steps} step(s) "
+                        f"(writes under that run’s `{_ORE_ISP_OUTPUT_SUBDIR}/`)."
                     )
                 elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
-                    source = st.session_state.get("seq_isp_source_run_dir")
-                    n_steps = len((cfg_obj.get("sequential") or {}).get("steps") or [])
+                    source = st.session_state.get("isp_steps_source_run_dir")
+                    n_steps = len(
+                        (cfg_obj.get("state_feedback") or {}).get("steps")
+                        or (cfg_obj.get("sequential") or {}).get("steps")
+                        or []
+                    )
                     checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
                     decoder = f"decoder `{checkpoint}`" if checkpoint else "new decoder"
                     st.info(
@@ -4304,7 +4320,7 @@ def _render_analysis_panel() -> None:
             key_prefix="analysis_outputs",
         )
     elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
-        _render_state_feedback_results(st.session_state.get("seq_isp_source_run_dir"))
+        _render_state_feedback_results(st.session_state.get("isp_steps_source_run_dir"))
 
     roots = st.session_state.get("last_output_roots") or []
     if roots:

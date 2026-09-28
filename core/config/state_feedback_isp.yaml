@@ -1,7 +1,7 @@
 # State-feedback ISP — Phase 1-2 (baselines + linear Delta-rank decoder)
 #
 # GENERIC BY DESIGN. Nothing below is specific to reprogramming factors:
-#   - `sequential.steps` is any list of steps, each with `type: overexpress|knockdown`
+#   - `state_feedback.steps` is any list of steps, each with `type: overexpress|knockdown`
 #     and any gene symbols / Ensembl IDs present in your token dictionary.
 #   - `perturbation.state_key / start_state / end_state` are whatever labels your
 #     fine-tuned classifier was trained on.
@@ -37,8 +37,9 @@ isp:
   max_ncells: 300
   emb_layer: 0
 
-# Any number of steps, any genes, overexpress or knockdown.
-sequential:
+state_feedback:
+  # Any number of steps, any genes, overexpress or knockdown
+  # (a legacy top-level `sequential.steps` block is still read).
   steps:
     - name: KLF4
       type: overexpress
@@ -53,7 +54,6 @@ sequential:
       type: overexpress
       genes: [POU5F1]
 
-state_feedback:
   # Conditions compared in one run. `oracle` is a ceiling (observed ranks pasted in),
   # `null_feedback` is the zero-perturbation guardrail.
   conditions:

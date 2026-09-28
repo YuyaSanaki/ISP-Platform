@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sequential group OE: Yamanaka OSKM4, then 7-factor cocktail on the same cells.
+"""Ordered rank-edit group OE: Yamanaka OSKM4, then 7-factor cocktail on the same cells.
 
 Step 1 applies OSKM4 (OCT4+SOX2+KLF4+MYC). Step 2 applies the 7-factor cocktail
 (NANOG+OCT4+SOX2+ESRRB+LIN28A+DPPA4+TERT) onto those perturbed encodings.
@@ -28,14 +28,15 @@ from geneformer.species_context import (
     log_species_banner,
     species_from_config,
 )
-from sequential_oe import (
+from ordered_rank_edit import (
     COCKTAIL_FACTOR_KEYS,
     COCKTAIL_FACTORS,
     OSKM_FACTOR_KEYS,
     OSKM_FACTORS,
+    config_block,
 )
 
-import run_sequential_isp as seq
+import run_ordered_rank_edit_isp as ore
 
 
 STAGES = (
@@ -55,7 +56,7 @@ def _tokens_for(keys: Sequence[str], table: dict[str, dict[str, str]], species_k
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="OSKM4 then 7-factor sequential OE")
+    parser = argparse.ArgumentParser(description="OSKM4 then 7-factor ordered rank-edit OE")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--max-ncells", type=int, default=None)
     parser.add_argument("--output-root", type=Path, default=None)
@@ -70,12 +71,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     pert = cfg.get("perturbation") or {}
     isp_cfg = cfg.get("isp") or {}
     mdl = cfg.get("model") or {}
-    seq_cfg = cfg.get("sequential") or {}
+    ore_cfg = config_block(cfg)
     runtime = cfg.get("runtime") or {}
 
-    dataset_path = seq._app_path(str(paths["dataset"]))
-    model_path = seq._app_path(str(paths["geneformer_model"]))
-    output_root = args.output_root or seq._app_path(str(paths["output_root"]))
+    dataset_path = ore._app_path(str(paths["dataset"]))
+    model_path = ore._app_path(str(paths["geneformer_model"]))
+    output_root = args.output_root or ore._app_path(str(paths["output_root"]))
     if not output_root.is_absolute():
         output_root = ROOT / output_root
 
@@ -85,7 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     max_ncells = args.max_ncells if args.max_ncells is not None else isp_cfg.get("max_ncells")
     emb_layer = int(isp_cfg.get("emb_layer", 0))
     nproc = args.nproc if args.nproc is not None else int(runtime.get("nproc", 4))
-    save_datasets = not args.no_save_datasets and bool(seq_cfg.get("save_intermediate_datasets", True))
+    save_datasets = not args.no_save_datasets and bool(ore_cfg.get("save_intermediate_datasets", True))
     resume = not args.no_resume
 
     species_key = (
@@ -99,7 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"Loading dataset: {dataset_path}", flush=True)
     dataset = load_from_disk(str(dataset_path))
-    start_ds = seq._select_start_cells(dataset, state_key, start_state, max_ncells)
+    start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
     print(f"Start cells ({start_state}): n={len(start_ds)}", flush=True)
 
     model = isp.load_model(mdl.get("type", "CellClassifier"), int(mdl.get("num_classes", 2)), str(model_path))
@@ -114,7 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     pad_token_id = token_dict.get("<pad>")
 
     fbs_raw = args.forward_batch_size or runtime.get("forward_batch_size", isp_cfg.get("forward_batch_size", "auto"))
-    forward_batch_size = seq.resolve_sequential_forward_batch_size(
+    forward_batch_size = ore.resolve_dual_forward_batch_size(
         coerce_batch_size(fbs_raw, default=default_isp_forward_batch_size(backend.max_input_size)),
         model,
         start_ds,
@@ -130,7 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "alt_states": list(pert.get("alt_states") or []),
     }
     centroid_states = [start_state, goal_state, *list(pert.get("alt_states") or [])]
-    centroid_ds = seq._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
+    centroid_ds = ore._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
     state_embs = isp.get_cell_state_avg_embs(
         model,
         centroid_ds,
@@ -146,7 +147,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         stages.append((tag, label, _tokens_for(keys, table, species_key, token_dict)))
 
     output_root.mkdir(parents=True, exist_ok=True)
-    seq._save_dataset(start_ds, output_root / "start.dataset")
+    ore._save_dataset(start_ds, output_root / "start.dataset")
     run_meta = {
         "config": str(args.config.resolve()),
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -173,7 +174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if resume and csv_path.is_file() and (not save_datasets or ds_path.exists()):
             print(f"Resume: skip {label} ({tag})", flush=True)
             s = pd.to_numeric(pd.read_csv(csv_path)["Shift_to_goal_end"], errors="coerce").dropna()
-            stats = seq._summarize_series(s)
+            stats = ore._summarize_series(s)
             if save_datasets and ds_path.exists():
                 from datasets import load_from_disk as _load
 
@@ -181,11 +182,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(f"Step {step_idx}: {label} ({len(tokens)} genes)...", flush=True)
             working = working.map(
-                seq._apply_step_example,
+                ore._apply_step_example,
                 fn_kwargs={"tokens": list(tokens)},
-                num_proc=seq._gpu_resident_map_workers(nproc),
+                num_proc=ore._gpu_resident_map_workers(nproc),
             )
-            df = seq.compute_goal_state_shifts(
+            df = ore.compute_goal_state_shifts(
                 model,
                 start_ds,
                 working,
@@ -199,12 +200,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 forward_batch_size,
                 nproc,
             )
-            seq._write_shifts(df, csv_path)
+            ore._write_shifts(df, csv_path)
             if save_datasets:
-                seq._save_dataset(working, ds_path)
-            stats = seq._summarize_series(df["Shift_to_goal_end"])
+                ore._save_dataset(working, ds_path)
+            stats = ore._summarize_series(df["Shift_to_goal_end"])
             print(f"  median shift={stats['median']:.6f} n={stats['n']} frac>0={stats['frac_positive']:.3f}", flush=True)
-            seq._empty_cuda_cache()
+            ore._empty_cuda_cache()
 
         step_rows.append(
             {

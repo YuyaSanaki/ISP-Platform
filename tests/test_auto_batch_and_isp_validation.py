@@ -670,19 +670,23 @@ class TestBatchSizeYamlControls(unittest.TestCase):
         finally:
             _restore_modules(saved)
 
-    def test_sequential_isp_command_wiring(self):
+    def test_ordered_rank_edit_isp_command_wiring(self):
         app, _st, saved = _load_streamlit_app_helpers()
         try:
-            self.assertIn(app.RUN_TYPE_SEQUENTIAL_ISP, app.RUN_FILES)
-            cfg = Path("/tmp/fake_sequential_isp.yaml")
-            cmd, env = app._build_command_and_env(app.RUN_TYPE_SEQUENTIAL_ISP, cfg)
+            self.assertEqual(app.RUN_TYPE_ORDERED_RANK_EDIT_ISP, "Ordered rank-edit ISP")
+            self.assertEqual(
+                app.RUN_FILES[app.RUN_TYPE_ORDERED_RANK_EDIT_ISP], "ordered_rank_edit_isp.yaml"
+            )
+            self.assertTrue(app._default_config_path(app.RUN_TYPE_ORDERED_RANK_EDIT_ISP).is_file())
+            cfg = Path("/tmp/fake_ordered_rank_edit_isp.yaml")
+            cmd, env = app._build_command_and_env(app.RUN_TYPE_ORDERED_RANK_EDIT_ISP, cfg)
             self.assertEqual(cmd[0], "python3")
-            self.assertTrue(cmd[1].endswith("run_sequential_isp.py"))
-            self.assertEqual(env.get("SEQUENTIAL_ISP_CONFIG"), str(cfg))
+            self.assertTrue(cmd[1].endswith("run_ordered_rank_edit_isp.py"))
+            self.assertEqual(env.get("ORDERED_RANK_EDIT_ISP_CONFIG"), str(cfg))
         finally:
             _restore_modules(saved)
 
-    def test_build_sequential_isp_yaml_from_pipeline_run(self):
+    def test_build_ordered_rank_edit_isp_yaml_from_pipeline_run(self):
         app, st, saved = _load_streamlit_app_helpers()
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -700,27 +704,32 @@ class TestBatchSizeYamlControls(unittest.TestCase):
                     encoding="utf-8",
                 )
                 st.session_state.clear()
-                st.session_state["seq_isp_n_steps"] = 2
-                st.session_state["seq_isp_step_0_type"] = "overexpress"
-                st.session_state["seq_isp_step_0_genes"] = "Pou5f1\nSox2"
-                st.session_state["seq_isp_step_0_name"] = "oskm"
-                st.session_state["seq_isp_step_1_type"] = "delete"
-                st.session_state["seq_isp_step_1_genes"] = "Igfbp2"
-                st.session_state["seq_isp_step_1_name"] = "kd"
-                st.session_state["seq_isp_batch_mode"] = app.BATCH_MODE_AUTO
-                st.session_state["seq_isp_max_ncells"] = 200
-                yaml_text, err = app._build_sequential_isp_yaml_from_pipeline_run(run_dir)
+                st.session_state["isp_steps_n"] = 2
+                st.session_state["isp_steps_0_type"] = "overexpress"
+                st.session_state["isp_steps_0_genes"] = "Pou5f1\nSox2"
+                st.session_state["isp_steps_0_name"] = "oskm"
+                st.session_state["isp_steps_1_type"] = "delete"
+                st.session_state["isp_steps_1_genes"] = "Igfbp2"
+                st.session_state["isp_steps_1_name"] = "kd"
+                st.session_state["isp_steps_batch_mode"] = app.BATCH_MODE_AUTO
+                st.session_state["ore_isp_max_ncells"] = 200
+                yaml_text, err = app._build_ordered_rank_edit_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIsNone(err, err)
                 cfg = __import__("yaml").safe_load(yaml_text)
                 self.assertEqual(cfg["paths"]["dataset"], "/app/data/x.dataset")
-                self.assertTrue(str(cfg["paths"]["output_root"]).endswith("sequential_isp"))
+                self.assertTrue(
+                    str(cfg["paths"]["output_root"]).endswith("ordered_rank_edit_isp")
+                )
                 self.assertFalse(cfg["paths"]["output_time_subdir"])
-                self.assertEqual(cfg["sequential"]["steps"][0]["type"], "overexpress")
-                self.assertEqual(cfg["sequential"]["steps"][0]["genes"], ["Pou5f1", "Sox2"])
-                self.assertEqual(cfg["sequential"]["steps"][1]["type"], "delete")
+                ore = cfg["ordered_rank_edit"]
+                self.assertEqual(ore["steps"][0]["type"], "overexpress")
+                self.assertEqual(ore["steps"][0]["genes"], ["Pou5f1", "Sox2"])
+                self.assertEqual(ore["steps"][0]["name"], "oskm")
+                self.assertEqual(ore["steps"][1]["type"], "delete")
                 self.assertEqual(cfg["runtime"]["forward_batch_size"], "auto")
                 self.assertEqual(cfg["isp"]["max_ncells"], 200)
-                self.assertFalse(cfg["sequential"]["save_intermediate_datasets"])
+                self.assertFalse(ore["save_intermediate_datasets"])
+                self.assertNotIn("sequential", cfg)
                 self.assertNotIn("state_feedback", cfg)
         finally:
             _restore_modules(saved)
@@ -744,11 +753,11 @@ def _write_isp_stage(run_dir: Path) -> None:
 class TestStateFeedbackIspWebui(unittest.TestCase):
     def _steps(self, st):
         st.session_state.clear()
-        st.session_state["seq_isp_n_steps"] = 2
-        st.session_state["seq_isp_step_0_type"] = "overexpress"
-        st.session_state["seq_isp_step_0_genes"] = "Pou5f1\nSox2"
-        st.session_state["seq_isp_step_1_type"] = "delete"
-        st.session_state["seq_isp_step_1_genes"] = "Igfbp2"
+        st.session_state["isp_steps_n"] = 2
+        st.session_state["isp_steps_0_type"] = "overexpress"
+        st.session_state["isp_steps_0_genes"] = "Pou5f1\nSox2"
+        st.session_state["isp_steps_1_type"] = "delete"
+        st.session_state["isp_steps_1_genes"] = "Igfbp2"
 
     def test_command_wiring(self):
         app, st, saved = _load_streamlit_app_helpers()
@@ -785,8 +794,16 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 self.assertTrue(cfg["paths"]["output_time_subdir"])
                 self.assertFalse(cfg["paths"]["output_date_subdir"])
                 self.assertEqual(cfg["isp"]["max_ncells"], 500)
-                self.assertEqual(len(cfg["sequential"]["steps"]), 2)
+                self.assertNotIn("sequential", cfg)
+                self.assertNotIn("ordered_rank_edit", cfg)
                 sf = cfg["state_feedback"]
+                self.assertEqual(
+                    sf["steps"],
+                    [
+                        {"type": "overexpress", "genes": ["Pou5f1", "Sox2"]},
+                        {"type": "delete", "genes": ["Igfbp2"]},
+                    ],
+                )
                 self.assertEqual(sf["conditions"], list(app._SF_ISP_CONDITIONS))
                 self.assertEqual(sf["observed_state"], "WT")
                 self.assertEqual(sf["feedback_after_step"], 1)
@@ -856,7 +873,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("name: GENE1", err)
                 self._steps(st)
-                st.session_state["seq_isp_step_1_genes"] = ""
+                st.session_state["isp_steps_1_genes"] = ""
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("at least one gene", err)
                 self._steps(st)
@@ -865,7 +882,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 self.assertIn("at least one condition", err)
 
                 self._steps(st)
-                st.session_state["seq_isp_n_steps"] = 1
+                st.session_state["isp_steps_n"] = 1
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("at least 2 steps", err)
                 st.session_state["sf_isp_conditions"] = ["ordered_rank_edit", "null_feedback"]

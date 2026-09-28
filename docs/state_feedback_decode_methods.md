@@ -249,11 +249,11 @@ Implemented, generic (no OSKM hardcoding anywhere in `core/state_feedback/`):
 
 ```bash
 ISP_PLATFORM_IMAGE=isp-platform:latest DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
-  docker compose run --rm --no-deps sequential_isp \
+  docker compose run --rm --no-deps ordered_rank_edit_isp \
   python3 core/run_state_feedback_isp.py --config core/config/state_feedback_isp.yaml --max-ncells 50
 # tests
 ISP_PLATFORM_IMAGE=isp-platform:latest DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
-  docker compose run --rm --no-deps sequential_isp \
+  docker compose run --rm --no-deps ordered_rank_edit_isp \
   python3 -m unittest tests.test_state_feedback_phase12 tests.test_state_feedback_controls tests.test_state_feedback_oracle
 # perturbation specificity with an existing decoder (no retraining, no endpoint conditions)
   python3 core/run_state_feedback_isp.py --config ... --eval-only --specificity \
@@ -269,7 +269,7 @@ The specificity stage (`state_feedback.specificity`, off by default) writes
 split across jobs). Wall time at n=50 was ~26 min end to end; ~4 min per condition,
 dominated by GPU forward passes and therefore roughly linear in cell count.
 
-**Genericity.** The perturbation is whatever `sequential.steps` lists (any genes,
+**Genericity.** The perturbation is whatever `state_feedback.steps` lists (any genes,
 `overexpress` or `knockdown`, any number of steps); states are whatever
 `perturbation.state_key / start_state / end_state` name. Switching to another
 fine-tuned model and another cell-state pair requires only config edits.

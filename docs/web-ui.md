@@ -192,10 +192,11 @@ Under the page title:
 | FT batch size (calibrate) | Measures GPU; recommends Pipeline `runtime.train_batch_size` ([fine-tuning.md](fine-tuning.md) § batch size) |
 | Pipeline (E2E)            | [pipeline.md](pipeline.md)                                                                                   |
 | ISP UMAP                  | [isp_umap.md](isp_umap.md) — pick a **past Pipeline ISP run** + gene (not Data input zip)                    |
-| Sequential ISP            | [sequential_isp.md](sequential_isp.md) — pick a **past Pipeline ISP run** + ordered OE/KD steps              |
+| Ordered rank-edit ISP     | [ordered_rank_edit_isp.md](ordered_rank_edit_isp.md) — pick a **past Pipeline ISP run** + ordered OE/KD steps |
+| State-feedback ISP        | [state_feedback_decode_methods.md](state_feedback_decode_methods.md) — same source run + steps, plus decoder / conditions |
 
 
-**Study Data input** stays loaded when switching between **FT batch size (calibrate)** and **Pipeline (E2E)**. **ISP UMAP** and **Sequential ISP** hide Data input and instead list completed `pipeline_*/stage_configs/isp.yaml` runs under `/app/output`.
+**Study Data input** stays loaded when switching between **FT batch size (calibrate)** and **Pipeline (E2E)**. **ISP UMAP**, **Ordered rank-edit ISP** and **State-feedback ISP** hide Data input and instead list completed `pipeline_*/stage_configs/isp.yaml` runs under `/app/output`.
 
 ### Fine-tune `train_batch_size`
 
@@ -223,7 +224,9 @@ Under **Advanced options** (collapsed by default):
 
 **Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
 
-**Sequential ISP** (OE then KD, or any ordered chain): use Run type **Sequential ISP**. Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Writes under `{pipeline_run}/sequential_isp/`. See [sequential_isp.md](sequential_isp.md).
+**Ordered rank-edit ISP** (OE then KD, or any ordered list of steps): use Run type **Ordered rank-edit ISP** (formerly *Sequential ISP*). Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Each step edits the gene ranks; nothing is fed back from the model. Writes under `{pipeline_run}/ordered_rank_edit_isp/`. See [ordered_rank_edit_isp.md](ordered_rank_edit_isp.md).
+
+**State-feedback ISP**: use Run type **State-feedback ISP**. Same source-run picker and step editor; after a step, a Δrank decoder reorders each cell's genes from the model output before the next step. Writes under `{pipeline_run}/state_feedback_isp/`. See [state_feedback_decode_methods.md](state_feedback_decode_methods.md).
 
 Pipeline (E2E) additionally runs **TOP1 ISP UMAP** automatically once (same output directory). Full trajectory UMAP remains available via Run type **ISP UMAP**.
 
