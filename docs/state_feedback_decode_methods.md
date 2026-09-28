@@ -217,10 +217,9 @@ BBRC OSKM の 4-step（KLF4→MYC→SOX2→POU5F1）を 30 細胞で回した sm
    - Null perturbation での drift
 4. **Phase 3 は Phase 2 が頭打ちの場合のみ。** Linear で oracle の ~80% 以上なら MLP 不要。Multi-step stability は Linear が動いてから。
 
-### Phase 0 data pin (this host)
+### Phase 0 data
 
-- Analysis: `~/20260624Geneformer-Platform` · **BBRCv3** (or later)
-- Workspace copy: `data/bbrcv3/tokenize_human_native`, `data/bbrcv3/v2_ft_human_native` (`/data/` is gitignored)
+- Dataset: **BBRCv3** (or later), copied to `data/bbrcv3/tokenize_human_native` and `data/bbrcv3/v2_ft_human_native` (`/data/` is gitignored)
 - Runner: `python3 core/run_state_feedback_oracle.py --config core/config/state_feedback_oracle.yaml`
 - Oracle surrogate on OSKM endpoints: start = somatic token ranks; observed post = pluripotent token ranks projected onto each cell’s **fixed gene set** (permutation only)
 
@@ -247,14 +246,14 @@ Implemented, generic (no OSKM hardcoding anywhere in `core/state_feedback/`):
 | `core/config/state_feedback_isp.yaml` | config (OSKM values are a worked example only) |
 | `tests/test_state_feedback_phase12.py`, `tests/test_state_feedback_controls.py` | with `test_state_feedback_oracle.py`: 81 tests, all pass in Docker |
 
-**How to run** (host `spark-943a`, Docker):
+**How to run** (Docker):
 
 ```bash
-ISP_PLATFORM_IMAGE=isp-platform:latest DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
+DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
   docker compose run --rm --no-deps ordered_rank_edit_isp \
   python3 core/run_state_feedback_isp.py --config core/config/state_feedback_isp.yaml --max-ncells 50
 # tests
-ISP_PLATFORM_IMAGE=isp-platform:latest DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
+DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
   docker compose run --rm --no-deps ordered_rank_edit_isp \
   python3 -m unittest tests.test_state_feedback_phase12 tests.test_state_feedback_controls tests.test_state_feedback_oracle
 # perturbation specificity with an existing decoder (no retraining, no endpoint conditions)
