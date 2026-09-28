@@ -69,6 +69,7 @@ from state_feedback.decoder import (
 )
 from state_feedback.evaluate import compare_methods, direction_fidelity_verdict
 from state_feedback.metrics import gap_closed_fraction, spearman_values
+from state_feedback.multistep import FeedbackGuard, MultiStepConfig
 from state_feedback.oracle_rerank import build_pseudobulk_rank_priority
 from state_feedback.samples import collect_eval_samples
 from state_feedback.teacher import observed_delta_rank, split_tokens
@@ -171,9 +172,21 @@ def run_condition(
     feedback_after_step: int = 1,
     feedback_every_step: bool = False,
     ctrl_reference: str = "start",
+    multi_step: MultiStepConfig | None = None,
+    guard_summaries: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run one condition's perturbation chain, optionally with state feedback."""
+    """Run one condition's perturbation chain, optionally with state feedback.
+
+    With ``feedback_every_step`` the chain runs under a ``FeedbackGuard`` (cycle halt,
+    convergence stop, event cap); per-cell halts go to ``feedback_guard.csv``.
+    """
     workers = seq._gpu_resident_map_workers(nproc)
+    guard = (
+        FeedbackGuard(len(start_ds), multi_step)
+        if rerank_fn is not None and feedback_every_step
+        else None
+    )
+    cap_logged = False
     batch_state = [int(forward_batch_size)]
     working = start_ds
     try:
@@ -234,9 +247,24 @@ def run_condition(
         )
         if not do_feedback:
             continue
+        if guard is not None and guard.exhausted:
+            if guard.cap_reached and not cap_logged:
+                n_capped = guard.mark_cap(step_idx)
+                cap_logged = True
+                print(
+                    f"  [{condition}] feedback cap ({guard.cfg.max_feedback_events} events) "
+                    f"reached before step{step_idx}; {n_capped} cells stop here",
+                    flush=True,
+                )
+            continue
 
         ctrl_ds = start_ds if ctrl_reference == "start" else pre_step
         new_ids, diag = rerank_fn(ctrl_ds, working)
+        guard_stats: dict[str, float] = {}
+        if guard is not None:
+            before_ids = gs.raw_input_ids(working, 0, len(working), model_input_size)
+            new_ids, guard_stats = guard.apply(step_idx, before_ids, new_ids)
+            diag = fb.rerank_diagnostics(before_ids, new_ids)
         working = fb.replace_input_ids(working, new_ids, num_proc=workers)
         df_fb = _score_cell_mean(
             model,
@@ -264,16 +292,33 @@ def run_condition(
                 "shift_metric": SHIFT_METRIC,
                 **stats_fb,
                 **diag,
+                **guard_stats,
             }
+        )
+        guard_note = (
+            f" active={int(guard_stats['guard_active_after'])}/{guard.n_cells}"
+            f" cycle+={int(guard_stats['guard_new_cycle_halts'])}"
+            f" converged+={int(guard_stats['guard_new_converged'])}"
+            if guard is not None
+            else ""
         )
         print(
             f"  [{condition}] feedback after step{step_idx}: "
             f"median={stats_fb['median']:.6f} "
             f"moved={diag.get('rerank_frac_moved', float('nan')):.3f} "
-            f"rho={diag.get('rerank_spearman_before_after', float('nan')):.4f}",
+            f"rho={diag.get('rerank_spearman_before_after', float('nan')):.4f}"
+            f"{guard_note}",
             flush=True,
         )
         seq._empty_cuda_cache()
+
+    if guard is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(guard.cell_rows()).to_csv(out_dir / "feedback_guard.csv", index=False)
+        summary = guard.summary()
+        print(f"  [{condition}] feedback guard: {summary}", flush=True)
+        if guard_summaries is not None:
+            guard_summaries[condition] = summary
 
     return rows
 
@@ -856,6 +901,7 @@ def main() -> int:
     ctrl_reference = str(sf_cfg.get("ctrl_reference", "start"))
     if ctrl_reference not in {"start", "previous"}:
         raise ValueError("state_feedback.ctrl_reference must be 'start' or 'previous'")
+    multi_step = MultiStepConfig.from_mapping(sf_cfg.get("multi_step"))
 
     log_species_banner(species_from_config(cfg))
 
@@ -1053,6 +1099,7 @@ def main() -> int:
         nproc=nproc,
     )
     all_rows: list[dict[str, Any]] = []
+    guard_summaries: dict[str, Any] = {}
 
     for condition in conditions:
         print(f"=== {condition} ===", flush=True)
@@ -1135,6 +1182,8 @@ def main() -> int:
                 feedback_after_step=feedback_after_step,
                 feedback_every_step=feedback_every_step,
                 ctrl_reference=ctrl_reference,
+                multi_step=multi_step,
+                guard_summaries=guard_summaries,
                 **common,
             )
         )
@@ -1194,6 +1243,11 @@ def main() -> int:
         "conditions": conditions,
         "feedback_after_step": feedback_after_step,
         "feedback_every_step": feedback_every_step,
+        "multi_step": (
+            {"config": multi_step.to_dict(), "guard": guard_summaries}
+            if feedback_every_step
+            else None
+        ),
         "ctrl_reference": ctrl_reference,
         "hysteresis": hysteresis,
         "decoder": decoder_info,

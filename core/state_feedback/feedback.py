@@ -55,7 +55,7 @@ def replace_input_ids(dataset, new_ids: Sequence[Sequence[int]], *, num_proc: in
     return dataset.map(_set, with_indices=True, num_proc=max(1, int(num_proc)))
 
 
-def _diagnostics(before: Sequence[Sequence[int]], after: Sequence[Sequence[int]]) -> dict[str, float]:
+def rerank_diagnostics(before: Sequence[Sequence[int]], after: Sequence[Sequence[int]]) -> dict[str, float]:
     """Mean per-cell displacement / overlap / self-correlation of a rerank."""
     rho: list[float] = []
     mean_disp: list[float] = []
@@ -101,7 +101,7 @@ def rerank_oracle(
             )
             for ids in before
         ]
-    return after, _diagnostics(before, after)
+    return after, rerank_diagnostics(before, after)
 
 
 def rerank_norm(
@@ -137,7 +137,7 @@ def rerank_norm(
             )
             before.append(list(ids))
             after.append(apply_priority_order(ids, priority, hysteresis=hysteresis))
-    return after, _diagnostics(before, after)
+    return after, rerank_diagnostics(before, after)
 
 
 def rerank_delta_mlm(
@@ -177,7 +177,7 @@ def rerank_delta_mlm(
             priority = delta_mlm_priority(deltas, alpha=alpha, max_shift=max_shift)
             before.append(list(ids))
             after.append(apply_priority_order(ids, priority, hysteresis=hysteresis))
-    return after, _diagnostics(before, after)
+    return after, rerank_diagnostics(before, after)
 
 
 def rerank_linear_deltarank(
@@ -212,7 +212,7 @@ def rerank_linear_deltarank(
                 priority = decoder(delta_h.to(dev), base).detach().cpu().tolist()
             before.append(list(ids))
             after.append(apply_priority_order(ids, priority, hysteresis=hysteresis))
-    return after, _diagnostics(before, after)
+    return after, rerank_diagnostics(before, after)
 
 
 def collect_training_samples(

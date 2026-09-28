@@ -175,11 +175,19 @@ Oracle: 観測された摂動後ランクリストを next-step input_ids とし
 | 2 | **Bounded displacement** | tanh / clamp; max_shift を grid search | 済 — `decoder.delta_rank` の `max_shift·tanh`、baseline は `rerank.bounded_priority` |
 | 3 | **Null-drift check** | null perturbation → Δr ≈ 0 を検証、drift 量を報告 | 済 — 解析値 `decoder.null_drift` + 実走条件 `null_feedback`。実測は**変位 0.0 / Spearman 1.0 / shift 0.0000**（解析 drift 0.004 は `base_rank_norm` の単調関数なので順序不変） |
 | 4 | **Swap hysteresis** | \|ŝ_i − ŝ_j\| < ε の隣接ランクは元の順序を保持 | 済 — priority を ε グリッドに量子化してから**安定ソート**（近接差を厳密な同値に変える）。既定 `hysteresis: 0.0`（無効） |
-| 5 | **Cycle detection** | X_t ↔ X_{t+1} の 2-cycle を検出、halt | 判定関数のみ (`metrics.is_two_cycle`)。**halt 未接続**（現行は feedback 1 回なので不要。多段化時に配線） |
-| 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | 計測のみ (`rerank_spearman_before_after`, `rerank_top100_jaccard`)。**停止条件 未実装**（多段化＝Phase 3 と同時） |
+| 5 | **Cycle detection** | X_t ↔ X_{t+1} の 2-cycle を検出、halt | 済 — `multistep.FeedbackGuard`。細胞ごとに、提案された post_t が post_{t−2} と一致し post_{t−1} と異なれば（`metrics.is_two_cycle`）提案を棄却して pre_t を保持し、その細胞を halt |
+| 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | 済 — `multistep.FeedbackGuard`。feedback 1 回の変化 Spearman(pre_t, post_t) > 0.995、または top-K Jaccard > 0.99 が `converge_patience`（既定 2）回連続した細胞を停止。hard cap は chain あたり `max_feedback_events`（既定 5） |
 | 7 | **Cell-wise normalization** | ランクは cell-specific 相対量; 異なる sequence length の細胞間でスコアを直接比較しない | 済 — `base_rank_norm = i/(n−1)` で細胞内正規化、z-score も細胞内。教師 Δrank も各 state の平均 encoding 長で正規化 |
 
-5 と 6 が未完なのは、現行が feedback 1 回（`feedback_after_step: 1`, `feedback_every_step: false`）で多段ループを回していないため。`feedback_every_step: true` を使う前に配線が必要。
+5 と 6 は `feedback_every_step: true`（`feedback_after_step` 以降、最終 step を除く各 step の後に feedback）のときだけ働く。既定の feedback 1 回では発火しない。設定は `state_feedback.multi_step` に置く。
+
+- **比較するのは同じ feedback の前後**。連続する post encoding どうしは、間に摂動 step が入って動くので直接比べない。
+- **Jaccard 基準は細胞の遺伝子数が K を超えるときだけ使う**。gene set が固定なので、遺伝子数が K 以下の細胞では top-K Jaccard が常に 1 になり、偽の収束になる。
+- **停止は細胞単位**。停止した細胞にも残りの摂動 step はかかるが、rerank はされない。全細胞が停止するか cap に達したら、それ以降の rerank 呼び出しを省く。cap 到達時にまだ動いていた細胞は `cap` として記録する。
+- 細胞ごとの停止理由・停止 step・適用回数は条件ディレクトリの `feedback_guard.csv` に書く。条件ごとの集計は `run_manifest.json` の `multi_step.guard` に入る。feedback 行には `guard_active_before/after`, `guard_new_cycle_halts`, `guard_new_converged` も付く。
+- 配線したのは**安全装置だけ**。multi-step が単発 feedback より有益か、安定かは評価していない（Phase 3）。
+
+BBRC OSKM の 4-step（KLF4→MYC→SOX2→POU5F1）を 30 細胞で回した smoke では、`oracle` は step 2・3 の更新が小さく（ρ ≈ 0.998）、全細胞が step 3 で converged として停止した。`norm` と `linear_deltarank` は更新が大きいまま（ρ 0.95–0.99）3 回とも適用され、cycle は 0 だった。
 
 
 ## 実装戦略（gated）
@@ -418,7 +426,7 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - donor / batch をまたいで一般化するか
 - 変位の **大きさ** が信用できるか（単調だが圧縮されている）
 - down 方向（発現順位低下）を特異的に捉えられているか
-- multi-step state-feedback が単発 feedback を越えて有益かつ安定か（cycle detection / convergence stopping の配線が前提）
+- multi-step state-feedback が単発 feedback を越えて有益かつ安定か（cycle detection / convergence stopping は配線済み、評価は未実施）
 
 #### 次にやること（優先順）
 
@@ -428,7 +436,7 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 4. down 方向の弱さの原因究明（compositional な押し出しか、教師の非対称性か）
 5. Oracle-B 用の reprogramming time-course dataset を用意
 6. Asano: batch holdout（replicate をまたぐ FT）と、in-cell rank も揃えたランダム delete
-7. multi-step へ進む場合は先に cycle detection と convergence stopping を runner に配線
+7. multi-step の有益性・安定性の評価（cycle detection / convergence stopping / hard cap は runner に配線済み。下記 stability metrics を multi-seed で報告）
 8. **Phase 3 (MLP) は上記が済み、かつ linear が Oracle-B gap を残した場合のみ**
 
 
@@ -456,9 +464,9 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - Top-K overlap (Jaccard) at K = 100, 500, 1000
 - Rank displacement distribution per step
 - Null-perturbation cumulative drift
-- 2-cycle / oscillation frequency
+- 2-cycle / oscillation frequency（`feedback_guard.csv` の `halt_reason = cycle`）
 - Multi-seed reproducibility
-- Convergence step count distribution
+- Convergence step count distribution（`feedback_guard.csv` の `halt_step`）
 
 
 ## Claims boundary for Methods

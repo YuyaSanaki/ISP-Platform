@@ -1138,8 +1138,16 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
                 1,
                 min(n_steps - 1, int(st.session_state.get("sf_isp_feedback_after_step") or 1)),
             ),
+            "feedback_every_step": bool(st.session_state.get("sf_isp_feedback_every_step")),
         }
     )
+    if sf["feedback_every_step"]:
+        sf["multi_step"] = {
+            **(sf.get("multi_step") or {}),
+            "max_feedback_events": max(
+                1, int(st.session_state.get("sf_isp_max_feedback_events") or 5)
+            ),
+        }
     if st.session_state.get("sf_isp_spec_enabled"):
         sets, sets_err = _parse_sf_specificity_sets(
             st.session_state.get("sf_isp_spec_sets"),
@@ -1212,6 +1220,7 @@ def _load_state_feedback_summary(run: Path) -> dict:
     if manifest:
         out["gate"] = manifest.get("gate") or []
         out["decoder"] = manifest.get("decoder") or {}
+        out["multi_step_guard"] = (manifest.get("multi_step") or {}).get("guard") or {}
     return out
 
 
@@ -1416,6 +1425,8 @@ def _render_state_feedback_isp_controls() -> None:
     st.session_state.setdefault("sf_isp_conditions", list(_SF_ISP_CONDITIONS))
     st.session_state.setdefault("sf_isp_observed_state", "")
     st.session_state.setdefault("sf_isp_feedback_after_step", 1)
+    st.session_state.setdefault("sf_isp_feedback_every_step", False)
+    st.session_state.setdefault("sf_isp_max_feedback_events", 5)
     st.session_state.setdefault("sf_isp_eval_only", False)
     st.session_state.setdefault("sf_isp_decoder_choice", _SF_ISP_DECODER_TRAIN)
     st.session_state.setdefault("sf_isp_spec_enabled", False)
@@ -1484,6 +1495,24 @@ def _render_state_feedback_isp_controls() -> None:
                 "encoding feeds the next step, so the last step cannot be chosen."
             ),
         )
+        st.checkbox(
+            "Feedback after every step (multi-step)",
+            key="sf_isp_feedback_every_step",
+            help=(
+                "Reorders after this step and every later step except the last. Each cell "
+                "stops early on a 2-cycle or once its reorders stay small; per-cell halt "
+                "reasons go to feedback_guard.csv. Multi-step benefit and stability are "
+                "not evaluated."
+            ),
+        )
+        if st.session_state.get("sf_isp_feedback_every_step"):
+            st.number_input(
+                "Max feedback events per chain",
+                min_value=1,
+                max_value=5,
+                step=1,
+                key="sf_isp_max_feedback_events",
+            )
         st.text_input(
             "Observed state for the teacher (blank = pipeline end state)",
             key="sf_isp_observed_state",
@@ -1617,6 +1646,15 @@ def _render_state_feedback_results(source_run: str | None) -> None:
     if summary.get("gate"):
         st.markdown("**Endpoint goal-state shift** (cell-mean cosine; oracle is a ceiling)")
         st.dataframe(pd.DataFrame(summary["gate"]), use_container_width=True, hide_index=True)
+    if summary.get("multi_step_guard"):
+        st.markdown("**Multi-step guard** (cells halted per condition; details in `feedback_guard.csv`)")
+        st.dataframe(
+            pd.DataFrame(
+                [{"condition": c, **s} for c, s in summary["multi_step_guard"].items()]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def _read_pipeline_yaml() -> dict:
