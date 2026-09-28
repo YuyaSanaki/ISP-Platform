@@ -1,10 +1,37 @@
-# Sequential ISP — chained OE / KD
+# Sequential ISP — ordered rank-edit OE / KD
 
 Apply an **ordered list of group perturbations** (overexpression and/or knockdown) on start-state cells. Each step edits the previous step’s rank-value encoding (`input_ids`), then scores `goal_state_shift` toward the goal state.
 
 Entrypoint: [`core/run_sequential_isp.py`](../core/run_sequential_isp.py). Template: [`core/config/sequential_isp.yaml`](../core/config/sequential_isp.yaml). Compose: `docker compose run --rm sequential_isp`. Web UI: Run type **Sequential ISP**.
 
 This is **not** the same as simultaneous group ISP (all genes in one cocktail). Sequential OE of A then B puts **B leftmost** (highest rank); simultaneous OE of `[A, B]` puts **A leftmost**.
+
+---
+
+## How it works
+
+```text
+ids_0 = start-state input_ids
+for step t = 1..T:
+    ids_t   = edit(ids_{t-1}, step t)        # OE: move/insert genes at the front, drop tail to keep length
+                                             # KD: delete genes (length shrinks)
+    shift_t = goal_state_shift(model(ids_t), model(ids_0))
+```
+
+- **What carries over:** only the edited gene ranks (`ids_t`). Embeddings and shift predictions are never written back into the next step.
+- **What is scored:** after every step, the current encoding against the **original** start-state encoding. `shift_T` is the final prediction; `shift_1 … shift_T` form the per-step trajectory.
+- **What the order changes:** each OE step inserts at position 0, so the most recent OE genes sit leftmost. The step order therefore sets the final relative ranks of the perturbed genes. It is not a simulation of time-dependent cell-state changes.
+- **Same final ranks ⇒ same prediction.** Two schedules that produce the same final `input_ids` give identical `shift_T`.
+- **Relation to simultaneous OE:** simultaneous OE of list `L` places `L[0]` leftmost, so single-gene sequential OE in order `reverse(L)` produces the same final encoding. For OSKM:
+
+| Schedule | Final front (left = highest rank) |
+|----------|-----------------------------------|
+| Simultaneous `[O, S, K, M]` | O, S, K, M |
+| Sequential O→S→K→M | M, K, S, O |
+| Sequential K→M→S→O | O, S, M, K |
+| Sequential M→K→S→O | O, S, K, M (= simultaneous `[O, S, K, M]`) |
+
+  Intermediate steps still differ (the simultaneous run has one step; the sequential run has four), so only the per-step trajectory is specific to sequential ISP.
 
 ---
 

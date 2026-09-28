@@ -79,7 +79,7 @@ docker compose run --rm isp accelerate launch --num_processes 1 /app/core/run_is
 
 ### Per-cell shift (ISP UMAP)
 
-Population ISP ranks **genes**. For per-cell trajectories and **`per_cell_isp_shift.csv`**, see [**isp_umap.md**](isp_umap.md). For an **ordered chain of OE and/or KD** (token-space sequential ISP), see [**sequential_isp.md**](sequential_isp.md).
+Population ISP ranks **genes**. For per-cell trajectories and **`per_cell_isp_shift.csv`**, see [**isp_umap.md**](isp_umap.md). For an **ordered list of OE and/or KD steps** (token-space sequential ISP, ordered rank-edit), see [**sequential_isp.md**](sequential_isp.md).
 
 ```bash
 docker compose run --rm isp_umap

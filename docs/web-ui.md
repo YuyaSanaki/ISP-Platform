@@ -225,7 +225,7 @@ Under **Advanced options** (collapsed by default):
 
 **Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. Optional expander **Cluster / cell-type analysis** enables `cluster_coexpr_analysis/` after the UMAP (`n_clusters` can be a fixed K or `auto`). The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
 
-**Sequential ISP** (OE then KD, or any ordered chain): use Run type **Sequential ISP**. Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Writes under `{pipeline_run}/sequential_isp/`. See [sequential_isp.md](sequential_isp.md).
+**Sequential ISP** (OE then KD, or any ordered list of OE/KD steps): use Run type **Sequential ISP**. Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Each step edits the previous step’s gene ranks and is scored against the original start state; predictions are not fed back into the next step. Writes under `{pipeline_run}/sequential_isp/`. See [sequential_isp.md](sequential_isp.md).
 
 Pipeline (E2E) additionally runs **TOP1 significant ISP UMAP** automatically once (same output directory; gene = top FDR-significant by shift toward goal). Full trajectory UMAP remains available via Run type **ISP UMAP**.
 

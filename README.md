@@ -10,7 +10,7 @@ Unified platform for **mouse** and **human** Geneformer workflows with bi-direct
 **Release:** v1.3.1 · Docker image `isp-platform:v1.3.1`
 
 
-Run tokenize, fine-tune, ISP, UMAP, and sequential multi-gene ISP (ordered perturbations, e.g. to mimic iPSC reprogramming steps) from the **CLI** or **Web UI**, both on Docker Compose and Streamlit.
+Run tokenize, fine-tune, ISP, UMAP, and sequential multi-gene ISP (ordered rank-edit: OE/KD steps applied one after another to the gene-rank encoding, scored after each step) from the **CLI** or **Web UI**, both on Docker Compose and Streamlit.
 
 AI tools (Cursor and Antigravity) assisted with code and documentation. The authors reviewed, tested, and modified the generated code and manually verified results.
 
@@ -77,19 +77,21 @@ flowchart LR
     C1 --> C2 --> C3 --> C4
   end
 
-  subgraph SEQ["New: Sequential & Multi-Gene ISP<br/>Token Length-Preserving, Flexible Combination of Overexpression/Knockdown"]
+  subgraph SEQ["New: Sequential Multi-Gene ISP (ordered rank-edit)<br/>Token Length-Preserving, Flexible Combination of Overexpression/Knockdown"]
     direction LR
     S1["scRNAseq<br/>Original gene rank"]
-    S2["1st ISP OE or KD<br/>Gene Rank promotion or demotion"]
-    S3["Geneformer<br/>Pass 1"]
-    S4["Intermediate state shift prediction"]
-    S5["2nd ISP OE or KD<br/>Gene Rank promotion or demotion"]
-    S6["Geneformer<br/>Pass 2"]
-    S7["ISP chaining"]
+    S2["Step 1 OE or KD<br/>edit original ranks"]
+    S5["Step 2 OE or KD<br/>edit step-1 ranks"]
+    S7["Final gene rank<br/>(set by step order)"]
+    S3["Geneformer<br/>Pass 1 (scoring)"]
+    S4["Step 1 shift<br/>vs original start"]
+    S6["Geneformer<br/>Pass 2 (scoring)"]
     S8["Final state shift prediction"]
-    TRAJ["Stepwise Trajectory<br/>Order-Aware Dynamics"]
-    S1 --> S2 --> S3 --> S4
-    S4 --> S5 --> S6 --> S7 --> S8
+    TRAJ["Per-step shift trajectory<br/>no feedback of predictions"]
+    S1 --> S2 --> S5 --> S7
+    S2 -.-> S3 --> S4
+    S7 -.-> S6 --> S8
+    S4 -.-> TRAJ
     S8 -.-> TRAJ
   end
 
@@ -106,11 +108,13 @@ flowchart LR
   class C2,S2 blueLite
   class C3,S3,S4 blueBox
   class C4 blueSolid
-  class S5 redLite
-  class S6,S7 redBox
+  class S5,S7 redLite
+  class S6 redBox
   class S8 redSolid
   class TRAJ green
 ```
+
+Only the edited gene ranks carry over from one step to the next; each Geneformer pass scores the shift against the original start state and its prediction is not fed back. Each OE step moves its genes to the front, so later OE genes end up with higher ranks and the step order sets the final rank layout. Two schedules with the same final layout give identical predictions; for example, sequential M→K→S→O gives the same encoding as simultaneous `[O, S, K, M]`. Details: [docs/sequential_isp.md](docs/sequential_isp.md).
 
 ## Status
 

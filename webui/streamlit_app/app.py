@@ -1275,14 +1275,16 @@ def _render_sequential_isp_source_picker() -> None:
 def _render_sequential_isp_controls() -> None:
     """Run-type column: ordered OE / KD steps + batch size."""
     st.info(
-        "Chains **group OE and/or KD** on start-state cells. Each step is applied "
-        "on the previous step’s rank encoding (token space), then scored as "
-        "`goal_state_shift` toward the pipeline end state. Outputs go under "
+        "Applies **group OE and/or KD** steps in order on start-state cells. Each step "
+        "edits the previous step’s gene ranks (token space), then is scored as "
+        "`goal_state_shift` toward the pipeline end state, always against the original "
+        "start state. Predictions are not fed back into the next step. Outputs go under "
         "`{pipeline_run}/sequential_isp/`."
     )
     st.caption(
-        "OE = length-preserving move-to-front (later OE genes sit leftmost). "
-        "KD = delete those genes from the encoding. Mixed OE+KD is allowed."
+        "OE = length-preserving move-to-front (later OE genes sit leftmost), so step "
+        "order sets the final gene ranks; schedules with the same final ranks give the "
+        "same prediction. KD = delete those genes from the encoding. Mixed OE+KD is allowed."
     )
     st.session_state.setdefault("seq_isp_n_steps", _DEFAULT_SEQ_ISP_STEPS)
     st.session_state.setdefault("seq_isp_save_datasets", False)
