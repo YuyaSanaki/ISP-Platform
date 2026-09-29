@@ -1475,7 +1475,11 @@ def _render_state_feedback_isp_controls() -> None:
         help=(
             "Reuse a decoder trained in an earlier State-feedback run on this pipeline run "
             "(same fine-tuned model). Its training steps are shown in brackets; applying it "
-            "to different steps is a transfer test."
+            "to different steps is a transfer test. Even a reordering of the same genes "
+            "counts: on BBRC OSKM (n=3000), a decoder trained on simultaneous OSKM and "
+            "reused for the other orders lowered direction fidelity from 0.46 to 0.38 "
+            "(pooled Spearman) and changed the order ranking. Train a new decoder for "
+            "results you report."
         ),
     )
     st.session_state["sf_isp_decoder_checkpoint"] = labels[st.session_state["sf_isp_decoder_choice"]]

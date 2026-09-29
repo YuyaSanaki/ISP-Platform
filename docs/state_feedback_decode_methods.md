@@ -261,6 +261,8 @@ DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
     --decoder-checkpoint <run>/decoder/delta_rank_decoder.pt
 ```
 
+`--decoder-checkpoint` は同じ step リストで学習した decoder の再利用（条件や specificity の追加）向け。別の step リストに使うのは転移テストで、同じ遺伝子の順番違いも含む（最後に OE した遺伝子が encoding の先頭に来るので Δh が変わる）。BBRC OSKM（n=3000、24 order、毎 step feedback）で、同時 OSKM で学習した decoder を全 order に使い回すと、order ごとに学習した decoder と一致したのは POU5F1 が最後の 6 order（先頭の並びが同時 OE と同じ）だけだった。残り 18 order では direction fidelity（pooled Spearman）が 0.32〜0.36 に落ち、order ごとの decoder は 0.42〜0.47（24 order 平均 0.38 vs 0.46、base rank を除いた partial ρ 0.29 vs 0.35）。終点の order 順位は両者でほぼ無相関（Spearman −0.02）。報告する結果には run ごとに学習した decoder を使う（Web UI の既定）。
+
 The specificity stage (`state_feedback.specificity`, off by default) writes
 `<run>/perturbation_specificity/` (`perturbation_specificity.csv`, `vs_random.csv`,
 `specificity_contrasts.csv`, `.json`). `direction_fidelity/` also gets

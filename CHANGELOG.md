@@ -17,6 +17,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - State-feedback ISP `pin_overexpressed` (default `true`): after each reorder, the genes overexpressed so far stay at the front in their pre-reorder order, and only the other genes are reordered. This applies to every rerank condition, including `oracle`. Rerank diagnostics are computed on the pinned order.
 - A caution on multi-step State-feedback ISP in the guide, the design doc, the config and the Web UI help. The decoder predicts the whole start→end rank change, so each extra feedback event adds another change of that size on top of an order that has already moved. Error grows at least linearly with the number of events and can mask the biology the model has learned. For biological claims, check against one feedback event (`feedback_every_step: false`).
 
+- State-feedback ISP guide, design doc and Web UI help: numbers on reusing a Δrank decoder for other steps. On BBRC OSKM (n=3000, 24 orders), a decoder trained on simultaneous OSKM and reused for every order scored lower direction fidelity than one trained per order (pooled Spearman 0.38 vs 0.46), except for the 6 orders ending in POU5F1, and gave an uncorrelated order ranking. Train a new decoder (the default) for reported results.
+
 ### Fixed
 
 - State-feedback ISP endpoint gate now reads the feedback row at the last step when there is one, instead of relying on how step names sort against `feedback`.

@@ -270,7 +270,7 @@ Choose the Run type **State-feedback ISP**. ISP source run, steps and GPU batch 
 | Setting | Default | Meaning |
 |---|---|---|
 | max_ncells | 300 | Number of start-state cells. Every condition runs GPU forward passes over these cells, so run time is roughly proportional (observed: about 26 min in total and about 4 min per condition at n=50) |
-| Δrank decoder | Train a new decoder in this run | Train a new decoder, or reuse one trained earlier on the same Pipeline run (same fine-tuned model). The steps it was trained on are shown in brackets. **Reusing it for a different step list is a transfer test; performance is not guaranteed** |
+| Δrank decoder | Train a new decoder in this run | Train a new decoder, or reuse one trained earlier on the same Pipeline run (same fine-tuned model). The steps it was trained on are shown in brackets. **Reusing it for a different step list is a transfer test; performance is not guaranteed.** This includes the same genes in a different order: the gene added last ends up at the front of the encoding, so the Δh the decoder sees changes. On BBRC OSKM (n=3000, all 24 orders, feedback after every step), a decoder trained on simultaneous OSKM matched a decoder trained on each order only for the 6 orders ending in POU5F1, whose encodings match the simultaneous one at the front. On the other 18 its direction fidelity (pooled Spearman) fell to 0.32–0.36, against 0.42–0.47 for per-order decoders (mean over 24 orders: 0.38 vs 0.46; partial ρ given base rank 0.29 vs 0.35). The endpoint order ranking from the two decoders was uncorrelated (Spearman −0.02) |
 | Direction fidelity only | Off | When on, the endpoint conditions are skipped and only decoder training (or loading) and direction fidelity (and specificity) run. Works with a single step |
 
 **Conditions and feedback**
@@ -349,7 +349,7 @@ The defaults (all six conditions, `Feedback after step` = 1, multi-step on inclu
 1. Look at the **direction-fidelity verdict** first. If it does not pass, the decoder cannot be said to read the direction of rank change, however large the endpoint shift is.
 2. If it passes, use the endpoint gate as secondary information. The `oracle` value is a rough ceiling, not a target.
 3. Check that `null_feedback` has a shift of 0 and an unchanged order.
-4. To save time, reuse a decoder trained on the same Pipeline run. Using it on a different step list than it was trained on is a transfer test.
+4. To save time, reuse a decoder trained on the same Pipeline run with the same step list (for example to add conditions or specificity). Using it on a different step list than it was trained on is a transfer test; train a new decoder for results you report (see the Δrank decoder row in 3.7).
 
 ---
 
