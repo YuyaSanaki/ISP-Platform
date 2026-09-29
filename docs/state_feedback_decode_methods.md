@@ -470,6 +470,40 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - Null-perturbation cumulative drift
 - Multi-seed reproducibility
 
+### Multi-step stability evaluation（事前登録 2026-09-29、実行前に固定）
+
+Runner: `core/run_state_feedback_stability.py`（設定は `state_feedback.stability`）。
+各 decoder seed（既定 0, 1, 2）で decoder を学習し直す。train/val の遺伝子 split は
+`decoder.seed` で固定する。すべて cell-mean cosine の goal-state shift と、
+両 encoding に共通する token 上の順位比較で測る（OE で末尾 token が落ちても定義できる）。
+
+| 系列 | 内容 |
+|---|---|
+| Ordered rank-edit | decoder なし。各 chain の参照経路（seed に依存しないので 1 回） |
+| configured, multi-step | `feedback_every_step: true`, 最終 step 後も feedback, OE pin, `ctrl_reference: start` |
+| idle events | configured chain の終点から、新しい摂動なしで `idle_events` 回（既定 5）rerank を繰り返す。cap を超えるのは診断のため |
+| configured, single event | `feedback_every_step: false`（step 1 後の 1 回のみ）。比較用 |
+| random chains | configured と同じ step 数・同じ型で、teacher 遺伝子から 1 step 1 遺伝子（既定 5 本、`random_seed` で固定し全 seed で同一） |
+
+判定（configured chain について。S1–S3 は全 seed で成立すること）:
+
+| ID | 問い | 基準 |
+|---|---|---|
+| S1 | 1 回の feedback の変化は有界で、回を追って膨らまないか | feedback 各回の per-event Spearman（細胞中央値）が 1 回目から 0.02 超下がらない。かつ per-event 変位（細胞中央値の中央値, 位置単位）の最大が 1 回目の 1.5 倍以下（1 回目の下限は 1 位置） |
+| S2 | 摂動が止まれば encoding は収束するか（drift しないか） | 最後の idle event の per-event Spearman ≥ 0.99、かつ最後の idle 変位 ≤ 最初の idle 変位 |
+| S3 | 終点の上乗せは摂動特異的か（endpoint 教師への一律の引き寄せでないか） | configured の endpoint gain（multi-step − Ordered rank-edit）がどの random chain の gain よりも大きい |
+| S4 | decoder seed で結果が変わらないか | seed 間の最終 encoding の per-cell Spearman（細胞中央値）の最小 ≥ 0.95、かつ endpoint shift の seed 間 CV ≤ 10% |
+| S5 | single と multi の差 | 報告のみ（基準なし）。endpoint、Ordered rank-edit からの距離 |
+
+**決定規則:** S1–S4 がすべて成立したときに限り、multi-step を論文で結果として報告する。
+一つでも不成立なら論文の State-feedback は single event（`feedback_every_step: false`）で
+報告し、multi-step は不安定だった旨と数値を補遺に置く。基準は結果を見て変えない。
+
+懸念とそれを測る系列: `ctrl_reference: start` では rerank 済みの変位も Δh に含まれるので、
+feedback を重ねると同じ変位を二重に数えうる（idle events が測る）。decoder は endpoint
+（観測 goal state）の教師で学習しているので、どの摂動でも goal へ引き寄せうる（random
+chains が測る）。null（摂動なし）の multi-step は Δh = 0 で構造的に恒等なので測らない。
+
 
 ## Claims boundary for Methods
 

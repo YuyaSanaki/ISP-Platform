@@ -176,6 +176,7 @@ def run_condition(
     ctrl_reference: str = "start",
     multi_step: MultiStepConfig | None = None,
     guard_summaries: dict[str, Any] | None = None,
+    on_encoding: Callable[[str, int, Any], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Run one condition's perturbation chain, optionally with state feedback.
 
@@ -183,7 +184,9 @@ def run_condition(
     ``FeedbackGuard``. ``feedback_after_last_step`` also reranks after the final
     step, so the endpoint is the post-feedback encoding. ``pin_overexpressed`` keeps
     the genes overexpressed so far at the front (in their pre-rerank order) and lets
-    the rerank move only the other genes.
+    the rerank move only the other genes. ``on_encoding(kind, step, dataset)`` is
+    called with ``kind`` ``"step"`` after each perturbation and ``"feedback"`` after
+    each rerank.
     """
     workers = ore._gpu_resident_map_workers(nproc)
     guard = (
@@ -215,6 +218,8 @@ def run_condition(
             fn_kwargs={"tokens": list(tokens), "perturb_type": ptype},
             num_proc=workers,
         )
+        if on_encoding is not None:
+            on_encoding("step", step_idx, working)
         df = _score_cell_mean(
             model,
             start_ds,
@@ -273,6 +278,8 @@ def run_condition(
             new_ids, diag = fb.pin_tokens_front(before_ids, new_ids, frozenset(overexpressed))
         guard_stats = guard.record_event() if guard is not None else {}
         working = fb.replace_input_ids(working, new_ids, num_proc=workers)
+        if on_encoding is not None:
+            on_encoding("feedback", step_idx, working)
         df_fb = _score_cell_mean(
             model,
             start_ds,

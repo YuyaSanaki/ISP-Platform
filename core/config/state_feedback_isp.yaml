@@ -130,6 +130,19 @@ state_feedback:
     random_match_detection: null
     n_boot: 1000
 
+  # Multi-step stability evaluation (core/run_state_feedback_stability.py).
+  # Criteria S1-S4 are pre-registered in docs/state_feedback_decode_methods.md.
+  # Each seed retrains the decoder; the train/val gene split keeps decoder.seed.
+  # `idle_events` reranks the final encoding again with no new perturbation.
+  # Random chains draw one teacher gene per configured step (same step types).
+  stability:
+    seeds: [0, 1, 2]
+    idle_events: 5
+    n_random_chains: 5
+    random_seed: 0
+    topk: [100, 500, 1000]
+    single_event: true
+
   decoder:
     train_max_ncells: 200
     max_genes_per_cell: 256
