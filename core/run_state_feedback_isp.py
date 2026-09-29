@@ -170,7 +170,9 @@ def run_condition(
     nproc: int,
     rerank_fn: Callable[[Any, Any], fb.RerankResult] | None = None,
     feedback_after_step: int = 1,
-    feedback_every_step: bool = False,
+    feedback_every_step: bool = True,
+    feedback_after_last_step: bool = True,
+    pin_overexpressed: bool = True,
     ctrl_reference: str = "start",
     multi_step: MultiStepConfig | None = None,
     guard_summaries: dict[str, Any] | None = None,
@@ -178,7 +180,10 @@ def run_condition(
     """Run one condition's perturbation chain, optionally with state feedback.
 
     With ``feedback_every_step`` the number of feedback events is capped by a
-    ``FeedbackGuard``.
+    ``FeedbackGuard``. ``feedback_after_last_step`` also reranks after the final
+    step, so the endpoint is the post-feedback encoding. ``pin_overexpressed`` keeps
+    the genes overexpressed so far at the front (in their pre-rerank order) and lets
+    the rerank move only the other genes.
     """
     workers = ore._gpu_resident_map_workers(nproc)
     guard = (
@@ -194,10 +199,16 @@ def run_condition(
         pass
     rows: list[dict[str, Any]] = []
     n_steps = len(steps)
+    last_feedback_step = n_steps if feedback_after_last_step else n_steps - 1
+    overexpressed: set[int] = set()
 
     for step_idx, (step, tokens) in enumerate(zip(steps, token_by_step), start=1):
         name = str(step["name"])
         ptype = str(step["type"])
+        if ore.normalize_step_type(ptype) == ore.PERTURB_OVEREXPRESS:
+            overexpressed.update(int(t) for t in tokens)
+        else:
+            overexpressed.difference_update(int(t) for t in tokens)
         pre_step = working
         working = working.map(
             ore._apply_typed_step,
@@ -241,7 +252,7 @@ def run_condition(
         do_feedback = (
             rerank_fn is not None
             and step_idx >= int(feedback_after_step)
-            and step_idx < n_steps
+            and step_idx <= last_feedback_step
             and (feedback_every_step or step_idx == int(feedback_after_step))
         )
         if not do_feedback:
@@ -257,6 +268,9 @@ def run_condition(
 
         ctrl_ds = start_ds if ctrl_reference == "start" else pre_step
         new_ids, diag = rerank_fn(ctrl_ds, working)
+        if pin_overexpressed and overexpressed:
+            before_ids = gs.raw_input_ids(working, 0, len(working), model_input_size)
+            new_ids, diag = fb.pin_tokens_front(before_ids, new_ids, frozenset(overexpressed))
         guard_stats = guard.record_event() if guard is not None else {}
         working = fb.replace_input_ids(working, new_ids, num_proc=workers)
         df_fb = _score_cell_mean(
@@ -878,7 +892,9 @@ def main() -> int:
     alpha = float(sf_cfg.get("alpha", 1.0))
     baseline_max_shift = float(sf_cfg.get("baseline_max_shift", 0.1))
     feedback_after_step = int(sf_cfg.get("feedback_after_step", 1))
-    feedback_every_step = bool(sf_cfg.get("feedback_every_step", False))
+    feedback_every_step = bool(sf_cfg.get("feedback_every_step", True))
+    feedback_after_last_step = bool(sf_cfg.get("feedback_after_last_step", True))
+    pin_overexpressed = bool(sf_cfg.get("pin_overexpressed", True))
     ctrl_reference = str(sf_cfg.get("ctrl_reference", "start"))
     if ctrl_reference not in {"start", "previous"}:
         raise ValueError("state_feedback.ctrl_reference must be 'start' or 'previous'")
@@ -1163,6 +1179,8 @@ def main() -> int:
                 rerank_fn=rerank_fn,
                 feedback_after_step=feedback_after_step,
                 feedback_every_step=feedback_every_step,
+                feedback_after_last_step=feedback_after_last_step,
+                pin_overexpressed=pin_overexpressed,
                 ctrl_reference=ctrl_reference,
                 multi_step=multi_step,
                 guard_summaries=guard_summaries,
@@ -1180,7 +1198,9 @@ def main() -> int:
         sub = summary[(summary["condition"] == condition) & (summary["step"] > 0)]
         if sub.empty:
             return float("nan")
-        return float(sub.sort_values(["step", "step_name"]).iloc[-1]["median"])
+        last = sub[sub["step"] == sub["step"].max()]
+        fed = last[last["step_name"] == "feedback"]
+        return float((fed if not fed.empty else last).iloc[-1]["median"])
 
     baseline = _final_median("ordered_rank_edit")
     ceiling = _final_median("oracle")
@@ -1225,6 +1245,8 @@ def main() -> int:
         "conditions": conditions,
         "feedback_after_step": feedback_after_step,
         "feedback_every_step": feedback_every_step,
+        "feedback_after_last_step": feedback_after_last_step,
+        "pin_overexpressed": pin_overexpressed,
         "multi_step": (
             {"config": multi_step.to_dict(), "guard": guard_summaries}
             if feedback_every_step

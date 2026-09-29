@@ -180,14 +180,14 @@ Oracle: 観測された摂動後ランクリストを next-step input_ids とし
 | 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | hard cap のみ — chain あたり `max_feedback_events`（既定 5）。収束停止は削除（下記） |
 | 7 | **Cell-wise normalization** | ランクは cell-specific 相対量; 異なる sequence length の細胞間でスコアを直接比較しない | 済 — `base_rank_norm = i/(n−1)` で細胞内正規化、z-score も細胞内。教師 Δrank も各 state の平均 encoding 長で正規化 |
 
-6 の hard cap は `feedback_every_step: true`（`feedback_after_step` 以降、最終 step を除く各 step の後に feedback）のときだけ働く。既定の feedback 1 回では関係しない。設定は `state_feedback.multi_step.max_feedback_events`。cap に達した後の step は feedback なしで進む。feedback 回数と cap で飛ばした最初の step は `run_manifest.json` の `multi_step.guard` に、各 feedback 行には `guard_event` が入る。
+6 の hard cap は `feedback_every_step: true`（既定。`feedback_after_step` 以降の各 step の後に feedback。`feedback_after_last_step: true`（既定）なら最終 step の後も feedback し、終点 shift は rerank 後の encoding で読む）のときだけ働く。`feedback_every_step: false`（feedback 1 回）では関係しない。`pin_overexpressed: true`（既定）では、それまでに OE した遺伝子を rerank 前の順序のまま先頭に固定し、残りの遺伝子だけを並べ替える。設定は `state_feedback.multi_step.max_feedback_events`。cap に達した後の step は feedback なしで進む。feedback 回数と cap で飛ばした最初の step は `run_manifest.json` の `multi_step.guard` に、各 feedback 行には `guard_event` が入る。
 
 - **細胞単位の停止は置かない**。
   - 収束停止（削除）: 各 step で新しい摂動が入るので、これまでの feedback の変化が小さくても次の step の feedback が小さいとは限らない。encoding 全体の Spearman / top-K Jaccard の閾値は少数遺伝子の大きな移動も見逃す（2048 遺伝子の細胞で 1 遺伝子が最下位→最上位に動いても Spearman 0.997、4096 遺伝子では 0.9985）。当初は 0.995 × 2 回連続で停止していたが、マスターレギュレーター的な少数遺伝子の変化を「収束」とみなして以降の feedback を止めるため削除した。
   - 2-cycle 停止（削除）: 順位リスト全体が 2 回前と完全一致したときだけ発動するが、feedback の間に新しい摂動が入るので実際にはほぼ発動しない（下記 smoke でも 0 件）。
   - 旧設定の `converge_*` / `halt_on_cycle` キーは警告を出して無視する。`feedback_guard.csv` は書かない。
 
-> **注意：multi-step feedback は回を重ねるごとに計算上の誤差が膨らむ。** decoder は start→全 step の Δh から観測された終点の順位変化全体を予測するよう学習されている。毎 step feedback をかけると（`ctrl_reference: start`）、毎回 start 基準で Δh を取り直し（それまでの step と rerank の効果を含む）、すでに動いた順位にさらに終点規模の変化を足す。変化量と decoder の誤差は少なくとも回数に比例して増え、観測された終点を超えた順位では shift はモデルが持つ本来の生物学的意味ではなく encoding の乱れを反映し、生物学的な信号がマスクされていく。`ctrl_reference: previous` はそれまでの step の二重計上を避けるが、1 回ごとに終点規模の変化を予測する点は変わらない。1 回を超えて信号が誤差に埋もれないと予測できる回数は見つかっていない。cap は誤差の上限を抑えるだけで補正はしない。**生物学的な主張には既定の 1 回の feedback を使うこと。** multi-step が単発 feedback より有益かは評価していない（Phase 3）。
+> **注意：multi-step feedback は回を重ねるごとに計算上の誤差が膨らむ。** decoder は start→全 step の Δh から観測された終点の順位変化全体を予測するよう学習されている。毎 step feedback をかけると（`ctrl_reference: start`）、毎回 start 基準で Δh を取り直し（それまでの step と rerank の効果を含む）、すでに動いた順位にさらに終点規模の変化を足す。変化量と decoder の誤差は少なくとも回数に比例して増え、観測された終点を超えた順位では shift はモデルが持つ本来の生物学的意味ではなく encoding の乱れを反映し、生物学的な信号がマスクされていく。`ctrl_reference: previous` はそれまでの step の二重計上を避けるが、1 回ごとに終点規模の変化を予測する点は変わらない。1 回を超えて信号が誤差に埋もれないと予測できる回数は見つかっていない。cap は誤差の上限を抑えるだけで補正はしない。**生物学的な主張をするときは、feedback 1 回（`feedback_every_step: false`）の結果と照らし合わせること。** multi-step が単発 feedback より有益かは評価していない（Phase 3）。
 
 BBRC OSKM の 4-step（KLF4→MYC→SOX2→POU5F1）を 30 細胞で回した smoke（細胞単位の停止を削除する前、旧 decoder）では、`oracle` は step 2・3 の更新が小さく（ρ ≈ 0.998）、全細胞が step 3 で converged として停止した。`norm` と `linear_deltarank` は更新が大きいまま（ρ 0.95–0.99）3 回とも適用され、cycle は 0 だった。目標そのものである `oracle` が 1 回でほぼ止まる一方、decoder は動き続けており、上の注意と整合する。
 

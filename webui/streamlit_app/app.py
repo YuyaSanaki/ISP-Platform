@@ -1148,7 +1148,9 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
                 1,
                 min(n_steps - 1, int(st.session_state.get("sf_isp_feedback_after_step") or 1)),
             ),
-            "feedback_every_step": bool(st.session_state.get("sf_isp_feedback_every_step")),
+            "feedback_every_step": bool(
+                st.session_state.get("sf_isp_feedback_every_step", True)
+            ),
         }
     )
     if sf["feedback_every_step"]:
@@ -1436,7 +1438,7 @@ def _render_state_feedback_isp_controls() -> None:
     st.session_state.setdefault("sf_isp_conditions", list(_SF_ISP_CONDITIONS))
     st.session_state.setdefault("sf_isp_observed_state", "")
     st.session_state.setdefault("sf_isp_feedback_after_step", 1)
-    st.session_state.setdefault("sf_isp_feedback_every_step", False)
+    st.session_state.setdefault("sf_isp_feedback_every_step", True)
     st.session_state.setdefault("sf_isp_max_feedback_events", 5)
     st.session_state.setdefault("sf_isp_eval_only", False)
     st.session_state.setdefault("sf_isp_decoder_choice", _SF_ISP_DECODER_TRAIN)
@@ -1510,12 +1512,13 @@ def _render_state_feedback_isp_controls() -> None:
             "Feedback after every step (multi-step)",
             key="sf_isp_feedback_every_step",
             help=(
-                "Reorders after this step and every later step except the last, up to the "
-                "cap below. Caution: the decoder predicts the whole start-to-end rank "
-                "change, so each extra event adds another change of that size on top of "
-                "an order that has already moved. Error grows with the number of events "
-                "and can mask the biology the model has learned. Use one feedback event "
-                "(this box off) for biological claims."
+                "On (default): reorders after this step and every later step, including "
+                "the last, up to the cap below; overexpressed genes stay at the front. "
+                "Off: one feedback event after this step. Caution: the decoder predicts "
+                "the whole start-to-end rank change, so each extra event adds another "
+                "change of that size on top of an order that has already moved. Error "
+                "grows with the number of events and can mask the biology the model has "
+                "learned. For biological claims, compare with this box off."
             ),
         )
         if st.session_state.get("sf_isp_feedback_every_step"):

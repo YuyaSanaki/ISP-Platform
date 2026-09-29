@@ -9,10 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **State-feedback ISP Δrank decoder reads Δh only.** The linear layer no longer takes base rank or a bias, so zero perturbation gives exactly zero displacement for any trained weights, and the identity loss term (`decoder.lam_identity`) is gone. On BBRC n=300 the Δh-only prediction of the previous decoder already matched it beyond base rank (partial ρ 0.332 vs 0.329). Decoders saved before this change cannot be loaded; retrain instead of passing them to `--decoder-checkpoint`. The `delta_h_only` control is dropped because it is now the decoder itself; `delta_h_shuffled` stays. Results in `docs/state_feedback_decode_methods.md` were measured with the previous decoder.
+- **State-feedback ISP feeds the model's rank change back after every step by default.** `feedback_every_step` now defaults to `true` (config, runner and Web UI). This matches the intended chain: overexpress a gene, predict the rank change, perturb the reordered encoding with the next gene, and so on. Set `feedback_every_step: false` for the previous single feedback event after `feedback_after_step`.
 
 ### Added
 
-- A caution on multi-step State-feedback ISP in the guide, the design doc, the config and the Web UI help. The decoder predicts the whole start→end rank change, so each extra feedback event adds another change of that size on top of an order that has already moved. Error grows at least linearly with the number of events and can mask the biology the model has learned. Use one feedback event (the default) for biological claims.
+- State-feedback ISP `feedback_after_last_step` (default `true`): with multi-step feedback, the encoding is also reordered after the last step, so the endpoint shift is read on the reordered encoding. Previously the chain stopped feeding back before the last step.
+- State-feedback ISP `pin_overexpressed` (default `true`): after each reorder, the genes overexpressed so far stay at the front in their pre-reorder order, and only the other genes are reordered. This applies to every rerank condition, including `oracle`. Rerank diagnostics are computed on the pinned order.
+- A caution on multi-step State-feedback ISP in the guide, the design doc, the config and the Web UI help. The decoder predicts the whole start→end rank change, so each extra feedback event adds another change of that size on top of an order that has already moved. Error grows at least linearly with the number of events and can mask the biology the model has learned. For biological claims, check against one feedback event (`feedback_every_step: false`).
+
+### Fixed
+
+- State-feedback ISP endpoint gate now reads the feedback row at the last step when there is one, instead of relying on how step names sort against `feedback`.
 
 ### Removed
 

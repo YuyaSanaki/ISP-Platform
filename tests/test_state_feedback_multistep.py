@@ -71,7 +71,16 @@ class TestFeedbackGuard(unittest.TestCase):
 class TestRunConditionGuard(unittest.TestCase):
     """``run_condition`` with forwards mocked: cap wiring and outputs."""
 
-    def _run(self, rerank_fn, *, every_step, n_steps=4, multi_step=None):
+    def _run(
+        self,
+        rerank_fn,
+        *,
+        every_step,
+        n_steps=4,
+        multi_step=None,
+        after_last=True,
+        pin=True,
+    ):
         import pandas as pd
         from datasets import Dataset
 
@@ -107,6 +116,8 @@ class TestRunConditionGuard(unittest.TestCase):
                     rerank_fn=rerank_fn,
                     feedback_after_step=1,
                     feedback_every_step=every_step,
+                    feedback_after_last_step=after_last,
+                    pin_overexpressed=pin,
                     multi_step=multi_step,
                     guard_summaries=summaries,
                 )
@@ -134,9 +145,44 @@ class TestRunConditionGuard(unittest.TestCase):
     def test_identity_rerank_runs_every_event(self):
         rows, summaries = self._run(self._identity_rerank, every_step=True)
         fb_rows = [r for r in rows if r["step_name"] == "feedback"]
+        self.assertEqual([r["step"] for r in fb_rows], [1, 2, 3, 4])
+        self.assertEqual(summaries["test"]["feedback_events"], 4)
+        self.assertIsNone(summaries["test"]["capped_before_step"])
+
+    def test_no_feedback_after_last_step_when_disabled(self):
+        rows, summaries = self._run(
+            self._identity_rerank, every_step=True, after_last=False
+        )
+        fb_rows = [r for r in rows if r["step_name"] == "feedback"]
         self.assertEqual([r["step"] for r in fb_rows], [1, 2, 3])
         self.assertEqual(summaries["test"]["feedback_events"], 3)
-        self.assertIsNone(summaries["test"]["capped_before_step"])
+
+    def _capture_reverse(self, *, pin):
+        seen: list[list[list[int]]] = []
+
+        def rerank(ctrl_ds, pert_ds):
+            before = [list(map(int, r)) for r in pert_ds["input_ids"]]
+            seen.append(before)
+            return [list(reversed(r)) for r in before], {}
+
+        self._run(rerank, every_step=True, n_steps=2, pin=pin)
+        return seen
+
+    # _run overexpresses 12 at step 1 and 11 at step 2
+    def test_overexpressed_genes_stay_pinned_at_front(self):
+        seen = self._capture_reverse(pin=True)
+        after_step1 = seen[0][0]
+        self.assertEqual(after_step1[0], 12)
+        rest = [t for t in reversed(after_step1) if t not in (11, 12)]
+        # step 2 overexpresses 11 on the pinned encoding [12, *reversed rest]
+        self.assertEqual(seen[1][0], [11, 12] + rest)
+
+    def test_without_pin_rerank_moves_overexpressed_genes(self):
+        seen = self._capture_reverse(pin=False)
+        after_step1 = seen[0][0]
+        reversed_ids = list(reversed(after_step1))
+        self.assertEqual(seen[1][0], [11] + [t for t in reversed_ids if t != 11])
+        self.assertEqual(seen[1][0][-1], 12)
 
     def test_cap_limits_feedback_events(self):
         cfg = MultiStepConfig(max_feedback_events=2)

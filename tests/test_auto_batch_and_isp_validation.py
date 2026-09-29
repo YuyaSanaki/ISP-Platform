@@ -807,7 +807,9 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 self.assertEqual(sf["conditions"], list(app._SF_ISP_CONDITIONS))
                 self.assertEqual(sf["observed_state"], "WT")
                 self.assertEqual(sf["feedback_after_step"], 1)
-                self.assertFalse(sf["feedback_every_step"])
+                self.assertTrue(sf["feedback_every_step"])
+                self.assertTrue(sf["feedback_after_last_step"])
+                self.assertTrue(sf["pin_overexpressed"])
                 self.assertEqual(sf["multi_step"]["max_feedback_events"], 5)
                 self.assertNotIn("specificity", sf)
                 # eval / decoder hyperparameters come from the core template

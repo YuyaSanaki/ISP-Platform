@@ -69,17 +69,23 @@ state_feedback:
   observed_max_ncells: 3000
   min_detection_count: 5
 
-  # Where feedback is injected in the chain.
+  # Where feedback is injected in the chain. By default the model's rank change is
+  # fed back after every step from `feedback_after_step` on, including the last,
+  # so the next step (and the endpoint) sees the reranked encoding.
+  # `feedback_every_step: false` gives one feedback event after `feedback_after_step`.
   feedback_after_step: 1
-  feedback_every_step: false
+  feedback_every_step: true
+  feedback_after_last_step: true
+  # Keep the genes overexpressed so far at the front; the rerank moves only the rest.
+  pin_overexpressed: true
   ctrl_reference: start      # start | previous
 
-  # Multi-step guardrails, used only with `feedback_every_step: true`
-  # (feedback after every step from `feedback_after_step` on, except the last).
+  # Multi-step cap, used only with `feedback_every_step: true`.
   # `max_feedback_events` caps feedback events per chain; later steps run without
   # feedback. There is no per-cell stop. Counts go to run_manifest.json.
   # Caution: every extra event adds another end-point-scale displacement, so error
   # grows with the number of events (docs/ordered_rank_edit_and_state_feedback_isp.md).
+  # For a biological claim, compare against `feedback_every_step: false`.
   multi_step:
     max_feedback_events: 5
 

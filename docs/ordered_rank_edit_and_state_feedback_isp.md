@@ -137,7 +137,7 @@ start encoding X0
 
 - Only **the order of the genes already in each cell** is changed. No genes are added or removed.
 - The reordered X1' is what the next perturbation acts on. This is the essential difference from Ordered rank-edit.
-- By default there is one feedback event (after `Feedback after step`). Multi-step feedback after every step can be switched on (3.7). With a single feedback event the model output is still fed into the next input, so it is still State-feedback ISP.
+- By default feedback is applied after `Feedback after step` and after every later step, including the last, so each perturbation acts on the order the model predicted after the previous one and the endpoint is the reordered encoding (3.7). Genes overexpressed so far stay at the front; only the other genes are reordered. Switching multi-step off gives one feedback event; the model output is still fed into the next input, so it is still State-feedback ISP.
 
 ### 3.2 What "decode" means
 
@@ -279,15 +279,15 @@ Choose the Run type **State-feedback ISP**. ISP source run, steps and GPU batch 
 |---|---|---|
 | Conditions | All six | Conditions to run (3.5). The `linear_deltarank` verdict needs `norm` and `delta_mlm`, and the gap needs `ordered_rank_edit` and `oracle`, so **keeping all of them selected is recommended** |
 | Feedback after step | 1 | The step after which feedback is applied. The reordered encoding feeds the next step, so the last step cannot be chosen. The endpoint conditions need at least 2 steps |
-| Feedback after every step (multi-step) | Off | When on, feedback is applied after `Feedback after step` and after every later step except the last (see below) |
+| Feedback after every step (multi-step) | On | When on, feedback is applied after `Feedback after step` and after every later step, including the last (see below). When off, one feedback event after `Feedback after step` |
 | Max feedback events per chain | 5 | Shown only when multi-step is on. Maximum number of feedback events in one chain (1–5) |
 | Observed state for the teacher | Blank = pipeline end state | State that supplies the decoder's teacher and the `oracle` ranks. It must exist in the same dataset under the same state key, with enough cells. If the dataset has an intermediate-state label, it can be used here |
 
 `Feedback after step` examples (4 steps: KLF4 → MYC → SOX2 → POU5F1):
 
-- `1`: KLF4 → **feedback** → MYC → SOX2 → POU5F1
-- `3`: KLF4 → MYC → SOX2 → **feedback** → POU5F1
-- `1` with multi-step on: KLF4 → **feedback** → MYC → **feedback** → SOX2 → **feedback** → POU5F1
+- `1` (default, multi-step on): KLF4 → **feedback** → MYC → **feedback** → SOX2 → **feedback** → POU5F1 → **feedback**
+- `1` with multi-step off: KLF4 → **feedback** → MYC → SOX2 → POU5F1
+- `3` with multi-step off: KLF4 → MYC → SOX2 → **feedback** → POU5F1
 
 The decoder is trained on "Δh with all steps applied", so Δh after an intermediate step is distributed differently from training. Keep this in mind when moving the feedback point (in the YAML, `eval.perturbation: feedback_point` checks direction fidelity at the feedback point).
 
@@ -297,7 +297,7 @@ The only limit is the cap: at most `Max feedback events per chain` events per ch
 
 There is no per-cell stop. A convergence stop (Spearman > 0.995 twice in a row) was removed: each step adds a new perturbation, so small feedback changes so far do not mean the next step's feedback will be small, and a whole-encoding threshold misses large moves of a few genes (in a 2048-gene cell, one gene moving from the bottom to the top still gives Spearman 0.997). A 2-cycle stop was also removed: it required the whole order to return exactly to the one from two events ago, which practically never happens because a new perturbation enters between events.
 
-> **Caution: multi-step feedback accumulates decoder error.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. With multi-step on and `ctrl_reference: start`, each event recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Displacement and decoder error therefore grow at least linearly with the number of events, and the encoding is pushed beyond the observed end-state ranks. There the shift reflects encoding disturbance rather than the biology the model has learned. `ctrl_reference: previous` avoids counting earlier steps again, but each event still predicts an end-point-scale change. We have not identified a number of events beyond one at which the biological signal is expected to stay above this error; the cap bounds the error but does not correct it. **Use one feedback event (the default) for any biological claim.** Whether multi-step feedback is more useful than one event has not been evaluated.
+> **Caution: multi-step feedback accumulates decoder error.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. With multi-step on and `ctrl_reference: start`, each event recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Displacement and decoder error therefore grow at least linearly with the number of events, and the encoding is pushed beyond the observed end-state ranks. There the shift reflects encoding disturbance rather than the biology the model has learned. `ctrl_reference: previous` avoids counting earlier steps again, but each event still predicts an end-point-scale change. We have not identified a number of events beyond one at which the biological signal is expected to stay above this error; the cap bounds the error but does not correct it. **For any biological claim, check the result against one feedback event (multi-step off, `feedback_every_step: false`).** Whether multi-step feedback is more useful than one event has not been evaluated.
 
 **Perturbation specificity (optional)**
 
@@ -315,6 +315,8 @@ These can be changed by editing the **Config YAML** in the Web UI. The defaults 
 
 | Key (under `state_feedback.`) | Default | Meaning |
 |---|---|---|
+| `feedback_after_last_step` | `true` | With multi-step on, also reorder after the last step, so the endpoint shift is read on the reordered encoding |
+| `pin_overexpressed` | `true` | After each reorder, genes overexpressed so far stay at the front (in their order before the reorder); only the other genes move |
 | `ctrl_reference` | `start` | Reference for Δh. `start` is the original start encoding (the cumulative effect so far); `previous` is the encoding before the last step (the last step's effect only). Decoder training corresponds to `start` |
 | `hysteresis` | 0.0 | Genes whose displacements differ by less than this keep their original relative order (prevents jitter swaps). 0 disables it |
 | `alpha`, `baseline_max_shift` | 1.0, 0.1 | Scale and cap of the displacement for `norm` / `delta_mlm` (no effect on the decoder) |
@@ -342,7 +344,7 @@ The Web UI Outputs panel shows the direction-fidelity verdict, the per-method ta
 
 ### 3.10 Running with the defaults, and what to check
 
-The defaults (all six conditions, `Feedback after step` = 1, multi-step off, max_ncells 300, train a new decoder) include every condition needed for the comparison.
+The defaults (all six conditions, `Feedback after step` = 1, multi-step on including the last step, max_ncells 300, train a new decoder) include every condition needed for the comparison.
 
 1. Look at the **direction-fidelity verdict** first. If it does not pass, the decoder cannot be said to read the direction of rank change, however large the endpoint shift is.
 2. If it passes, use the endpoint gate as secondary information. The `oracle` value is a rough ceiling, not a target.

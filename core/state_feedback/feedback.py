@@ -82,6 +82,19 @@ def rerank_diagnostics(before: Sequence[Sequence[int]], after: Sequence[Sequence
     }
 
 
+def pin_tokens_front(
+    before: Sequence[Sequence[int]],
+    after: Sequence[Sequence[int]],
+    pinned: set[int] | frozenset[int],
+) -> RerankResult:
+    """Keep ``pinned`` tokens at the front in their ``before`` order; rest follow ``after``."""
+    new: list[list[int]] = []
+    for b, a in zip(before, after):
+        head = [int(t) for t in b if int(t) in pinned]
+        new.append(head + [int(t) for t in a if int(t) not in pinned])
+    return new, rerank_diagnostics(before, new)
+
+
 def rerank_oracle(
     pert_ds,
     oracle_priority: Mapping[int, float],

@@ -49,6 +49,37 @@ class TestOrderedRankEditOE(unittest.TestCase):
         self.assertEqual(ordered["input_ids"][:2], [tok_s, tok_o])
         self.assertEqual(sim["input_ids"][:2], [tok_o, tok_s])
 
+    # O, S, K, M tokens; bases cover absent factors, factors already in the
+    # encoding, and a factor at the tail that the first OE step truncates.
+    _O, _S, _K, _M = 301, 302, 303, 304
+    _BASES = {
+        "all_absent": list(range(10, 30)),
+        "some_present": [10, 11, _K, 12, 13, 14, _O, 15, 16, 17, 18, 19],
+        "present_at_tail": list(range(10, 25)) + [_S],
+    }
+
+    def test_same_final_front_equals_simultaneous(self):
+        o, s, k, m = self._O, self._S, self._K, self._M
+        for label, base in self._BASES.items():
+            with self.subTest(base=label):
+                ex = _fake_example(base)
+                sequential = apply_ordered_overexpress(ex, [[m], [k], [s], [o]])
+                simultaneous = apply_ordered_overexpress(ex, [[o, s, k, m]])
+                self.assertEqual(sequential["input_ids"], simultaneous["input_ids"])
+                self.assertEqual(sequential["input_ids"][:4], [o, s, k, m])
+                self.assertEqual(len(sequential["input_ids"]), len(base))
+
+    def test_group_then_single_steps(self):
+        o, s, k, m = self._O, self._S, self._K, self._M
+        for label, base in self._BASES.items():
+            with self.subTest(base=label):
+                ex = _fake_example(base)
+                grouped = apply_ordered_overexpress(ex, [[o, k], [m], [s]])
+                single = apply_ordered_overexpress(ex, [[k], [o], [m], [s]])
+                self.assertEqual(grouped["input_ids"], single["input_ids"])
+                self.assertEqual(grouped["input_ids"][:4], [s, m, o, k])
+                self.assertEqual(len(grouped["input_ids"]), len(base))
+
     def test_length_preserved_when_inserting_absent(self):
         ex = _fake_example(list(range(100, 120)))
         absent = 999
