@@ -81,19 +81,6 @@ def displacement_summary(before: Sequence[int], after: Sequence[int]) -> dict[st
     }
 
 
-def is_two_cycle(
-    prev: Sequence[int] | None,
-    current: Sequence[int],
-    nxt: Sequence[int],
-) -> bool:
-    """True when ``nxt`` returns to ``prev`` while differing from ``current``."""
-    if prev is None:
-        return False
-    return list(map(int, nxt)) == list(map(int, prev)) and list(map(int, nxt)) != list(
-        map(int, current)
-    )
-
-
 def gap_closed_fraction(
     baseline: float,
     method: float,

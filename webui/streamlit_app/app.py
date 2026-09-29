@@ -1510,10 +1510,12 @@ def _render_state_feedback_isp_controls() -> None:
             "Feedback after every step (multi-step)",
             key="sf_isp_feedback_every_step",
             help=(
-                "Reorders after this step and every later step except the last. Each cell "
-                "stops early on a 2-cycle or once its reorders stay small; per-cell halt "
-                "reasons go to feedback_guard.csv. Multi-step benefit and stability are "
-                "not evaluated."
+                "Reorders after this step and every later step except the last, up to the "
+                "cap below. Caution: the decoder predicts the whole start-to-end rank "
+                "change, so each extra event adds another change of that size on top of "
+                "an order that has already moved. Error grows with the number of events "
+                "and can mask the biology the model has learned. Use one feedback event "
+                "(this box off) for biological claims."
             ),
         )
         if st.session_state.get("sf_isp_feedback_every_step"):
@@ -1640,11 +1642,11 @@ def _render_state_feedback_results(source_run: str | None) -> None:
 
     if summary.get("specificity_rows"):
         st.markdown("**Perturbation specificity** (same decoder, other perturbations)")
+        spec = pd.DataFrame(summary["specificity_rows"])
+        spec_cols = ["condition", "genes", "linear_partial", "linear_partial_ci_low",
+                     "linear_partial_ci_high", "delta_h_shuffled_partial", "mean_delta_h_norm"]
         st.dataframe(
-            pd.DataFrame(summary["specificity_rows"])[
-                ["condition", "genes", "linear_partial", "linear_partial_ci_low",
-                 "linear_partial_ci_high", "delta_h_only_partial", "mean_delta_h_norm"]
-            ],
+            spec[[c for c in spec_cols if c in spec.columns]],
             use_container_width=True,
             hide_index=True,
         )
@@ -1658,7 +1660,7 @@ def _render_state_feedback_results(source_run: str | None) -> None:
         st.markdown("**Endpoint goal-state shift** (cell-mean cosine; oracle is a ceiling)")
         st.dataframe(pd.DataFrame(summary["gate"]), use_container_width=True, hide_index=True)
     if summary.get("multi_step_guard"):
-        st.markdown("**Multi-step guard** (cells halted per condition; details in `feedback_guard.csv`)")
+        st.markdown("**Multi-step feedback events** (per condition; `capped_before_step` = first step skipped by the cap)")
         st.dataframe(
             pd.DataFrame(
                 [{"condition": c, **s} for c, s in summary["multi_step_guard"].items()]

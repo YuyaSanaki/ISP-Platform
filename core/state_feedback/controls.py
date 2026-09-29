@@ -204,17 +204,15 @@ def bootstrap_partial_diff(
 
 
 def decoder_variants(decoder, samples, *, seed: int = 0) -> dict[str, np.ndarray]:
-    """The decoder's Δr̂ with each input isolated.
+    """The decoder's Δr̂, and the same decoder with Δh permuted across genes.
 
-    ``delta_h_only`` fixes base rank at 0.5, so its ranking depends on the
-    direction of Δh alone (tanh is monotone); ``delta_h_shuffled`` permutes Δh
-    across genes within each cell, keeping base rank.
+    ``delta_h_shuffled`` permutes Δh across genes within each cell, so any signal
+    left beyond base rank comes from which gene carries which Δh.
     """
     import torch
 
     dev = next(decoder.parameters()).device
     dh = samples.delta_h.to(dev)
-    br = samples.base_rank.to(dev)
     gen = torch.Generator().manual_seed(int(seed))
     perm = torch.arange(len(samples))
     for idx in _cell_groups(samples.cell_index):
@@ -222,9 +220,8 @@ def decoder_variants(decoder, samples, *, seed: int = 0) -> dict[str, np.ndarray
         perm[t] = t[torch.randperm(len(t), generator=gen)]
     with torch.no_grad():
         return {
-            "linear_deltarank": decoder.delta_rank(dh, br).cpu().numpy(),
-            "delta_h_only": decoder.delta_rank(dh, torch.full_like(br, 0.5)).cpu().numpy(),
-            "delta_h_shuffled": decoder.delta_rank(dh[perm.to(dev)], br).cpu().numpy(),
+            "linear_deltarank": decoder.delta_rank(dh).cpu().numpy(),
+            "delta_h_shuffled": decoder.delta_rank(dh[perm.to(dev)]).cpu().numpy(),
         }
 
 

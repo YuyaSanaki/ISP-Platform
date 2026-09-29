@@ -18,7 +18,6 @@ from state_feedback.metrics import (
     calibration_monotonicity,
     displacement_summary,
     gap_closed_fraction,
-    is_two_cycle,
     median_iqr,
     ndcg_at_k,
     paired_sign_flip_test,
@@ -139,10 +138,6 @@ class TestMetrics(unittest.TestCase):
         summary = displacement_summary([1, 2, 3], [1, 2, 3])
         self.assertEqual(summary["mean_abs_displacement"], 0.0)
         self.assertEqual(summary["frac_moved"], 0.0)
-
-    def test_two_cycle_detection(self):
-        self.assertTrue(is_two_cycle([1, 2], [2, 1], [1, 2]))
-        self.assertFalse(is_two_cycle([1, 2], [2, 1], [2, 1]))
 
     def test_gap_closed_fraction(self):
         self.assertAlmostEqual(gap_closed_fraction(0.0, 0.8, 1.0), 0.8)
@@ -469,7 +464,7 @@ class TestDecoder(unittest.TestCase):
         dec = self._decoder()
         delta_h = torch.randn(17, 8)
         base = torch.linspace(0, 1, 17)
-        self.assertEqual(dec.delta_rank(delta_h, base).shape, (17,))
+        self.assertEqual(dec.delta_rank(delta_h).shape, (17,))
         self.assertEqual(dec(delta_h, base).shape, (17,))
         self.assertEqual(dec.from_states(delta_h, torch.zeros_like(delta_h), base).shape, (17,))
 
@@ -483,15 +478,24 @@ class TestDecoder(unittest.TestCase):
         dec = self._decoder(max_shift=0.05)
         with torch.no_grad():
             dec.proj.weight.fill_(10.0)
-            dec.proj.bias.fill_(5.0)
-        out = dec.delta_rank(torch.randn(64, 8) * 100, torch.rand(64))
+        out = dec.delta_rank(torch.randn(64, 8) * 100)
         self.assertLessEqual(float(out.abs().max()), 0.05 + 1e-6)
 
-    def test_null_drift_zero_when_untrained(self):
+    def test_decoder_reads_delta_h_only(self):
+        dec = self._decoder()
+        self.assertEqual(tuple(dec.proj.weight.shape), (1, 8))
+        self.assertIsNone(dec.proj.bias)
+
+    def test_null_drift_zero_for_any_weights(self):
         from state_feedback.decoder import null_drift
 
-        drift = null_drift(self._decoder(), n_genes=128)
-        self.assertAlmostEqual(drift["null_drift_mean_abs"], 0.0, places=6)
+        dec = self._decoder(max_shift=0.5)
+        with torch.no_grad():
+            dec.proj.weight.normal_()
+        drift = null_drift(dec, n_genes=128)
+        self.assertEqual(drift["null_drift_max_abs"], 0.0)
+        base = torch.linspace(0, 1, 128)
+        self.assertTrue(torch.equal(dec(torch.zeros(128, 8), base), base))
 
     def test_training_recovers_a_linear_teacher(self):
         from state_feedback.decoder import (
@@ -521,7 +525,7 @@ class TestDecoder(unittest.TestCase):
             batch_size=512,
             device="cpu",
         )
-        pred = predict_delta_rank(dec, delta_h, data.base_rank)
+        pred = predict_delta_rank(dec, delta_h)
         self.assertGreater(spearman_values(pred.tolist(), target.tolist()), 0.9)
         self.assertEqual(hist["n_samples"], n)
 
@@ -553,6 +557,22 @@ class TestDecoder(unittest.TestCase):
         self.assertEqual(restored.d_model, 6)
         self.assertAlmostEqual(restored.max_shift, 0.2)
         self.assertTrue(torch.allclose(restored.proj.weight, dec.proj.weight))
+
+    def test_old_checkpoint_with_base_rank_input_is_rejected(self):
+        import tempfile
+
+        from state_feedback.decoder import load_decoder
+
+        old = {
+            "state_dict": {"proj.weight": torch.zeros(1, 7), "proj.bias": torch.zeros(1)},
+            "d_model": 6,
+            "max_shift": 0.2,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "old.pt"
+            torch.save(old, str(path))
+            with self.assertRaisesRegex(ValueError, "Retrain"):
+                load_decoder(path)
 
 
 @unittest.skipUnless(HAS_TORCH, "torch not available")

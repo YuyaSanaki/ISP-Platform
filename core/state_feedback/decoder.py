@@ -3,13 +3,13 @@
 Maps the perturbation-induced change in contextual gene representations to a
 bounded, gene-specific rank displacement:
 
-    delta_rank = max_shift * tanh(W [delta_h ; base_rank_norm] + b)
+    delta_rank = max_shift * tanh(w · delta_h)
     priority   = base_rank_norm + delta_rank
 
-Only ``delta_h = h_pert - h_ctrl`` enters (not ``h_ctrl`` itself), so the
-decoder is constrained to read the perturbation effect rather than base cell
-identity. The projection is zero-initialized, so an untrained decoder is exactly
-the identity permutation.
+Only ``delta_h = h_pert - h_ctrl`` enters (not ``h_ctrl``, base rank or a bias),
+so the decoder reads the perturbation effect rather than base cell identity or
+position, and zero perturbation gives exactly zero displacement. The projection
+is zero-initialized, so an untrained decoder is exactly the identity permutation.
 """
 from __future__ import annotations
 
@@ -20,25 +20,22 @@ import torch
 import torch.nn as nn
 
 
+INPUTS = "delta_h"
+
+
 class DeltaRankDecoder(nn.Module):
-    """Linear residual rank decoder over ``[delta_h ; base_rank_norm]``."""
+    """Linear residual rank decoder over ``delta_h`` alone (no bias)."""
 
     def __init__(self, d_model: int, max_shift: float = 0.1):
         super().__init__()
         self.d_model = int(d_model)
         self.max_shift = float(max_shift)
-        self.proj = nn.Linear(self.d_model + 1, 1)
+        self.proj = nn.Linear(self.d_model, 1, bias=False)
         nn.init.zeros_(self.proj.weight)
-        nn.init.zeros_(self.proj.bias)
 
-    def delta_rank(
-        self,
-        delta_h: torch.Tensor,
-        base_rank_norm: torch.Tensor,
-    ) -> torch.Tensor:
-        """Bounded rank displacement for ``[N, d]`` deltas and ``[N]`` base ranks."""
-        x = torch.cat([delta_h, base_rank_norm.unsqueeze(-1)], dim=-1)
-        return self.max_shift * torch.tanh(self.proj(x).squeeze(-1))
+    def delta_rank(self, delta_h: torch.Tensor) -> torch.Tensor:
+        """Bounded rank displacement for ``[N, d]`` deltas."""
+        return self.max_shift * torch.tanh(self.proj(delta_h).squeeze(-1))
 
     def forward(
         self,
@@ -46,7 +43,7 @@ class DeltaRankDecoder(nn.Module):
         base_rank_norm: torch.Tensor,
     ) -> torch.Tensor:
         """Priority (lower = leftmost)."""
-        return base_rank_norm + self.delta_rank(delta_h, base_rank_norm)
+        return base_rank_norm + self.delta_rank(delta_h)
 
     def from_states(
         self,
@@ -116,16 +113,15 @@ def train_delta_rank_decoder(
     batch_size: int = 4096,
     lam_huber: float = 1.0,
     lam_pair: float = 0.5,
-    lam_identity: float = 1.0,
     lam_smooth: float = 0.01,
     seed: int = 0,
     device: str | torch.device | None = None,
 ) -> tuple[DeltaRankDecoder, dict[str, Any]]:
     """Fit the decoder; returns ``(decoder, history)``.
 
-    Loss terms follow the design doc: Huber on displacement, a pairwise ordering
-    term, an identity term (zero perturbation -> zero displacement) and a
-    smoothness penalty against extreme displacements.
+    Loss terms: Huber on displacement, a pairwise ordering term and a smoothness
+    penalty against extreme displacements. There is no identity term: zero
+    perturbation gives zero displacement by construction.
     """
     dev = torch.device(device) if device is not None else (
         torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -145,26 +141,18 @@ def train_delta_rank_decoder(
     history: list[dict[str, float]] = []
     for epoch in range(int(epochs)):
         order = torch.randperm(n, generator=cpu_gen)
-        totals = {"loss": 0.0, "huber": 0.0, "pair": 0.0, "identity": 0.0, "smooth": 0.0}
+        totals = {"loss": 0.0, "huber": 0.0, "pair": 0.0, "smooth": 0.0}
         n_batches = 0
         for start in range(0, n, int(batch_size)):
             idx = order[start : start + int(batch_size)]
             dh = data.delta_h.index_select(0, idx).to(dev)
-            br = data.base_rank.index_select(0, idx).to(dev)
             tg = data.target.index_select(0, idx).to(dev)
 
-            pred_delta = decoder.delta_rank(dh, br)
+            pred_delta = decoder.delta_rank(dh)
             l_huber = huber(pred_delta, tg)
             l_pair = _pairwise_loss(pred_delta, tg, gen)
-            zero_delta = decoder.delta_rank(torch.zeros_like(dh), br)
-            l_identity = (zero_delta**2).mean()
             l_smooth = (pred_delta**2).mean()
-            loss = (
-                lam_huber * l_huber
-                + lam_pair * l_pair
-                + lam_identity * l_identity
-                + lam_smooth * l_smooth
-            )
+            loss = lam_huber * l_huber + lam_pair * l_pair + lam_smooth * l_smooth
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -172,7 +160,6 @@ def train_delta_rank_decoder(
             totals["loss"] += float(loss.detach())
             totals["huber"] += float(l_huber.detach())
             totals["pair"] += float(l_pair.detach())
-            totals["identity"] += float(l_identity.detach())
             totals["smooth"] += float(l_smooth.detach())
             n_batches += 1
         history.append({k: v / max(1, n_batches) for k, v in totals.items()} | {"epoch": epoch + 1})
@@ -188,14 +175,10 @@ def train_delta_rank_decoder(
 
 
 @torch.no_grad()
-def predict_delta_rank(
-    decoder: DeltaRankDecoder,
-    delta_h: torch.Tensor,
-    base_rank: torch.Tensor,
-) -> torch.Tensor:
+def predict_delta_rank(decoder: DeltaRankDecoder, delta_h: torch.Tensor) -> torch.Tensor:
     """Predicted displacement for a batch of samples (no grad)."""
     dev = next(decoder.parameters()).device
-    return decoder.delta_rank(delta_h.to(dev), base_rank.to(dev)).detach().cpu()
+    return decoder.delta_rank(delta_h.to(dev)).detach().cpu()
 
 
 @torch.no_grad()
@@ -203,13 +186,12 @@ def null_drift(decoder: DeltaRankDecoder, n_genes: int = 2048) -> dict[str, floa
     """Displacement the decoder produces when ``delta_h = 0``.
 
     This is the null-perturbation guardrail: with no perturbation evidence the
-    decoder must not move genes. Non-zero drift here means the bias / base-rank
-    weight learned a spurious permutation.
+    decoder must not move genes. With ``delta_h`` as the only input and no bias it
+    is exactly zero; it is still reported so every run records the check.
     """
     dev = next(decoder.parameters()).device
-    base = torch.linspace(0.0, 1.0, int(n_genes), device=dev)
     zeros = torch.zeros((int(n_genes), decoder.d_model), device=dev)
-    drift = decoder.delta_rank(zeros, base).abs()
+    drift = decoder.delta_rank(zeros).abs()
     return {
         "null_drift_mean_abs": float(drift.mean()),
         "null_drift_max_abs": float(drift.max()),
@@ -223,6 +205,7 @@ def save_decoder(decoder: DeltaRankDecoder, path) -> None:
             "state_dict": decoder.state_dict(),
             "d_model": decoder.d_model,
             "max_shift": decoder.max_shift,
+            "inputs": INPUTS,
         },
         str(path),
     )
@@ -230,6 +213,11 @@ def save_decoder(decoder: DeltaRankDecoder, path) -> None:
 
 def load_decoder(path, device: str | torch.device | None = None) -> DeltaRankDecoder:
     blob = torch.load(str(path), map_location="cpu")
+    if blob.get("inputs") != INPUTS:
+        raise ValueError(
+            f"{path} is a decoder that also reads base rank and a bias; the decoder now "
+            "reads delta_h only. Retrain it (run without --decoder-checkpoint)."
+        )
     decoder = DeltaRankDecoder(int(blob["d_model"]), max_shift=float(blob["max_shift"]))
     decoder.load_state_dict(blob["state_dict"])
     decoder.eval()

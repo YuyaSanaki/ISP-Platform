@@ -1,24 +1,20 @@
-"""Tests for multi-step State-feedback guardrails (cycle halt, convergence stop, cap).
+"""Tests for the multi-step State-feedback event cap.
 
-The runner-level test needs torch / datasets (Docker); guard unit tests are pure Python.
+The runner-level test needs torch / datasets (Docker); config and guard unit tests are
+pure Python.
 """
 from __future__ import annotations
 
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "core"))
 
-from state_feedback.multistep import (  # noqa: E402
-    HALT_CAP,
-    HALT_CONVERGED,
-    HALT_CYCLE,
-    FeedbackGuard,
-    MultiStepConfig,
-)
+from state_feedback.multistep import FeedbackGuard, MultiStepConfig  # noqa: E402
 
 try:
     import datasets  # noqa: F401
@@ -28,126 +24,52 @@ try:
 except Exception:  # pragma: no cover - host python
     HAS_ML = False
 
-A = [1, 2, 3, 4, 5, 6]
-B = [2, 1, 3, 4, 5, 6]
-REVERSED = list(reversed(A))
-
 
 class TestMultiStepConfig(unittest.TestCase):
-    def test_defaults_match_guardrail_spec(self):
+    def test_defaults(self):
         cfg = MultiStepConfig.from_mapping(None)
-        self.assertEqual(cfg.max_feedback_events, 5)
-        self.assertEqual(cfg.converge_spearman, 0.995)
-        self.assertEqual(cfg.converge_topk, 1000)
-        self.assertEqual(cfg.converge_jaccard, 0.99)
-        self.assertEqual(cfg.converge_patience, 2)
-        self.assertTrue(cfg.halt_on_cycle)
+        self.assertEqual(cfg.to_dict(), {"max_feedback_events": 5})
 
     def test_rejects_unknown_and_invalid(self):
         with self.assertRaises(ValueError):
             MultiStepConfig.from_mapping({"max_events": 3})
         with self.assertRaises(ValueError):
             MultiStepConfig.from_mapping({"max_feedback_events": 0})
-        with self.assertRaises(ValueError):
-            MultiStepConfig.from_mapping({"converge_spearman": 1.5})
-        with self.assertRaises(ValueError):
-            MultiStepConfig.from_mapping({"converge_patience": 0})
+
+    def test_removed_stop_keys_are_ignored_with_warning(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            cfg = MultiStepConfig.from_mapping(
+                {
+                    "max_feedback_events": 3,
+                    "converge_spearman": 0.995,
+                    "converge_patience": 2,
+                    "halt_on_cycle": True,
+                }
+            )
+        self.assertEqual(cfg.to_dict(), {"max_feedback_events": 3})
+        self.assertEqual(len(caught), 1)
+        self.assertIn("halt_on_cycle", str(caught[0].message))
 
 
 class TestFeedbackGuard(unittest.TestCase):
-    def _cfg(self, **kw):
-        base = {"converge_jaccard": 1.0, "converge_topk": 3}
-        base.update(kw)
-        return MultiStepConfig.from_mapping(base)
-
-    def test_convergence_after_patience(self):
-        guard = FeedbackGuard(1, self._cfg(converge_patience=2))
-        out, stats = guard.apply(1, [A], [A])  # no move: small event 1
-        self.assertEqual(out, [A])
-        self.assertIsNone(guard.halt_reason[0])
-        out, stats = guard.apply(2, [A], [A])  # small event 2 -> converged
-        self.assertEqual(guard.halt_reason[0], HALT_CONVERGED)
-        self.assertEqual(guard.halt_step[0], 2)
-        self.assertEqual(stats["guard_new_converged"], 1.0)
-        self.assertTrue(guard.exhausted)
-
-    def test_large_move_resets_streak(self):
-        guard = FeedbackGuard(1, self._cfg(converge_patience=2))
-        guard.apply(1, [A], [A])
-        guard.apply(2, [A], [REVERSED])
-        guard.apply(3, [REVERSED], [REVERSED])
-        self.assertIsNone(guard.halt_reason[0])
-
-    def test_jaccard_criterion(self):
-        guard = FeedbackGuard(1, self._cfg(converge_spearman=1.0, converge_jaccard=0.99, converge_patience=1))
-        guard.apply(1, [A], [B])  # top-3 set {1,2,3} unchanged -> small by Jaccard
-        self.assertEqual(guard.halt_reason[0], HALT_CONVERGED)
-
-    def test_jaccard_ignored_when_cell_has_at_most_k_genes(self):
-        guard = FeedbackGuard(
-            1, self._cfg(converge_topk=6, converge_jaccard=0.99, converge_patience=1)
-        )
-        guard.apply(1, [A], [REVERSED])  # top-6 is the whole fixed gene set
-        self.assertIsNone(guard.halt_reason[0])
-
-    def test_two_cycle_is_rejected_and_halts(self):
-        guard = FeedbackGuard(1, self._cfg())
-        guard.apply(1, [A], [REVERSED])
-        guard.apply(2, [REVERSED], [B])
-        pre = [6, 5, 4, 3, 1, 2]
-        out, stats = guard.apply(3, [pre], [REVERSED])  # back to post of two events ago
-        self.assertEqual(out, [pre])
-        self.assertEqual(guard.halt_reason[0], HALT_CYCLE)
-        self.assertEqual(guard.halt_step[0], 3)
-        self.assertEqual(stats["guard_new_cycle_halts"], 1.0)
-        self.assertEqual(guard.n_applied[0], 2)
-
-    def test_cycle_check_can_be_disabled(self):
-        guard = FeedbackGuard(1, self._cfg(halt_on_cycle=False))
-        guard.apply(1, [A], [REVERSED])
-        guard.apply(2, [REVERSED], [B])
-        out, _ = guard.apply(3, [B], [REVERSED])
-        self.assertEqual(out, [REVERSED])
-        self.assertIsNone(guard.halt_reason[0])
-
-    def test_halted_cells_pass_through_and_others_continue(self):
-        guard = FeedbackGuard(2, self._cfg(converge_patience=1))
-        out, _ = guard.apply(1, [A, A], [A, REVERSED])
-        self.assertEqual(guard.halt_reason, [HALT_CONVERGED, None])
-        out, stats = guard.apply(2, [A, REVERSED], [REVERSED, A])
-        self.assertEqual(out[0], A)  # halted: proposal ignored
-        self.assertEqual(out[1], A)
-        self.assertEqual(stats["guard_active_before"], 1.0)
-
     def test_cap_and_summary(self):
-        guard = FeedbackGuard(2, self._cfg(max_feedback_events=1))
-        guard.apply(1, [A, A], [REVERSED, REVERSED])
+        guard = FeedbackGuard(MultiStepConfig(max_feedback_events=2))
+        self.assertEqual(guard.record_event(), {"guard_event": 1.0})
+        self.assertFalse(guard.cap_reached)
+        guard.record_event()
         self.assertTrue(guard.cap_reached)
-        self.assertEqual(guard.mark_cap(2), 2)
-        self.assertEqual(guard.halt_reason, [HALT_CAP, HALT_CAP])
+        self.assertTrue(guard.mark_cap(3))
+        self.assertFalse(guard.mark_cap(4))
         self.assertEqual(
             guard.summary(),
-            {
-                "feedback_events": 1,
-                "n_cells": 2,
-                "halted_cycle": 0,
-                "halted_converged": 0,
-                "halted_cap": 2,
-                "ran_to_end": 0,
-            },
+            {"feedback_events": 2, "max_feedback_events": 2, "capped_before_step": 3},
         )
-        rows = guard.cell_rows()
-        self.assertEqual(rows[0], {"cell": 0, "halt_reason": HALT_CAP, "halt_step": 2, "n_feedback_applied": 1})
-
-    def test_rejects_wrong_cell_count(self):
-        guard = FeedbackGuard(2, self._cfg())
-        with self.assertRaises(ValueError):
-            guard.apply(1, [A], [A])
 
 
 @unittest.skipUnless(HAS_ML, "torch / datasets not available")
 class TestRunConditionGuard(unittest.TestCase):
-    """``run_condition`` with forwards mocked: guard wiring, halts and outputs."""
+    """``run_condition`` with forwards mocked: cap wiring and outputs."""
 
     def _run(self, rerank_fn, *, every_step, n_steps=4, multi_step=None):
         import pandas as pd
@@ -188,11 +110,9 @@ class TestRunConditionGuard(unittest.TestCase):
                     multi_step=multi_step,
                     guard_summaries=summaries,
                 )
-                guard_csv = Path(tmp) / "feedback_guard.csv"
-                guard_rows = pd.read_csv(guard_csv) if guard_csv.exists() else None
         finally:
             rsf._score_cell_mean = saved
-        return rows, summaries, guard_rows
+        return rows, summaries
 
     @staticmethod
     def _reverse_rerank(ctrl_ds, pert_ds):
@@ -205,30 +125,28 @@ class TestRunConditionGuard(unittest.TestCase):
         return before, {}
 
     def test_single_feedback_has_no_guard(self):
-        rows, summaries, guard_rows = self._run(self._reverse_rerank, every_step=False)
+        rows, summaries = self._run(self._reverse_rerank, every_step=False)
         fb_rows = [r for r in rows if r["step_name"] == "feedback"]
         self.assertEqual(len(fb_rows), 1)
         self.assertNotIn("guard_event", fb_rows[0])
         self.assertEqual(summaries, {})
-        self.assertIsNone(guard_rows)
 
-    def test_identity_rerank_converges(self):
-        rows, summaries, guard_rows = self._run(self._identity_rerank, every_step=True)
+    def test_identity_rerank_runs_every_event(self):
+        rows, summaries = self._run(self._identity_rerank, every_step=True)
         fb_rows = [r for r in rows if r["step_name"] == "feedback"]
-        self.assertEqual(len(fb_rows), 2)  # patience 2, then every cell stopped
-        self.assertEqual(summaries["test"]["halted_converged"], 2)
-        self.assertEqual(list(guard_rows["halt_reason"]), [HALT_CONVERGED, HALT_CONVERGED])
-        self.assertEqual(list(guard_rows["halt_step"]), [2, 2])
+        self.assertEqual([r["step"] for r in fb_rows], [1, 2, 3])
+        self.assertEqual(summaries["test"]["feedback_events"], 3)
+        self.assertIsNone(summaries["test"]["capped_before_step"])
 
     def test_cap_limits_feedback_events(self):
-        cfg = MultiStepConfig.from_mapping({"max_feedback_events": 2, "halt_on_cycle": False})
-        rows, summaries, guard_rows = self._run(
+        cfg = MultiStepConfig(max_feedback_events=2)
+        rows, summaries = self._run(
             self._reverse_rerank, every_step=True, n_steps=5, multi_step=cfg
         )
         fb_rows = [r for r in rows if r["step_name"] == "feedback"]
         self.assertEqual([r["step"] for r in fb_rows], [1, 2])
-        self.assertEqual(summaries["test"]["halted_cap"], 2)
-        self.assertEqual(list(guard_rows["halt_step"]), [3, 3])
+        self.assertEqual([r["guard_event"] for r in fb_rows], [1.0, 2.0])
+        self.assertEqual(summaries["test"]["capped_before_step"], 3)
         # guard columns sit on feedback rows only, so the endpoint gate still reads step rows
         step_rows = [r for r in rows if r["step_name"].startswith("s")]
         self.assertEqual(len(step_rows), 5)

@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **State-feedback ISP Δrank decoder reads Δh only.** The linear layer no longer takes base rank or a bias, so zero perturbation gives exactly zero displacement for any trained weights, and the identity loss term (`decoder.lam_identity`) is gone. On BBRC n=300 the Δh-only prediction of the previous decoder already matched it beyond base rank (partial ρ 0.332 vs 0.329). Decoders saved before this change cannot be loaded; retrain instead of passing them to `--decoder-checkpoint`. The `delta_h_only` control is dropped because it is now the decoder itself; `delta_h_shuffled` stays. Results in `docs/state_feedback_decode_methods.md` were measured with the previous decoder.
+
+### Added
+
+- A caution on multi-step State-feedback ISP in the guide, the design doc, the config and the Web UI help. The decoder predicts the whole start→end rank change, so each extra feedback event adds another change of that size on top of an order that has already moved. Error grows at least linearly with the number of events and can mask the biology the model has learned. Use one feedback event (the default) for biological claims.
+
+### Removed
+
+- State-feedback ISP per-cell multi-step stops. The convergence stop treated small whole-encoding changes as convergence even when a few genes moved a lot (one gene moving bottom to top in a 2048-gene cell still gives Spearman 0.997) or when a new perturbation was still to come. The 2-cycle stop required an exact return to the order from two events ago, which practically never happens because a new perturbation enters between events. Multi-step feedback is now limited only by `max_feedback_events`, and `feedback_guard.csv` is no longer written. The `converge_*` and `halt_on_cycle` keys under `state_feedback.multi_step` are ignored with a warning, so older configs still load.
+
 ## [1.0.1] - 2026-09-28
 
 ### Added

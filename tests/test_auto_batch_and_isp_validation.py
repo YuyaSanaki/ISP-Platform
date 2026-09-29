@@ -914,7 +914,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                     json.dumps({"steps": [{"type": "overexpress", "genes": ["Pou5f1"]}],
                                 "gate": [{"condition": "linear_deltarank"}], "decoder": {},
                                 "multi_step": {"config": {}, "guard": {
-                                    "oracle": {"feedback_events": 3, "halted_converged": 30}}}})
+                                    "oracle": {"feedback_events": 3, "capped_before_step": 4}}}})
                 )
                 empty = source / "state_feedback_isp" / "state_feedback_isp_000000"
                 empty.mkdir()
@@ -928,7 +928,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 summary = app._load_state_feedback_summary(run)
                 self.assertTrue(summary["verdict"]["pass"])
                 self.assertEqual(summary["gate"], [{"condition": "linear_deltarank"}])
-                self.assertEqual(summary["multi_step_guard"]["oracle"]["halted_converged"], 30)
+                self.assertEqual(summary["multi_step_guard"]["oracle"]["capped_before_step"], 4)
                 self.assertNotIn("specificity_rows", summary)
                 self.assertEqual(app._load_state_feedback_summary(empty), {"run": empty})
                 self.assertEqual(app._discover_sf_isp_runs(Path(tmp) / "missing"), [])

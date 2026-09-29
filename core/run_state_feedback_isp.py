@@ -177,16 +177,15 @@ def run_condition(
 ) -> list[dict[str, Any]]:
     """Run one condition's perturbation chain, optionally with state feedback.
 
-    With ``feedback_every_step`` the chain runs under a ``FeedbackGuard`` (cycle halt,
-    convergence stop, event cap); per-cell halts go to ``feedback_guard.csv``.
+    With ``feedback_every_step`` the number of feedback events is capped by a
+    ``FeedbackGuard``.
     """
     workers = ore._gpu_resident_map_workers(nproc)
     guard = (
-        FeedbackGuard(len(start_ds), multi_step)
+        FeedbackGuard(multi_step)
         if rerank_fn is not None and feedback_every_step
         else None
     )
-    cap_logged = False
     batch_state = [int(forward_batch_size)]
     working = start_ds
     try:
@@ -247,24 +246,18 @@ def run_condition(
         )
         if not do_feedback:
             continue
-        if guard is not None and guard.exhausted:
-            if guard.cap_reached and not cap_logged:
-                n_capped = guard.mark_cap(step_idx)
-                cap_logged = True
+        if guard is not None and guard.cap_reached:
+            if guard.mark_cap(step_idx):
                 print(
                     f"  [{condition}] feedback cap ({guard.cfg.max_feedback_events} events) "
-                    f"reached before step{step_idx}; {n_capped} cells stop here",
+                    f"reached before step{step_idx}; later steps run without feedback",
                     flush=True,
                 )
             continue
 
         ctrl_ds = start_ds if ctrl_reference == "start" else pre_step
         new_ids, diag = rerank_fn(ctrl_ds, working)
-        guard_stats: dict[str, float] = {}
-        if guard is not None:
-            before_ids = gs.raw_input_ids(working, 0, len(working), model_input_size)
-            new_ids, guard_stats = guard.apply(step_idx, before_ids, new_ids)
-            diag = fb.rerank_diagnostics(before_ids, new_ids)
+        guard_stats = guard.record_event() if guard is not None else {}
         working = fb.replace_input_ids(working, new_ids, num_proc=workers)
         df_fb = _score_cell_mean(
             model,
@@ -296,9 +289,7 @@ def run_condition(
             }
         )
         guard_note = (
-            f" active={int(guard_stats['guard_active_after'])}/{guard.n_cells}"
-            f" cycle+={int(guard_stats['guard_new_cycle_halts'])}"
-            f" converged+={int(guard_stats['guard_new_converged'])}"
+            f" event={int(guard_stats['guard_event'])}/{guard.cfg.max_feedback_events}"
             if guard is not None
             else ""
         )
@@ -313,8 +304,6 @@ def run_condition(
         ore._empty_cuda_cache()
 
     if guard is not None:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame(guard.cell_rows()).to_csv(out_dir / "feedback_guard.csv", index=False)
         summary = guard.summary()
         print(f"  [{condition}] feedback guard: {summary}", flush=True)
         if guard_summaries is not None:
@@ -449,14 +438,13 @@ def _build_decoder(
             batch_size=int(dec_cfg.get("batch_size", 4096)),
             lam_huber=float(dec_cfg.get("lam_huber", 1.0)),
             lam_pair=float(dec_cfg.get("lam_pair", 0.5)),
-            lam_identity=float(dec_cfg.get("lam_identity", 1.0)),
             lam_smooth=float(dec_cfg.get("lam_smooth", 0.01)),
             seed=seed,
         )
         metrics = {"max_shift": float(max_shift), "final_loss": hist["final_loss"]}
         for label, subset in (("train", train_set), ("val", val_set)):
             if len(subset) >= 2:
-                pred = predict_delta_rank(decoder, subset.delta_h, subset.base_rank)
+                pred = predict_delta_rank(decoder, subset.delta_h)
                 metrics[f"spearman_{label}"] = spearman_values(
                     pred.tolist(), subset.target.tolist()
                 )
@@ -751,8 +739,6 @@ def run_perturbation_specificity(
             "linear_partial": lp["partial"],
             "linear_partial_ci_low": lp["ci_low"],
             "linear_partial_ci_high": lp["ci_high"],
-            "delta_h_only_partial":
-                rep["methods"]["delta_h_only"]["partial_spearman_given_base"],
             "delta_h_shuffled_partial":
                 rep["methods"]["delta_h_shuffled"]["partial_spearman_given_base"],
             "base_only_pooled_spearman": rep["base_only_pooled_spearman"],
@@ -762,7 +748,7 @@ def run_perturbation_specificity(
             f"  [{name}] samples={row['n_samples']} |dh|={row['mean_delta_h_norm']:.3f} "
             f"partial={row['linear_partial']:+.3f} "
             f"[{row['linear_partial_ci_low']:+.3f}, {row['linear_partial_ci_high']:+.3f}] "
-            f"dh_only={row['delta_h_only_partial']:+.3f}",
+            f"dh_shuffled={row['delta_h_shuffled_partial']:+.3f}",
             flush=True,
         )
         if not name.startswith("random"):
@@ -771,11 +757,7 @@ def run_perturbation_specificity(
     random_rows = [r for r in rows if r["condition"].startswith("random")]
     vs_random = [
         {"condition": r["condition"], "linear_partial": r["linear_partial"],
-         "delta_h_only_partial": r["delta_h_only_partial"],
-         **controls.versus_random(r["linear_partial"], [x["linear_partial"] for x in random_rows]),
-         **{f"delta_h_only_{k}": v for k, v in controls.versus_random(
-             r["delta_h_only_partial"], [x["delta_h_only_partial"] for x in random_rows]).items()
-            if k in ("random_mean", "random_max", "n_random_ge", "empirical_p")}}
+         **controls.versus_random(r["linear_partial"], [x["linear_partial"] for x in random_rows])}
         for r in rows if not r["condition"].startswith("random")
     ] if random_rows else []
 

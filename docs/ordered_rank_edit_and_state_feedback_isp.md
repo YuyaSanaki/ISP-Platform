@@ -162,25 +162,26 @@ This is **a difference between the start and observed-state groups**, not a meas
 **Training samples**
 
 1. Pass the encoding with **all configured steps applied at once**, and the original encoding, through the fine-tuned model (up to `train_max_ncells` cells, default 200).
-2. For each gene present in both, take Δh (genes are matched by token, not position) and pair it with the gene's original normalized position `base_rank` and its teacher value `Δr_obs` (up to 256 genes per cell).
+2. For each gene present in both, take Δh (genes are matched by token, not position) and pair it with its teacher value `Δr_obs` (up to 256 genes per cell). The gene's original normalized position `base_rank` is kept for the base-rank control but is not a decoder input.
 3. Split the **genes** (not the cells) 80:20. The 20% are never used for training and are kept for evaluation. Because the teacher is one value per gene, splitting by cell would leak the answers.
 
 **Model**
 
 ```text
-Δrank    = max_shift · tanh( W·[Δh ; base_rank] + b )     # one linear layer, bounded
-priority = base_rank + Δrank                              # lower = further left
+Δrank    = max_shift · tanh( w·Δh )     # one linear layer on Δh only, no bias, bounded
+priority = base_rank + Δrank            # lower = further left
 new order = genes sorted by ascending priority
 ```
 
-- `max_shift` caps how far one feedback event can move a gene (as a fraction of encoding length). It prevents extreme jumps such as bottom to top in one event.
+- The decoder reads Δh only (no base rank, no bias term). Zero perturbation (Δh = 0) therefore gives exactly zero displacement for any trained weights, and a gene's movement cannot depend on its position alone.
+- `max_shift` caps how far one feedback event can move a gene, as a fraction of the cell's encoding length. It limits the decoder's output, not Geneformer: `0.5` means one event can move a gene up to half of the cell's gene list.
 - Weights are initialized to zero, so an untrained decoder leaves the order unchanged.
+- Decoders saved before this change also read base rank and a bias. They cannot be loaded; retrain instead of passing them to `--decoder-checkpoint`.
 
 **Loss**
 
 - Huber loss (predicted Δrank vs Δr_obs)
 - Ordering loss (whether the Δrank order of gene pairs matches the teacher)
-- Identity loss (no movement when Δh = 0)
 - Smoothness penalty (discourages extreme displacements)
 
 **Choosing `max_shift`**
@@ -290,15 +291,13 @@ Choose the Run type **State-feedback ISP**. ISP source run, steps and GPU batch 
 
 The decoder is trained on "Δh with all steps applied", so Δh after an intermediate step is distributed differently from training. Keep this in mind when moving the feedback point (in the YAML, `eval.perturbation: feedback_point` checks direction fidelity at the feedback point).
 
-**Safeguards for multi-step (Feedback after every step)**
+**Multi-step (Feedback after every step)**
 
-Repeated feedback can make the order flip between two states, or stop moving. Feedback stops per cell on the following conditions.
+The only limit is the cap: at most `Max feedback events per chain` events per chain. After the cap, the remaining steps still run without feedback. The number of events and the first step skipped by the cap go to `run_manifest.json` (`multi_step.guard`).
 
-- **2-cycle:** if the proposed order returns to the order from two events ago and differs from the previous one, the proposal is rejected and the cell stops. If the oscillation continued, the final result would depend only on whether the number of feedback events is odd or even.
-- **Convergence:** the cell stops after 2 consecutive events in which the Spearman correlation between the order before and after one feedback event exceeds 0.995 (or the top-1000 Jaccard exceeds 0.99; only for cells with more than 1000 genes).
-- **Cap:** at most `Max feedback events per chain` events per chain.
+There is no per-cell stop. A convergence stop (Spearman > 0.995 twice in a row) was removed: each step adds a new perturbation, so small feedback changes so far do not mean the next step's feedback will be small, and a whole-encoding threshold misses large moves of a few genes (in a 2048-gene cell, one gene moving from the bottom to the top still gives Spearman 0.997). A 2-cycle stop was also removed: it required the whole order to return exactly to the one from two events ago, which practically never happens because a new perturbation enters between events.
 
-Cells that stop still receive the remaining perturbation steps and are included in the final shift (they are not excluded). Per-cell stop reasons are written to `<condition>/feedback_guard.csv`. **Whether multi-step feedback is more useful or more stable than a single feedback event has not been evaluated.** The paper's results use the default (one feedback event).
+> **Caution: multi-step feedback accumulates decoder error.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. With multi-step on and `ctrl_reference: start`, each event recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Displacement and decoder error therefore grow at least linearly with the number of events, and the encoding is pushed beyond the observed end-state ranks. There the shift reflects encoding disturbance rather than the biology the model has learned. `ctrl_reference: previous` avoids counting earlier steps again, but each event still predicts an end-point-scale change. We have not identified a number of events beyond one at which the biological signal is expected to stay above this error; the cap bounds the error but does not correct it. **Use one feedback event (the default) for any biological claim.** Whether multi-step feedback is more useful than one event has not been evaluated.
 
 **Perturbation specificity (optional)**
 
@@ -322,7 +321,7 @@ These can be changed by editing the **Config YAML** in the Web UI. The defaults 
 | `observed_max_ncells`, `min_detection_count` | 3000, 5 | Maximum cells used to build the teacher, and minimum number of cells a gene must be detected in to be used |
 | `decoder.*` | See 3.3 | Training cells, genes per cell, epochs, loss weights, `max_shift_grid`, held-out gene fraction |
 | `eval.*` | | Direction-fidelity settings (which perturbation to evaluate, top-K, bootstrap and permutation counts) |
-| `multi_step.*` | See 3.7 | Convergence thresholds and patience, and whether to stop on 2-cycles |
+| `multi_step.max_feedback_events` | 5 | Feedback-event cap for multi-step (see 3.7) |
 
 ### 3.9 Outputs
 
@@ -334,7 +333,6 @@ Written under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`.
 | `direction_fidelity/` | Primary evaluation: `direction_fidelity.json` (verdict), per-method correlations and precision@K, base-rank control, confidence intervals of method differences |
 | `<condition>/stepNN_<name>/per_cell_shifts.csv` | Per-cell shift for each condition and step |
 | `<condition>/stepNN_feedback/per_cell_shifts.csv` | Shift right after feedback |
-| `<condition>/feedback_guard.csv` | Multi-step only: per-cell stop reason, stop step and number of feedback events applied |
 | `phase12_summary.csv` | Shift summaries and reordering diagnostics for every condition and step (including feedback) |
 | `phase12_gate.csv` | Endpoint gate (secondary) |
 | `perturbation_specificity/` | Only when specificity is on |

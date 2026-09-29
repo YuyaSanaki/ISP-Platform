@@ -76,20 +76,12 @@ state_feedback:
 
   # Multi-step guardrails, used only with `feedback_every_step: true`
   # (feedback after every step from `feedback_after_step` on, except the last).
-  # Per cell: a rerank that returns to the encoding of two events ago is a 2-cycle;
-  # it is rejected and the cell's feedback stops. A feedback event is "small" when
-  # Spearman(before, after) > converge_spearman or top-`converge_topk` Jaccard
-  # > converge_jaccard (only for cells with more than converge_topk genes, since the
-  # gene set is fixed); after `converge_patience` small events in a row the cell's
-  # feedback stops. `max_feedback_events` caps feedback events per chain.
-  # Per-cell halts: <condition>/feedback_guard.csv; counts in run_manifest.json.
+  # `max_feedback_events` caps feedback events per chain; later steps run without
+  # feedback. There is no per-cell stop. Counts go to run_manifest.json.
+  # Caution: every extra event adds another end-point-scale displacement, so error
+  # grows with the number of events (docs/ordered_rank_edit_and_state_feedback_isp.md).
   multi_step:
     max_feedback_events: 5
-    converge_spearman: 0.995
-    converge_topk: 1000
-    converge_jaccard: 0.99
-    converge_patience: 2
-    halt_on_cycle: true
 
   # Guardrails. `hysteresis` quantizes priorities onto an epsilon grid before a
   # stable sort, so near-ties keep their original order (no jitter swaps).
@@ -141,7 +133,6 @@ state_feedback:
     batch_size: 4096
     lam_huber: 1.0
     lam_pair: 0.5
-    lam_identity: 1.0
     lam_smooth: 0.01
     # Selected by held-out-gene val Spearman. Widened past 0.2 because val
     # Spearman was still rising at the old upper bound; large values let the

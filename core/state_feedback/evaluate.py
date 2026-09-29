@@ -122,9 +122,7 @@ def predicted_delta_rank(
             raise ValueError("linear_deltarank requires a trained decoder")
         dev = next(decoder.parameters()).device
         with torch.no_grad():
-            pred = decoder.delta_rank(
-                samples.delta_h.to(dev), samples.base_rank.to(dev)
-            )
+            pred = decoder.delta_rank(samples.delta_h.to(dev))
         return pred.detach().cpu().tolist()
     raise ValueError(f"Unknown method {method!r}")
 

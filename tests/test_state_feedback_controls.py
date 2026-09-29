@@ -158,9 +158,7 @@ class TestDecoderControls(unittest.TestCase):
         dec = DeltaRankDecoder(d, max_shift=0.5)
         with torch.no_grad():
             dec.proj.weight.zero_()
-            dec.proj.bias.zero_()
             dec.proj.weight[0, 0] = 1.0   # reads delta_h[:, 0]
-            dec.proj.weight[0, d] = -1.0  # and base rank
         return dec
 
     def test_decoder_variants_isolate_inputs(self):
@@ -168,9 +166,9 @@ class TestDecoderControls(unittest.TestCase):
 
         s = self._samples()
         v = decoder_variants(self._decoder(), s, seed=0)
-        self.assertEqual(set(v), {"linear_deltarank", "delta_h_only", "delta_h_shuffled"})
+        self.assertEqual(set(v), {"linear_deltarank", "delta_h_shuffled"})
         tgt, base = s.target.numpy(), s.base_rank.numpy()
-        self.assertGreater(partial_spearman_given_base(v["delta_h_only"], tgt, base), 0.5)
+        self.assertGreater(partial_spearman_given_base(v["linear_deltarank"], tgt, base), 0.5)
         self.assertLess(abs(partial_spearman_given_base(v["delta_h_shuffled"], tgt, base)), 0.2)
 
     def test_base_rank_control_report(self):

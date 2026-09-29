@@ -1,4 +1,4 @@
-# State-feedback ISP v10.1 — permutation decoder 設計
+# State-feedback ISP v1.0.1 — permutation decoder 設計
 
 User-facing guide (how it works, conditions, Web UI settings): [ordered_rank_edit_and_state_feedback_isp.md](ordered_rank_edit_and_state_feedback_isp.md) (v1.0.1). This page is the design and validation record.
 
@@ -16,7 +16,7 @@ st   = D_ϕ(Ht, Ht⁰, Xt)          per-gene scalar score
 Xt+1 = Sort↓(Xt, st)              reranked token list (同一遺伝子集合、順序のみ置換)
 ```
 
-**Key constraint**: 遺伝子集合は固定。Token の挿入/削除を許すと generative transcriptome completion になり、別の問題。State-feedback ISP v10.1 は **fixed detected-gene set 上の conditional reranking**。
+**Key constraint**: 遺伝子集合は固定。Token の挿入/削除を許すと generative transcriptome completion になり、別の問題。State-feedback ISP v1.0.1 は **fixed detected-gene set 上の conditional reranking**。
 
 
 ## FT-mandatory premise
@@ -92,7 +92,7 @@ priority   = base_rank_norm + clamp(shift, ±max_shift)   # rerank.py
 |---|---|
 | decoder ≫ norm（direction fidelity で） | 学習した decode が実在の順位情報を運んでいる。**Phase 2 direction 軸 合格** |
 | decoder ≈ norm（endpoint shift のみで） | 指標が両者を区別できていない可能性が第一候補。direction fidelity で再判定する |
-| norm ≈ decoder（direction fidelity でも） | `norm` は null ではない。v10.1 の失敗ではなく、hidden-state norm に position / rank / context の実在シグナルが漏れていることを意味する。その場合 “negative control” の呼称をやめ **nonparametric representation baseline** と呼び替える |
+| norm ≈ decoder（direction fidelity でも） | `norm` は null ではない。v1.0.1 の失敗ではなく、hidden-state norm に position / rank / context の実在シグナルが漏れていることを意味する。その場合 “negative control” の呼称をやめ **nonparametric representation baseline** と呼び替える |
 
 **実測 (n=50, held-out genes, 観測 Δrank に対する pooled Spearman):**
 
@@ -117,21 +117,20 @@ direction fidelity の採点は **bounded displacement を適用する前のス�
 class DeltaRankDecoder(nn.Module):
     def __init__(self, d_model: int, max_shift: float):
         super().__init__()
-        self.proj = nn.Linear(d_model + 1, 1)
+        self.proj = nn.Linear(d_model, 1, bias=False)   # Δh のみ、bias なし
         self.max_shift = max_shift
 
     def forward(self, h_pert, h_ctrl, base_rank_norm):
         delta_h = h_pert - h_ctrl          # 摂動効果のみ
-        x = torch.cat([delta_h, base_rank_norm.unsqueeze(-1)], dim=-1)
-        delta_rank = self.max_shift * torch.tanh(self.proj(x).squeeze(-1))
+        delta_rank = self.max_shift * torch.tanh(self.proj(delta_h).squeeze(-1))
         return base_rank_norm + delta_rank  # argsort → new input_ids
 ```
 
-**入力設計の意図**: `delta_h`（`h_ctrl` ではなく差分）を使うことで、decoder が base cell identity ではなく **perturbation effect** を読むよう制約。`h_ctrl` の追加は後続 ablation。
+**入力設計の意図**: `delta_h`（`h_ctrl` ではなく差分）を使うことで、decoder が base cell identity ではなく **perturbation effect** を読むよう制約。`h_ctrl` の追加は後続 ablation。base rank と bias も入力に入れない。これにより Δh = 0 なら学習した重みによらず変位は厳密に 0 になり、遺伝子の移動が元の位置だけで決まることもない。当初は `[delta_h ; base_rank_norm]` と bias を入力にしていたが、base を 0.5 に固定した Δh のみの予測でも partial ρ が linear と同等だった（BBRC n=300: 0.332 対 0.329）ため外した。旧形式で保存した decoder は読み込めない（再学習が必要）。
 
-**`tanh` bound の意図**: 1 step で bottom → top のような病的ランクジャンプを抑止。`max_shift` は grid search（実装では val Spearman が 0.20 で伸び続けたため {0.05, 0.1, 0.2, 0.3, 0.5} に拡張）。
+**`tanh` bound の意図**: 1 step で bottom → top のような病的ランクジャンプを抑止。`max_shift` は decoder の出力（1 回の feedback で 1 遺伝子が動ける幅、細胞内 encoding 長に対する割合）の上限で、Geneformer 自体の出力は抑えていない。grid search（実装では val Spearman が 0.20 で伸び続けたため {0.05, 0.1, 0.2, 0.3, 0.5} に拡張）。
 
-**実装との対応** (`core/state_feedback/decoder.py`): 上記 `forward(h_pert, h_ctrl, base_rank_norm)` は `from_states()` として保持し、中核は `delta_h` を直接受ける `delta_rank()` / `forward(delta_h, base_rank_norm)`。同じ `delta_h` を学習と推論で再利用するため。`proj` は **zero-init** なので未学習 decoder は厳密に恒等置換になる。
+**実装との対応** (`core/state_feedback/decoder.py`): 上記 `forward(h_pert, h_ctrl, base_rank_norm)` は `from_states()` として保持し、中核は `delta_h` を直接受ける `delta_rank(delta_h)` / `forward(delta_h, base_rank_norm)`。同じ `delta_h` を学習と推論で再利用するため。`proj` は **zero-init** なので未学習 decoder は厳密に恒等置換になる。
 
 **pairwise loss の適用先に注意.** 順序損失は **変位 (Δrank) に対して**掛ける。絶対 priority に対して掛けると `base_rank_norm` を tanh で増幅するだけで最小化でき（= 構成上すでに正しい順序に変位予算を全部使う）、Δh シグナルが消える。合成線形教師での Spearman が 0.999 → 0.215 に落ちることで確認済み。
 
@@ -175,21 +174,22 @@ Oracle: 観測された摂動後ランクリストを next-step input_ids とし
 |:---:|:---|:---|:---|
 | 1 | **Fixed gene set** | trajectory 内で token の挿入/削除なし | 済 — `rerank.apply_priority_order` は置換のみ（`test_gene_set_is_preserved`） |
 | 2 | **Bounded displacement** | tanh / clamp; max_shift を grid search | 済 — `decoder.delta_rank` の `max_shift·tanh`、baseline は `rerank.bounded_priority` |
-| 3 | **Null-drift check** | null perturbation → Δr ≈ 0 を検証、drift 量を報告 | 済 — 解析値 `decoder.null_drift` + 実走条件 `null_feedback`。実測は**変位 0.0 / Spearman 1.0 / shift 0.0000**（解析 drift 0.004 は `base_rank_norm` の単調関数なので順序不変） |
+| 3 | **Null-drift check** | null perturbation → Δr ≈ 0 を検証、drift 量を報告 | 済 — decoder の入力が Δh のみ（bias なし）なので Δh = 0 で変位は構造的に 0。解析値 `decoder.null_drift`（常に 0）と実走条件 `null_feedback` で毎回記録する。旧 decoder（base rank + bias 入り）でも実測は**変位 0.0 / Spearman 1.0 / shift 0.0000**だった（解析 drift 0.004 は `base_rank_norm` の単調関数で順序不変だったため。ただし構造的な保証ではなかった） |
 | 4 | **Swap hysteresis** | \|ŝ_i − ŝ_j\| < ε の隣接ランクは元の順序を保持 | 済 — priority を ε グリッドに量子化してから**安定ソート**（近接差を厳密な同値に変える）。既定 `hysteresis: 0.0`（無効） |
-| 5 | **Cycle detection** | X_t ↔ X_{t+1} の 2-cycle を検出、halt | 済 — `multistep.FeedbackGuard`。細胞ごとに、提案された post_t が post_{t−2} と一致し post_{t−1} と異なれば（`metrics.is_two_cycle`）提案を棄却して pre_t を保持し、その細胞を halt |
-| 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | 済 — `multistep.FeedbackGuard`。feedback 1 回の変化 Spearman(pre_t, post_t) > 0.995、または top-K Jaccard > 0.99 が `converge_patience`（既定 2）回連続した細胞を停止。hard cap は chain あたり `max_feedback_events`（既定 5） |
+| 5 | **Cycle detection** | X_t ↔ X_{t+1} の 2-cycle を検出、halt | 削除（下記） |
+| 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | hard cap のみ — chain あたり `max_feedback_events`（既定 5）。収束停止は削除（下記） |
 | 7 | **Cell-wise normalization** | ランクは cell-specific 相対量; 異なる sequence length の細胞間でスコアを直接比較しない | 済 — `base_rank_norm = i/(n−1)` で細胞内正規化、z-score も細胞内。教師 Δrank も各 state の平均 encoding 長で正規化 |
 
-5 と 6 は `feedback_every_step: true`（`feedback_after_step` 以降、最終 step を除く各 step の後に feedback）のときだけ働く。既定の feedback 1 回では発火しない。設定は `state_feedback.multi_step` に置く。
+6 の hard cap は `feedback_every_step: true`（`feedback_after_step` 以降、最終 step を除く各 step の後に feedback）のときだけ働く。既定の feedback 1 回では関係しない。設定は `state_feedback.multi_step.max_feedback_events`。cap に達した後の step は feedback なしで進む。feedback 回数と cap で飛ばした最初の step は `run_manifest.json` の `multi_step.guard` に、各 feedback 行には `guard_event` が入る。
 
-- **比較するのは同じ feedback の前後**。連続する post encoding どうしは、間に摂動 step が入って動くので直接比べない。
-- **Jaccard 基準は細胞の遺伝子数が K を超えるときだけ使う**。gene set が固定なので、遺伝子数が K 以下の細胞では top-K Jaccard が常に 1 になり、偽の収束になる。
-- **停止は細胞単位**。停止した細胞にも残りの摂動 step はかかるが、rerank はされない。全細胞が停止するか cap に達したら、それ以降の rerank 呼び出しを省く。cap 到達時にまだ動いていた細胞は `cap` として記録する。
-- 細胞ごとの停止理由・停止 step・適用回数は条件ディレクトリの `feedback_guard.csv` に書く。条件ごとの集計は `run_manifest.json` の `multi_step.guard` に入る。feedback 行には `guard_active_before/after`, `guard_new_cycle_halts`, `guard_new_converged` も付く。
-- 配線したのは**安全装置だけ**。multi-step が単発 feedback より有益か、安定かは評価していない（Phase 3）。
+- **細胞単位の停止は置かない**。
+  - 収束停止（削除）: 各 step で新しい摂動が入るので、これまでの feedback の変化が小さくても次の step の feedback が小さいとは限らない。encoding 全体の Spearman / top-K Jaccard の閾値は少数遺伝子の大きな移動も見逃す（2048 遺伝子の細胞で 1 遺伝子が最下位→最上位に動いても Spearman 0.997、4096 遺伝子では 0.9985）。当初は 0.995 × 2 回連続で停止していたが、マスターレギュレーター的な少数遺伝子の変化を「収束」とみなして以降の feedback を止めるため削除した。
+  - 2-cycle 停止（削除）: 順位リスト全体が 2 回前と完全一致したときだけ発動するが、feedback の間に新しい摂動が入るので実際にはほぼ発動しない（下記 smoke でも 0 件）。
+  - 旧設定の `converge_*` / `halt_on_cycle` キーは警告を出して無視する。`feedback_guard.csv` は書かない。
 
-BBRC OSKM の 4-step（KLF4→MYC→SOX2→POU5F1）を 30 細胞で回した smoke では、`oracle` は step 2・3 の更新が小さく（ρ ≈ 0.998）、全細胞が step 3 で converged として停止した。`norm` と `linear_deltarank` は更新が大きいまま（ρ 0.95–0.99）3 回とも適用され、cycle は 0 だった。
+> **注意：multi-step feedback は回を重ねるごとに計算上の誤差が膨らむ。** decoder は start→全 step の Δh から観測された終点の順位変化全体を予測するよう学習されている。毎 step feedback をかけると（`ctrl_reference: start`）、毎回 start 基準で Δh を取り直し（それまでの step と rerank の効果を含む）、すでに動いた順位にさらに終点規模の変化を足す。変化量と decoder の誤差は少なくとも回数に比例して増え、観測された終点を超えた順位では shift はモデルが持つ本来の生物学的意味ではなく encoding の乱れを反映し、生物学的な信号がマスクされていく。`ctrl_reference: previous` はそれまでの step の二重計上を避けるが、1 回ごとに終点規模の変化を予測する点は変わらない。1 回を超えて信号が誤差に埋もれないと予測できる回数は見つかっていない。cap は誤差の上限を抑えるだけで補正はしない。**生物学的な主張には既定の 1 回の feedback を使うこと。** multi-step が単発 feedback より有益かは評価していない（Phase 3）。
+
+BBRC OSKM の 4-step（KLF4→MYC→SOX2→POU5F1）を 30 細胞で回した smoke（細胞単位の停止を削除する前、旧 decoder）では、`oracle` は step 2・3 の更新が小さく（ρ ≈ 0.998）、全細胞が step 3 で converged として停止した。`norm` と `linear_deltarank` は更新が大きいまま（ρ 0.95–0.99）3 回とも適用され、cycle は 0 だった。目標そのものである `oracle` が 1 回でほぼ止まる一方、decoder は動き続けており、上の注意と整合する。
 
 
 ## 実装戦略（gated）
@@ -358,7 +358,7 @@ endpoint 教師では、遺伝子が細胞内で元々どの位置にいたか�
 | `linear_deltarank` | 0.437 | **0.242** [0.234, 0.250] |
 | `base_rank`（交差適合） | 0.422 | 0 以下（位置以外の情報を持たない。5 細胞 smoke で −0.06） |
 | linear、Δh を細胞内でシャッフル | — | 0.010 |
-| linear、base を 0.5 に固定（Δh のみ） | — | ≈ linear と同値 |
+| linear、base を 0.5 に固定（Δh のみ） | — | ≈ linear と同値（この結果を受けて decoder を Δh のみの入力に変更。以下の数値は変更前の decoder） |
 | `norm` / `delta_mlm` | 0.040 / −0.013 | — |
 
 - partial ρ = base rank の 20 分位 bin ごとに、予測と観測の順位からそれぞれ bin 平均を引いた後の相関。「元の位置を超えて Δh が足している分」
@@ -415,7 +415,7 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 **証明できたこと:**
 
 - Oracle-A reranking は endpoint classifier 空間を大きく動かせる（feasibility）
-- `null_feedback` は完全な恒等置換であり、decoder は無根拠な drift を作らない（変位 0.0 / Spearman 1.0 / top-100 Jaccard 1.0 / shift 0.0000）。解析 null drift は非ゼロ（0.004）だが `base_rank_norm` の単調関数なので順序不変
+- `null_feedback` は完全な恒等置換であり、decoder は無根拠な drift を作らない（変位 0.0 / Spearman 1.0 / top-100 Jaccard 1.0 / shift 0.0000）。旧 decoder では解析 null drift が非ゼロ（0.004）だったが `base_rank_norm` の単調関数なので順序不変。現在の decoder（Δh のみ、bias なし）では構造的に 0
 - linear decoder は held-out gene 上で観測 Δrank に対し pooled ρ = 0.419、cell-wise median ρ = 0.443 を示し、`norm` / `delta_mlm` を bootstrap CI が 0 を跨がない差で上回る（50/50 細胞で優位）。ただし pooled ρ の大部分は base rank で説明でき、Δh 由来の上乗せは partial ρ ≈ 0.24（n=300 で CI [0.234, 0.250]）
 - その上乗せは摂動に依存する（初期化カクテル 0.24〜0.31 対 ランダム OE 0.075）
 - 同じ手順で別の種・別の遷移（Asano PIPseq）でも、小さいながら同じ形が再現する（partial ρ ≈ 0.13、ランダム delete ≈ 0.01）
@@ -427,7 +427,8 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - donor / batch をまたいで一般化するか
 - 変位の **大きさ** が信用できるか（単調だが圧縮されている）
 - down 方向（発現順位低下）を特異的に捉えられているか
-- multi-step state-feedback が単発 feedback を越えて有益かつ安定か（cycle detection / convergence stopping は配線済み、評価は未実施）
+- multi-step state-feedback が単発 feedback を越えて有益かつ安定か（hard cap のみ配線済み、評価は未実施。回数とともに誤差が膨らむ構造的な理由は「実装ガードレール」節の注意を参照）
+- Δh のみの decoder で上記の数値（旧 decoder: Δh + base rank + bias）が再現するか
 
 #### 次にやること（優先順）
 
@@ -437,7 +438,7 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 4. down 方向の弱さの原因究明（compositional な押し出しか、教師の非対称性か）
 5. Oracle-B 用の reprogramming time-course dataset を用意
 6. Asano: batch holdout（replicate をまたぐ FT）と、in-cell rank も揃えたランダム delete
-7. multi-step の有益性・安定性の評価（cycle detection / convergence stopping / hard cap は runner に配線済み。下記 stability metrics を multi-seed で報告）
+7. multi-step の有益性・安定性の評価（hard cap のみ runner に配線済み。下記 stability metrics を multi-seed で報告）
 8. **Phase 3 (MLP) は上記が済み、かつ linear が Oracle-B gap を残した場合のみ**
 
 
@@ -465,9 +466,7 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - Top-K overlap (Jaccard) at K = 100, 500, 1000
 - Rank displacement distribution per step
 - Null-perturbation cumulative drift
-- 2-cycle / oscillation frequency（`feedback_guard.csv` の `halt_reason = cycle`）
 - Multi-seed reproducibility
-- Convergence step count distribution（`feedback_guard.csv` の `halt_step`）
 
 
 ## Claims boundary for Methods
@@ -505,13 +504,14 @@ Data sources (priority order):
 ```text
 L = λ₁ · Huber(Δr_pred, Δr_obs)
   + λ₂ · L_pair           (pairwise / ListMLE ordering loss) ※Δr に対して掛ける
-  + λ₃ · L_identity        (ctrl→ctrl: Δr ≈ 0)
   + λ₄ · L_smooth          (regularize extreme Δr)
 ```
 
+当初あった λ₃ · L_identity（ctrl→ctrl で Δr ≈ 0）は、decoder の入力を Δh のみ（bias なし）にしたことで構造的に常に 0 になるため削除した。
+
 `L_pair` は **Δr（変位）の順序**に対して定義する。絶対 priority (`base_rank_norm + Δr`) の順序に対して定義してはならない — `base_rank_norm` を tanh で増幅すれば満たせてしまい、Δh 由来の情報が失われる（上記 decoder 節参照）。
 
-実装既定値 (`state_feedback.decoder`): `lam_huber: 1.0`, `lam_pair: 0.5`, `lam_identity: 1.0`, `lam_smooth: 0.01`, Huber δ = 0.05, Adam。
+実装既定値 (`state_feedback.decoder`): `lam_huber: 1.0`, `lam_pair: 0.5`, `lam_smooth: 0.01`, Huber δ = 0.05, Adam。
 
 
 ## scPRINT-2 reference (design parallel, not drop-in)
