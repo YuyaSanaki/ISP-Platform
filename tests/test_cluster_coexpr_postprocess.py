@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,31 +13,56 @@ CORE = Path(__file__).resolve().parents[1] / "core"
 if str(CORE) not in sys.path:
     sys.path.insert(0, str(CORE))
 
-# run_isp_umap pulls torch / transformers at import time; stub for unit tests.
-for _mod in (
-    "torch",
-    "transformers",
-    "datasets",
-    "umap_plot_style",
-    "geneformer",
-    "geneformer.species_context",
-    "geneformer.gene_converter",
-    "geneformer.tokenizer",
-    "geneformer.in_silico_perturber_stats",
-):
-    sys.modules.setdefault(_mod, MagicMock())
 
-from isp_umap_celltype import (  # noqa: E402
-    annotate_dataframe_with_cell_types,
-    predict_cell_types_from_input_ids,
-)
-from run_isp_umap import (  # noqa: E402
-    DEFAULT_POSTPROCESS_CFG,
-    build_isp_umap_config,
-    postprocess_is_enabled,
-    postprocess_wants_celltype,
-    run_downstream_plots,
-)
+@contextmanager
+def _stubbed_modules(names):
+    """Stub ``names`` in sys.modules only while importing.
+
+    Afterwards the stubs and every core module imported under them are removed,
+    so later test files import the real torch / transformers / geneformer.
+    """
+    saved = {name: sys.modules.get(name) for name in names}
+    before = set(sys.modules)
+    for name in names:
+        sys.modules.setdefault(name, MagicMock())
+    try:
+        yield
+    finally:
+        for name in set(sys.modules) - before:
+            if str(getattr(sys.modules[name], "__file__", None) or "").startswith(str(CORE)):
+                del sys.modules[name]
+        for name, orig in saved.items():
+            if orig is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = orig
+
+
+# run_isp_umap pulls torch / transformers at import time; stub for unit tests.
+with _stubbed_modules(
+    (
+        "torch",
+        "transformers",
+        "datasets",
+        "umap_plot_style",
+        "geneformer",
+        "geneformer.species_context",
+        "geneformer.gene_converter",
+        "geneformer.tokenizer",
+        "geneformer.in_silico_perturber_stats",
+    )
+):
+    from isp_umap_celltype import (
+        annotate_dataframe_with_cell_types,
+        predict_cell_types_from_input_ids,
+    )
+    from run_isp_umap import (
+        DEFAULT_POSTPROCESS_CFG,
+        build_isp_umap_config,
+        postprocess_is_enabled,
+        postprocess_wants_celltype,
+        run_downstream_plots,
+    )
 
 
 def test_postprocess_default_off():
@@ -164,28 +190,17 @@ def test_resolve_n_clusters_auto_picks_true_k():
     import numpy as np
 
     # plot_isp_umap_joint_overlays pulls matplotlib/seaborn at import time.
-    for _mod in (
-        "seaborn",
-        "matplotlib",
-        "matplotlib.pyplot",
-        "isp_umap_postprocess_style",
+    with _stubbed_modules(
+        ("seaborn", "matplotlib", "matplotlib.pyplot", "isp_umap_postprocess_style")
     ):
-        sys.modules.setdefault(_mod, MagicMock())
-
-    # Module-level torch MagicMock breaks scipy/sklearn; unstub for this test.
-    torch_stub = sys.modules.pop("torch", None)
-    try:
         from plot_isp_umap_joint_overlays import resolve_n_clusters
 
-        rng = np.random.default_rng(0)
-        # Three well-separated blobs → silhouette should prefer k=3.
-        centers = np.array([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]])
-        X = np.vstack([c + rng.normal(0, 0.3, size=(40, 2)) for c in centers])
-        assert resolve_n_clusters(5, X, seed=0) == 5
-        assert resolve_n_clusters("auto", X, seed=0, k_min=2, k_max=6) == 3
-    finally:
-        if torch_stub is not None:
-            sys.modules["torch"] = torch_stub
+    rng = np.random.default_rng(0)
+    # Three well-separated blobs → silhouette should prefer k=3.
+    centers = np.array([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]])
+    X = np.vstack([c + rng.normal(0, 0.3, size=(40, 2)) for c in centers])
+    assert resolve_n_clusters(5, X, seed=0) == 5
+    assert resolve_n_clusters("auto", X, seed=0, k_min=2, k_max=6) == 3
 
 
 def test_celltype_preisp_only_no_token_markers():
