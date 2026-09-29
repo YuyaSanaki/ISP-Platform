@@ -504,6 +504,39 @@ feedback を重ねると同じ変位を二重に数えうる（idle events が�
 （観測 goal state）の教師で学習しているので、どの摂動でも goal へ引き寄せうる（random
 chains が測る）。null（摂動なし）の multi-step は Δh = 0 で構造的に恒等なので測らない。
 
+#### 結果（2026-09-29, Pegasus H100, somatic 300 cells, OSKM を K→M→S→O の順, seed 0/1/2）
+
+**判定: S1 不成立, S2 不成立, S3 成立（差は小さい）, S4 不成立 → multi-step は支持されない。**
+決定規則により、論文の State-feedback は single event（`feedback_every_step: false`）で報告する。
+出力: `ISP-Platform/output/sf_stability_20260929/pegasus_out/aggregate/`（seed ごとの run は同階層）。
+
+| 項目 | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| feedback 各回の Spearman（細胞中央値） | 0.974 / 0.811 / 0.877 / 0.923 | 0.982 / 0.838 / 0.856 / 0.898 | 0.974 / 0.826 / 0.878 / 0.912 |
+| feedback 各回の変位（位置, 細胞中央値） | 78 / 258 / 198 / 144 | 65 / 239 / 218 / 179 | 78 / 247 / 204 / 156 |
+| idle 1→5 の Spearman | 0.947 → 0.981 | 0.931 → 0.984 | 0.931 → 0.968 |
+| idle 1→5 の変位 | 104 → 55 | 137 → 55 | 117 → 62 |
+| idle 5 後の Ordered rank-edit 終点との Spearman | 0.158 | −0.077 | 0.056 |
+| 終点 shift: multi-step（idle 前） | 0.308 | 0.329 | 0.342 |
+| 終点 shift: idle 5 後 | 0.365 | 0.361 | 0.383 |
+| 終点 shift: single event | 0.212 | 0.202 | 0.212 |
+| random chain 5 本の終点 shift | 0.279–0.283 | 0.300–0.306 | 0.305–0.310 |
+
+Ordered rank-edit の終点は OSKM 0.0105、random chain 0.0004–0.0029。seed 間の最終 encoding の
+per-cell Spearman は 0.80 / 0.84 / 0.87（top-100 Jaccard 0.39–0.52）、終点 shift の CV は 5.2%。
+
+読み方:
+
+- **S1**: 2 回目の feedback で変化が 1 回目の約 3 倍（変位 65–78 → 239–258 位）に膨らむ。以降は縮むが 1 回目より大きい
+- **S2**: 摂動なしの rerank でも 1 回あたり 55–62 位動き続け、終点 shift も上がり続ける。変位は減っているので発散ではないが、
+  5 回では収束しない。その間に Ordered rank-edit の終点との相関は 0 付近まで落ち、元の encoding の順序はほぼ残らない。
+  `ctrl_reference: start` の Δh が既に適用した変位を含むことによる二重計上と整合する
+- **S3**: 基準上は成立するが、ランダム遺伝子 4 つの chain でも OSKM の gain の 91–95% が出る。multi-step の終点の上乗せの
+  大部分は摂動に依らない goal 方向への引き寄せで、OSKM 特異的な部分は 0.015–0.022 程度
+- **S4**: 終点 shift の値は seed 間で揃う（CV 5%）が、どの遺伝子がどこに来るかは seed で変わる（Spearman 0.80–0.87）
+- single event の終点（0.20–0.21）も、1 回目の feedback だけで ~0.19 に跳ぶ。この跳びが OSKM 特異的かは単発でのランダム対照が要る
+  （ここでは測っていない。摂動特異性の partial ρ は「摂動特異性」節）
+
 
 ## Claims boundary for Methods
 
