@@ -271,10 +271,17 @@ def main() -> int:
         gs.raw_input_ids(start_ds, 0, len(start_ds), model_input_size)
     )
     goal_detection, _ = random_chains.start_profiles(obs_ds["input_ids"])
+    covariates = {
+        "start_detection": {t: start_detection.get(t, 0.0) for t in population},
+        "start_rank": start_rank,
+        "goal_detection": {t: goal_detection.get(t, 0.0) for t in population},
+        "teacher_delta": {int(t): float(v) for t, v in teacher.items()},
+    }
     chains: dict[str, tuple[list[dict[str, Any]], list[list[int]]]] = {
         CONFIGURED: (list(steps), token_by_step),
     }
     draws: dict[str, Any] = {}
+    strata_pools: dict[str, Any] = {}
     for rs in random_seeds:
         drawn, record = random_chains.draw_random_chains(
             steps, token_by_step, population, start_detection, start_rank,
@@ -287,17 +294,9 @@ def main() -> int:
                 str(t): {k: v for k, v in info.items() if k != "pool"}
                 for t, info in record["strata"].items()
             },
-            **random_chains.describe(
-                record,
-                {
-                    "start_detection": start_detection,
-                    "start_rank": start_rank,
-                    "goal_detection": goal_detection,
-                    "teacher_delta": {int(t): float(v) for t, v in teacher.items()},
-                },
-                tok_names,
-            ),
+            **random_chains.describe(record, covariates, tok_names),
         }
+        strata_pools[str(rs)] = {str(t): info["pool"] for t, info in record["strata"].items()}
         for row in draws[str(rs)]["balance"]:
             print(
                 f"Random set s{rs} / {row['configured_gene']}: stratum={row['size']} "
@@ -308,6 +307,7 @@ def main() -> int:
             )
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "random_chains.json").write_text(json.dumps(draws, indent=2) + "\n")
+    (output_root / "random_strata.json").write_text(json.dumps(strata_pools) + "\n")
 
     split_seed = int(dec_cfg.get("seed", 0))
     train_tokens, val_tokens = split_tokens(
