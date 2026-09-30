@@ -27,7 +27,7 @@ Geneformer reads a cell as a list of gene tokens sorted from the highest to the 
 
 In both methods, one step is a group perturbation of one or more genes applied together.
 
-- **overexpress (OE):** moves the genes to the front of the list. Length is preserved: as many tokens as were inserted are cut from the end. A gene already in the list is removed from its old position and moved to the front.
+- **overexpress (OE):** moves the genes to the front of the list. Length is preserved: as many tokens as were inserted are cut from the end. A gene already in the list is removed from its old position and moved to the front. How this differs from official Geneformer group OE: [upstream_overexpression.md](upstream_overexpression.md).
 - **delete (KD):** removes the genes from the list, so the list gets shorter.
 
 ### 1.3 goal_state_shift (scoring)
