@@ -442,6 +442,22 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 6. Asano: batch holdout（replicate をまたぐ FT）と、in-cell rank も揃えたランダム delete
 7. multi-step の有益性・安定性の評価（hard cap のみ runner に配線済み。下記 stability metrics を multi-seed で報告）
 8. **Phase 3 (MLP) は上記が済み、かつ linear が Oracle-B gap を残した場合のみ**
+9. **逐次フィードバックの誤差蓄積（将来）。** 毎回 feedback は自分の出力を次の入力に戻す閉ループで、
+   S1（event ごとの変位の増大）と S2（新しい編集が無くても rerank が収束しない）はこの誤差蓄積の症状。
+   他分野の対処: 自分のロールアウトで集めた状態で再学習する（DAgger, Ross et al. 2011; scheduled sampling,
+   Bengio et al. 2015）、複数ステップを展開した損失で学習する（unrolled training / pushforward trick,
+   Brandstetter et al. 2022）。ここでは、feedback 後の encoding から Δh を集めて同じ教師で decoder を
+   再学習する、T step を展開して終点の教師との誤差で学習する、が候補。S2 の一因である `ctrl_reference: start`
+   による変位の二重計上の扱いも併せて決める。評価は S1/S2 と idle rerank の収束で行う。
+10. **遺伝子に依らない gain の分離（Plan B / 将来）。** マッチしたランダム chain でも gain の 95–97% が出る
+   （上記 X5-R 結果）。decoder は教師が一つ（somatic → pluripotent）なので、Δh に含まれる遺伝子の識別情報から
+   教師を引き当てられる可能性がある。報告の軸はプラセボとの差（Δspec, 計量経済のプラセボ検定・摂動予測の
+   Systema と同じ考え方）とし、将来の改善として decoder の入力側で遺伝子に依らない成分を除く:
+   (a) 概念消去（プラセボで当てはめた回帰で、遺伝子の文脈表現 h_ctrl から予測できる Δh 成分を除く;
+   base rank は LEACE, Belrose et al. 2023 / INLP, Ravfogel et al. 2020）、(b) 潜在反応の考え方での
+   プラセボ対照 Δh（細胞・遺伝子ごとに Δh − プラセボ chain の平均 Δh）。評価は decoder の selectivity
+   （OSKM とランダムの val Spearman の差、Hewitt & Liang 2019 の control task）と Δspec の特異的な割合。
+   少数細胞のスクリーニングは `review/REVISION_TODO.md` X7。
 
 
 ## 必須比較条件
