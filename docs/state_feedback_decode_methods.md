@@ -569,6 +569,33 @@ S1/S2 の幅を併記）。D1 が単発でのみ成立、または D2 不成立 
 単発でも D1 が不成立 → どちらの設定でも終点の上乗せは摂動特異的と言えないので、State-feedback の
 終点 shift は主張に使わない。seed 間の最終 encoding の一致（毎回 0.80–0.87）は単発でも測り、報告する。
 
+#### 比較結果（2026-09-30, Pegasus H100, 300 cells, seed 0/1/2）
+
+**判定: D1 は両方で成立、D2 不成立 → 単発 feedback（最後の step の後に 1 回）を主結果にする。**
+出力: `ISP-Platform/output/sf_stability_20260929/pegasus_out/aggregate/`（`mode_specificity.csv`,
+`mode_comparison.json`, `seed_agreement_single_last.csv`）。単発の run は `single_seed{0,1,2}/`。
+
+| 項目 | 毎回 feedback | 単発（最後の step 後） |
+|---|---|---|
+| OSKM の gain（細胞平均） | 0.303 / 0.321 / 0.333 | 0.271 / 0.252 / 0.273 |
+| ランダム chain 5 本の gain 平均 | 0.283 / 0.304 / 0.309 | 0.217 / 0.208 / 0.217 |
+| 特異的上乗せ Δspec [95% CI] | +0.019 [0.018, 0.020] / +0.018 [0.017, 0.019] / +0.024 [0.023, 0.025] | +0.054 [0.052, 0.056] / +0.043 [0.042, 0.045] / +0.056 [0.054, 0.057] |
+| 特異的な割合 | 6.4% / 5.5% / 7.2% | 19.9% / 17.2% / 20.3% |
+| Δspec 比（毎回 / 単発） | 0.36 / 0.41 / 0.43 | — |
+| seed 間の最終 encoding の Spearman | 0.84 / 0.87 / 0.80 | 0.989 / 0.994 / 0.986 |
+| Ordered rank-edit 終点との Spearman | 0.34–0.47 | 0.93–0.95 |
+
+（seed 0 / 1 / 2 の順。seed 間の Spearman は seed 対 0-1 / 0-2 / 1-2。）
+
+読み方:
+
+- 毎回 feedback は終点を上げるが、上がる分はランダム chain でもほぼ同じだけ上がる。OSKM に特異的な上乗せは
+  単発の 0.36–0.43 倍に減り、特異的な割合は約 20% から約 6% に下がる。feedback を重ねると、摂動に依らない
+  goal 方向への引き寄せが特異的な信号を薄める
+- 単発は decoder seed に対して最終 encoding がほぼ一致する（0.99）。毎回では 0.80–0.87
+- 単発でも gain の約 8 割はランダム chain でも出る（decoder は endpoint 教師で学習しているため）。State-feedback の
+  終点 shift は、ランダム chain の gain を差し引いた Δspec で報告する
+
 
 ## Claims boundary for Methods
 
