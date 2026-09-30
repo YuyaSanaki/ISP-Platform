@@ -12,11 +12,12 @@ from state_feedback.stability import (  # noqa: E402
     ChainTracker,
     coefficient_of_variation,
     cross_seed_agreement,
-    mode_comparison_verdict,
     pair_metrics,
+    running_random_mean,
     specific_gain,
     stability_verdict,
 )
+from state_feedback import random_chains  # noqa: E402
 
 try:
     import datasets  # noqa: F401
@@ -158,33 +159,77 @@ class TestSpecificGain(unittest.TestCase):
         with self.assertRaises(ValueError):
             specific_gain([0.1], [0.0], [], [])
 
+    def test_chain_spread_widens_ci(self):
+        conf, ref = [0.3] * 50, [0.0] * 50
+        tight = [[0.2] * 50 for _ in range(10)]
+        spread = [[0.2 + 0.05 * ((-1) ** r)] * 50 for r in range(10)]
+        refs = [[0.0] * 50] * 10
+        a = specific_gain(conf, ref, tight, refs, n_boot=500)
+        b = specific_gain(conf, ref, spread, refs, n_boot=500)
+        self.assertAlmostEqual(a["specific_gain_mean"], b["specific_gain_mean"])
+        self.assertEqual(a["specific_gain_ci_high"] - a["specific_gain_ci_low"], 0.0)
+        self.assertGreater(b["specific_gain_ci_high"] - b["specific_gain_ci_low"], 0.01)
+        self.assertAlmostEqual(b["random_gain_sd_chains"], 0.05 * (10 / 9) ** 0.5)
 
-def _spec(mean, lo, hi):
-    return {"specific_gain_mean": mean, "specific_gain_ci_low": lo, "specific_gain_ci_high": hi}
+    def test_null_places_configured_among_random_chains(self):
+        randoms = [[g] * 5 for g in (0.10, 0.12, 0.14, 0.16)]
+        refs = [[0.0] * 5] * 4
+        inside = specific_gain([0.13] * 5, [0.0] * 5, randoms, refs, n_boot=50)
+        outside = specific_gain([0.50] * 5, [0.0] * 5, randoms, refs, n_boot=50)
+        self.assertGreater(inside["null_empirical_p"], 0.2)
+        self.assertAlmostEqual(outside["null_empirical_p"], 1 / 5)
+        self.assertNotIn("null_sd", specific_gain([0.1], [0.0], [[0.0]] * 2, [[0.0]] * 2))
+
+    def test_running_mean(self):
+        rows = running_random_mean([[0.1, 0.1], [0.3, 0.3], [0.2, 0.2]], [[0.0, 0.0]] * 3)
+        self.assertEqual([r["n_chains"] for r in rows], [1, 2, 3])
+        self.assertAlmostEqual(rows[1]["running_mean"], 0.2)
+        self.assertAlmostEqual(rows[2]["running_mean"], 0.2)
+        self.assertAlmostEqual(rows[2]["running_se"], 0.1 / 3 ** 0.5)
 
 
-class TestModeComparison(unittest.TestCase):
-    def test_every_step_when_both_specific_and_similar(self):
-        v = mode_comparison_verdict({
-            0: {"multi_step": _spec(0.02, 0.01, 0.03), "single_last": _spec(0.015, 0.01, 0.02)},
-            1: {"multi_step": _spec(0.02, 0.01, 0.03), "single_last": _spec(0.03, 0.02, 0.04)},
-        })
-        self.assertEqual((v["D1_multi"], v["D1_single"], v["D2"]), (True, True, True))
-        self.assertEqual(v["primary"], "every_step")
+class TestRandomChains(unittest.TestCase):
+    def _profiles(self):
+        # configured: 1 (absent), 2 (rare, near the bottom). Population: 3-19 absent,
+        # 20-29 rare near the bottom, 30-39 common near the top.
+        det = {**{t: 0.05 for t in range(20, 30)}, **{t: 0.6 for t in range(30, 40)}, 2: 0.04}
+        rank = {**{t: 0.9 for t in range(20, 30)}, **{t: 0.2 for t in range(30, 40)}, 2: 0.88}
+        return list(range(1, 40)), det, rank
 
-    def test_single_when_ratio_out_of_range(self):
-        v = mode_comparison_verdict({
-            0: {"multi_step": _spec(0.10, 0.08, 0.12), "single_last": _spec(0.02, 0.01, 0.03)},
-        })
-        self.assertFalse(v["D2"])
-        self.assertEqual(v["primary"], "single_event")
+    def test_strata_match_start_position(self):
+        pop, det, rank = self._profiles()
+        absent, info = random_chains.stratum(1, pop, det, rank, min_stratum=5)
+        self.assertEqual(info["rule"], "absent")
+        self.assertTrue(set(range(10, 20)) <= set(absent))
+        self.assertFalse(set(absent) & set(range(20, 40)))
+        rare, info = random_chains.stratum(2, pop, det, rank, min_stratum=5)
+        self.assertEqual(sorted(set(rare) - {2}), list(range(20, 30)))
+        self.assertEqual(info["rank_window"], 0.1)
 
-    def test_none_when_single_not_specific(self):
-        v = mode_comparison_verdict({
-            0: {"multi_step": _spec(0.02, 0.01, 0.03), "single_last": _spec(0.001, -0.002, 0.004)},
-        })
-        self.assertFalse(v["D1_single"])
-        self.assertEqual(v["primary"], "none")
+    def test_draw_keeps_structure_and_is_order_invariant(self):
+        pop, det, rank = self._profiles()
+        steps = [{"type": "overexpress"}, {"type": "knockdown"}]
+        a, rec = random_chains.draw_random_chains(
+            steps, [[1, 2], [2]], pop, det, rank, n_chains=4, seed=3, min_stratum=5)
+        b, _ = random_chains.draw_random_chains(
+            steps[::-1], [[2], [2, 1]], pop, det, rank, n_chains=4, seed=3, min_stratum=5)
+        self.assertEqual(len(a), 4)
+        for name, (sl, tbs) in a.items():
+            self.assertEqual([len(t) for t in tbs], [2, 1])
+            self.assertEqual([s["type"] for s in sl], ["overexpress", "knockdown"])
+            self.assertEqual(tbs[0][1], tbs[1][0])  # same configured gene -> same random gene
+            self.assertEqual(sorted(b[name][1][1]), sorted(tbs[0]))
+        self.assertEqual(len(set(rec["picks"][1])), 4)  # without replacement
+        self.assertFalse(set(rec["picks"][1]) & {1, 2})
+
+    def test_describe_reports_balance(self):
+        pop, det, rank = self._profiles()
+        _, rec = random_chains.draw_random_chains(
+            [{"type": "overexpress"}], [[2]], pop, det, rank, n_chains=5, seed=0, min_stratum=5)
+        d = random_chains.describe(rec, {"goal": {t: float(t) for t in pop}}, {2: "KLF4"})
+        self.assertEqual(d["n_picks"], 5)
+        self.assertEqual(d["balance"][0]["configured_gene"], "KLF4")
+        self.assertIn("goal_smd", d["balance"][0])
 
 
 @unittest.skipUnless(HAS_ML, "torch / datasets not available")
@@ -248,31 +293,37 @@ class TestAggregate(unittest.TestCase):
             path / "per_cell_shifts.csv", index=False
         )
 
-    def test_mode_comparison_from_per_cell_files(self):
-        import json
+    def test_specific_gain_per_random_set_from_per_cell_files(self):
         import tempfile
+
+        import pandas as pd
 
         from run_state_feedback_stability import aggregate
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = self._write_run(root, 0, [list(range(1, 21))], 0.30)
-            for chain in ("configured", "random0"):
+            random_end = {"random_s0_0": 0.26, "random_s0_1": 0.24, "random_s0_10": 0.28,
+                          "random_s1_0": 0.22}
+            for chain in ("configured", *random_end):
                 self._cells(run / "ordered_rank_edit" / chain / "step02_x", [0.01, 0.01])
                 self._cells(run / "ordered_rank_edit" / chain / "step01_x", [9.0, 9.0])
             s = run / "seed0"
             self._cells(s / "multi_configured" / "step02_x", [9.0, 9.0])
-            self._cells(s / "multi_configured" / "step02_feedback", [0.31, 0.33])
+            self._cells(s / "multi_configured" / "step02_feedback", [0.31, 0.31])
             self._cells(s / "multi_configured" / "step01_feedback", [9.0, 9.0])
-            self._cells(s / "multi_random0" / "step02_feedback", [0.26, 0.28])
-            self._cells(s / "single_last_configured" / "step02_feedback", [0.21, 0.23])
-            self._cells(s / "single_last_random0" / "step02_feedback", [0.19, 0.21])
+            for chain, end in random_end.items():
+                self._cells(s / f"multi_{chain}" / "step02_feedback", [end, end])
             aggregate([run], run)
-            comp = json.loads((run / "mode_comparison.json").read_text())
-            self.assertTrue(comp["D1_multi"] and comp["D1_single"])
-            # multi specific 0.05, single specific 0.02 -> ratio 2.5
-            self.assertAlmostEqual(comp["per_seed"]["0"]["ratio_multi_over_single"], 2.5)
-            self.assertEqual(comp["primary"], "single_event")
+            spec = pd.read_csv(run / "specificity.csv").set_index("set")
+            self.assertEqual(list(spec.index), ["all", "s0", "s1"])
+            self.assertAlmostEqual(spec.loc["all", "specific_gain_mean"], 0.30 - 0.24)
+            self.assertAlmostEqual(spec.loc["s0", "specific_gain_mean"], 0.30 - 0.25)
+            self.assertEqual(spec.loc["all", "n_random_chains"], 4)
+            running = pd.read_csv(run / "random_running_mean.csv")
+            s0 = running[running["set"] == "s0"]
+            # draw order 0, 1, 10 (not string order)
+            self.assertEqual(list(s0["chain_gain"].round(4)), [0.25, 0.23, 0.27])
 
 
 @unittest.skipUnless(HAS_ML, "torch / datasets not available")
@@ -306,8 +357,7 @@ class TestRunConditionHook(unittest.TestCase):
                 rsf.run_condition(
                     "t", None, start, steps, tokens, "goal", {}, Path(tmp),
                     layer_to_quant=0, pad_token_id=0, model_input_size=4096,
-                    forward_batch_size=2, nproc=1, rerank_fn=reverse,
-                    feedback_every_step=True, on_encoding=hook,
+                    forward_batch_size=2, nproc=1, rerank_fn=reverse, on_encoding=hook,
                 )
         finally:
             rsf._score_cell_mean = saved

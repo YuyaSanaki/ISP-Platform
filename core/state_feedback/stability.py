@@ -172,29 +172,45 @@ def specific_gain(
 
     Every argument is per cell in the same cell order; ``*_ref`` are the Ordered
     rank-edit end points of the same chain. Returns the cell mean of
-    ``gain_configured - mean_r gain_random_r`` with a cell-bootstrap 95% CI.
+    ``gain_configured - mean_r gain_random_r``. The 95% CI resamples cells and, with
+    two or more random chains, the random chains too, so it includes the spread
+    from which random genes were drawn.
+
+    ``null_*`` places the configured value against the random chains themselves:
+    each random chain in turn is scored as if it were the configured one, against
+    the mean of the others (needs three or more random chains).
     """
     conf = np.asarray(configured, dtype=np.float64) - np.asarray(configured_ref, dtype=np.float64)
     if not randoms:
         raise ValueError("specific_gain needs at least one random chain")
-    rand = np.mean(
+    rand_by_chain = np.stack(
         [np.asarray(r, dtype=np.float64) - np.asarray(rr, dtype=np.float64)
-         for r, rr in zip(randoms, random_refs)],
-        axis=0,
+         for r, rr in zip(randoms, random_refs)]
     )
+    rand = rand_by_chain.mean(axis=0)
     if conf.shape != rand.shape:
         raise ValueError(f"cell counts differ: {conf.shape} vs {rand.shape}")
     diff = conf - rand
+    n_chains, n_cells = rand_by_chain.shape
     rng = np.random.default_rng(int(seed))
-    idx = rng.integers(0, diff.size, size=(int(n_boot), diff.size))
-    boot = diff[idx].mean(axis=1)
+    boot = np.empty(int(n_boot))
+    for b in range(int(n_boot)):
+        cells = rng.integers(0, n_cells, n_cells)
+        chains = rng.integers(0, n_chains, n_chains) if n_chains > 1 else np.zeros(1, dtype=int)
+        boot[b] = conf[cells].mean() - rand_by_chain[np.ix_(chains, cells)].mean()
     lo, hi = np.quantile(boot, [0.025, 0.975])
     gain = float(conf.mean())
     spec = float(diff.mean())
-    return {
-        "n_cells": float(diff.size),
+    chain_means = rand_by_chain.mean(axis=1)
+    out = {
+        "n_cells": float(n_cells),
+        "n_random_chains": float(n_chains),
         "configured_gain_mean": gain,
         "random_gain_mean": float(rand.mean()),
+        "random_gain_sd_chains": float(chain_means.std(ddof=1)) if n_chains > 1 else float("nan"),
+        "random_gain_se_chains": (
+            float(chain_means.std(ddof=1) / np.sqrt(n_chains)) if n_chains > 1 else float("nan")
+        ),
         "specific_gain_mean": spec,
         "specific_gain_median": float(np.median(diff)),
         "specific_gain_ci_low": float(lo),
@@ -202,58 +218,39 @@ def specific_gain(
         "specific_fraction": spec / gain if gain != 0 else float("nan"),
         "frac_cells_positive": float((diff > 0).mean()),
     }
+    if n_chains >= 3:
+        pseudo = np.array([
+            chain_means[r] - np.delete(chain_means, r).mean() for r in range(n_chains)
+        ])
+        out["null_sd"] = float(pseudo.std(ddof=1))
+        out["null_max"] = float(pseudo.max())
+        out["null_empirical_p"] = float((1 + np.sum(pseudo >= spec)) / (1 + n_chains))
+    return out
 
 
-COMPARISON_CRITERIA = {"D2_ratio_min": 0.5, "D2_ratio_max": 2.0}
+def running_random_mean(
+    randoms: Sequence[Sequence[float]],
+    random_refs: Sequence[Sequence[float]],
+) -> list[dict[str, float]]:
+    """Mean random-chain gain as chains are added in draw order, with its chain SE.
 
-
-def mode_comparison_verdict(
-    spec_by_seed: Mapping[Any, Mapping[str, Mapping[str, float]]],
-    *,
-    multi: str = "multi_step",
-    single: str = "single_last",
-    criteria: Mapping[str, float] = COMPARISON_CRITERIA,
-) -> dict[str, Any]:
-    """D1/D2 over seeds; ``spec_by_seed[seed][mode]`` is a ``specific_gain`` result."""
-    c = {**COMPARISON_CRITERIA, **dict(criteria)}
-
-    def excludes_zero(r: Mapping[str, float]) -> bool:
-        return bool(r["specific_gain_ci_low"] > 0 or r["specific_gain_ci_high"] < 0)
-
-    per_seed: dict[Any, dict[str, Any]] = {}
-    for seed, modes in spec_by_seed.items():
-        if multi not in modes or single not in modes:
-            continue
-        m, s = modes[multi], modes[single]
-        ratio = (
-            m["specific_gain_mean"] / s["specific_gain_mean"]
-            if s["specific_gain_mean"] != 0
-            else float("nan")
-        )
-        per_seed[seed] = {
-            "multi_excludes_zero": excludes_zero(m),
-            "single_excludes_zero": excludes_zero(s),
-            "ratio_multi_over_single": ratio,
-            "ratio_in_range": bool(ratio == ratio and c["D2_ratio_min"] <= ratio <= c["D2_ratio_max"]),
-        }
-    seeds = list(per_seed.values())
-    d1_multi = bool(seeds) and all(v["multi_excludes_zero"] for v in seeds)
-    d1_single = bool(seeds) and all(v["single_excludes_zero"] for v in seeds)
-    d2 = bool(seeds) and all(v["ratio_in_range"] for v in seeds)
-    if d1_multi and d1_single and d2:
-        primary = "every_step"
-    elif d1_single:
-        primary = "single_event"
-    else:
-        primary = "none"
-    return {
-        "criteria": c,
-        "per_seed": per_seed,
-        "D1_multi": d1_multi,
-        "D1_single": d1_single,
-        "D2": d2,
-        "primary": primary,
-    }
+    If the random draw is well behaved the mean settles and the SE shrinks as
+    ``1/sqrt(n)``; a jump when one chain is added points to an outlier gene.
+    """
+    chain_means = [
+        float(np.mean(np.asarray(r, dtype=np.float64) - np.asarray(rr, dtype=np.float64)))
+        for r, rr in zip(randoms, random_refs)
+    ]
+    rows = []
+    for n in range(1, len(chain_means) + 1):
+        head = np.asarray(chain_means[:n])
+        rows.append({
+            "n_chains": n,
+            "chain_gain": chain_means[n - 1],
+            "running_mean": float(head.mean()),
+            "running_se": float(head.std(ddof=1) / np.sqrt(n)) if n > 1 else float("nan"),
+        })
+    return rows
 
 
 def coefficient_of_variation(values: Sequence[float]) -> float:

@@ -69,25 +69,19 @@ state_feedback:
   observed_max_ncells: 3000
   min_detection_count: 5
 
-  # Where feedback is injected in the chain. By default the model's rank change is
-  # fed back after every step from `feedback_after_step` on, including the last,
-  # so the next step (and the endpoint) sees the reranked encoding.
-  # `feedback_every_step: false` gives one feedback event after `feedback_after_step`.
-  feedback_after_step: 1
-  feedback_every_step: true
-  feedback_after_last_step: true
+  # Feedback runs after every step, including the last: step 1 -> feedback -> step 2
+  # -> feedback -> ... -> step N -> feedback. The number of feedback events always
+  # equals the number of steps; there is no cap and no other schedule.
+  # CAUTION: the error grows with the number of steps. Each feedback event adds a
+  # displacement that is not undone, and part of the gain is non-specific (random
+  # genes also move toward the goal). Keep chains short, compare only chains with the
+  # same number of steps, and subtract matched random chains
+  # (core/run_state_feedback_stability.py; docs/state_feedback_decode_methods.md).
+  # The removed keys feedback_every_step / feedback_after_step /
+  # feedback_after_last_step / multi_step raise an error if they ask for anything else.
   # Keep the genes overexpressed so far at the front; the rerank moves only the rest.
   pin_overexpressed: true
   ctrl_reference: start      # start | previous
-
-  # Multi-step cap, used only with `feedback_every_step: true`.
-  # `max_feedback_events` caps feedback events per chain; later steps run without
-  # feedback. There is no per-cell stop. Counts go to run_manifest.json.
-  # Caution: every extra event adds another end-point-scale displacement, so error
-  # grows with the number of events (docs/ordered_rank_edit_and_state_feedback_isp.md).
-  # For a biological claim, compare against `feedback_every_step: false`.
-  multi_step:
-    max_feedback_events: 5
 
   # Guardrails. `hysteresis` quantizes priorities onto an epsilon grid before a
   # stable sort, so near-ties keep their original order (no jitter swaps).
@@ -101,8 +95,7 @@ state_feedback:
   # cannot separate "permuted in the right direction" from "encoding was disturbed",
   # and the oracle carries endpoint leakage, so neither settles the gate alone.
   eval:
-    # full_chain  = features from all steps applied (matches decoder training)
-    # feedback_point = features at the step where feedback is actually injected
+    # full_chain = features from all steps applied (matches decoder training)
     perturbation: full_chain
     max_genes_per_cell: 512
     topk: [50, 100, 500]
@@ -134,19 +127,21 @@ state_feedback:
   # Criteria S1-S4 are pre-registered in docs/state_feedback_decode_methods.md.
   # Each seed retrains the decoder; the train/val gene split keeps decoder.seed.
   # `idle_events` reranks the final encoding again with no new perturbation.
-  # Random chains draw one teacher gene per configured step (same step types).
-  # `modes`: multi = feedback after every step (+ idle events), single = one feedback
-  # event after the `single_event_at` step (first = feedback_after_step, last = final
-  # step), run on the random chains too when `single_event_random` is true.
+  # Random chains (core/state_feedback/random_chains.py) keep the configured structure
+  # (steps, genes per step, types). Each configured gene is replaced by a gene drawn
+  # uniformly from the model vocabulary among genes with the same start-cell position:
+  # absent from every start cell if the configured gene is absent, otherwise detection
+  # 0.5-2x and median position within 0.1 (widened until `min_stratum` genes qualify).
+  # Each entry of `random_seeds` is an independent draw of `n_random_chains` chains;
+  # two draws must agree before the random mean is trusted. The draw, gene symbols
+  # and balance are written to random_chains.json.
   stability:
     seeds: [0, 1, 2]
-    modes: [multi, single]
     idle_events: 5
-    n_random_chains: 5
-    random_seed: 0
+    n_random_chains: 20
+    random_seeds: [0, 1]
+    min_stratum: 50
     topk: [100, 500, 1000]
-    single_event_at: last
-    single_event_random: true
 
   decoder:
     train_max_ncells: 200

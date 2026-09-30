@@ -10,7 +10,11 @@ For each decoder seed (decoder retrained; the train/val gene split stays fixed):
 |-------|------------------|
 | configured, multi-step + ``idle_events`` | per-event change (S1); extra reranks with no new perturbation must converge, not drift (S2) |
 | ``n_random_chains`` random chains, multi-step | endpoint gain over Ordered rank-edit must be larger for the configured chain than for every random chain (S3); a decoder trained on the endpoint teacher could pull any chain toward the goal |
-| configured and random chains, single event | one feedback event after ``single_event_at`` (first or last step); the configured gain beyond the random-chain gain is compared with multi-step (D1, D2) |
+
+Every chain gets feedback after every step (``state_feedback.multistep``). Random chains
+are drawn by ``state_feedback.random_chains`` (structure- and position-matched; the
+draw is written to ``random_chains.json``). The configured gain beyond the mean
+random-chain gain (specific gain) is reported per seed with a cell-bootstrap CI.
 
 Ordered rank-edit runs once per chain (no decoder) and is the reference path.
 Across seeds, the final configured encodings and endpoint shifts must agree (S4).
@@ -25,7 +29,6 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
-import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -53,12 +56,13 @@ import run_state_feedback_isp as rsf
 
 from state_feedback import feedback as fb
 from state_feedback import gene_states as gs
-from state_feedback.multistep import MultiStepConfig
+from state_feedback import random_chains
+from state_feedback.multistep import check_feedback_config
 from state_feedback.stability import (
     DEFAULT_TOPK,
     ChainTracker,
     cross_seed_agreement,
-    mode_comparison_verdict,
+    running_random_mean,
     specific_gain,
     stability_verdict,
 )
@@ -102,10 +106,11 @@ def main() -> int:
     parser.add_argument("--n-random-chains", type=int, default=None)
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument(
-        "--modes",
+        "--random-seeds",
+        type=int,
         nargs="+",
         default=None,
-        help="multi and/or single (default: state_feedback.stability.modes, else both).",
+        help="One independent draw of --n-random-chains chains per seed.",
     )
     parser.add_argument(
         "--run-name",
@@ -150,16 +155,18 @@ def main() -> int:
         if args.n_random_chains is not None
         else st_cfg.get("n_random_chains", 5)
     )
-    random_seed = int(st_cfg.get("random_seed", 0))
+    random_seeds = [
+        int(s) for s in (args.random_seeds or st_cfg.get("random_seeds") or [0])
+    ]
+    min_stratum = int(st_cfg.get("min_stratum", 50))
+    if "random_seed" in st_cfg:
+        raise ValueError("state_feedback.stability.random_seed is now random_seeds (a list)")
     topk = tuple(int(k) for k in (st_cfg.get("topk") or DEFAULT_TOPK))
-    modes = list(args.modes or st_cfg.get("modes") or ["multi", "single"])
-    unknown_modes = sorted(set(modes) - {"multi", "single"})
-    if unknown_modes:
-        raise ValueError(f"unknown stability modes {unknown_modes}; valid: multi, single")
-    single_at = str(st_cfg.get("single_event_at", "last"))
-    if single_at not in {"first", "last"}:
-        raise ValueError("state_feedback.stability.single_event_at must be 'first' or 'last'")
-    single_random = bool(st_cfg.get("single_event_random", True))
+    for key in ("modes", "single_event_at", "single_event_random"):
+        if key in st_cfg:
+            raise ValueError(
+                f"state_feedback.stability.{key} was removed: only feedback after every step is run"
+            )
 
     dataset_path = Path(paths["dataset"]).expanduser()
     model_path = Path(paths["geneformer_model"]).expanduser()
@@ -182,17 +189,16 @@ def main() -> int:
     emb_layer = int(isp_cfg.get("emb_layer", 0))
     nproc = args.nproc if args.nproc is not None else int(runtime.get("nproc", 1))
     hysteresis = float(sf_cfg.get("hysteresis", 0.0))
-    feedback_after_step = int(sf_cfg.get("feedback_after_step", 1))
     pin_overexpressed = bool(sf_cfg.get("pin_overexpressed", True))
     ctrl_reference = str(sf_cfg.get("ctrl_reference", "start"))
     if ctrl_reference not in {"start", "previous"}:
         raise ValueError("state_feedback.ctrl_reference must be 'start' or 'previous'")
-    multi_step = MultiStepConfig.from_mapping(sf_cfg.get("multi_step"))
 
     log_species_banner(species_from_config(cfg))
     steps = parse_steps(sf_cfg) or parse_steps(config_block(cfg))
     if not steps:
         raise ValueError("stability evaluation needs explicit state_feedback.steps")
+    check_feedback_config(sf_cfg, len(steps))
 
     from datasets import load_from_disk
 
@@ -253,21 +259,55 @@ def main() -> int:
         print(f"Step {step['index']} {step['type']} {step['name']}: {', '.join(resolved)}",
               flush=True)
 
-    configured_tokens = {t for ts in token_by_step for t in ts}
-    pool = sorted(set(int(t) for t in teacher) - configured_tokens)
-    rng = random.Random(random_seed)
+    with open(backend.token_dictionary, "rb") as fh:
+        vocab = pickle.load(fh)
+    population = sorted(int(t) for k, t in vocab.items() if not str(k).startswith("<"))
+    tok_names = {int(t): str(k) for k, t in vocab.items()}
+    if getattr(backend, "gene_symbol_to_ensembl", None):
+        with open(backend.gene_symbol_to_ensembl, "rb") as fh:
+            ens_to_symbol = {v: k for k, v in pickle.load(fh).items()}
+        tok_names = {t: ens_to_symbol.get(e, e) for t, e in tok_names.items()}
+    start_detection, start_rank = random_chains.start_profiles(
+        gs.raw_input_ids(start_ds, 0, len(start_ds), model_input_size)
+    )
+    goal_detection, _ = random_chains.start_profiles(obs_ds["input_ids"])
     chains: dict[str, tuple[list[dict[str, Any]], list[list[int]]]] = {
         CONFIGURED: (list(steps), token_by_step),
     }
-    for r in range(n_random):
-        picks = rng.sample(pool, len(steps))
-        chains[f"random{r}"] = (
-            [
-                {"index": i + 1, "name": f"random{r}_{t}", "type": s["type"], "genes": [str(t)]}
-                for i, (s, t) in enumerate(zip(steps, picks))
-            ],
-            [[t] for t in picks],
+    draws: dict[str, Any] = {}
+    for rs in random_seeds:
+        drawn, record = random_chains.draw_random_chains(
+            steps, token_by_step, population, start_detection, start_rank,
+            n_chains=n_random, seed=rs, min_stratum=min_stratum, prefix=f"random_s{rs}_",
         )
+        chains.update(drawn)
+        draws[str(rs)] = {
+            **{k: v for k, v in record.items() if k != "strata"},
+            "strata": {
+                str(t): {k: v for k, v in info.items() if k != "pool"}
+                for t, info in record["strata"].items()
+            },
+            **random_chains.describe(
+                record,
+                {
+                    "start_detection": start_detection,
+                    "start_rank": start_rank,
+                    "goal_detection": goal_detection,
+                    "teacher_delta": {int(t): float(v) for t, v in teacher.items()},
+                },
+                tok_names,
+            ),
+        }
+        for row in draws[str(rs)]["balance"]:
+            print(
+                f"Random set s{rs} / {row['configured_gene']}: stratum={row['size']} "
+                f"({row['rule']}, rank_window={row['rank_window']}) "
+                f"goal_detection SMD={row['goal_detection_smd']:+.2f} "
+                f"teacher_delta SMD={row['teacher_delta_smd']:+.2f}",
+                flush=True,
+            )
+    output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / "random_chains.json").write_text(json.dumps(draws, indent=2) + "\n")
 
     split_seed = int(dec_cfg.get("seed", 0))
     train_tokens, val_tokens = split_tokens(
@@ -289,8 +329,7 @@ def main() -> int:
     def _ids(ds) -> list[list[int]]:
         return gs.raw_input_ids(ds, 0, len(ds), model_input_size)
 
-    def run_tracked(label, step_list, tbs, out_dir, rerank_fn, *, every_step, reference=None,
-                    after_step=feedback_after_step):
+    def run_tracked(label, step_list, tbs, out_dir, rerank_fn, *, reference=None):
         tracker = ChainTracker(label, start_ids, reference=reference, topk=topk)
         captured: dict[str, Any] = {"ref": {}}
 
@@ -304,12 +343,8 @@ def main() -> int:
         rows = rsf.run_condition(
             label, model, start_ds, step_list, tbs, goal_state, state_embs, out_dir,
             rerank_fn=rerank_fn,
-            feedback_after_step=after_step,
-            feedback_every_step=every_step,
-            feedback_after_last_step=True,
             pin_overexpressed=pin_overexpressed,
             ctrl_reference=ctrl_reference,
-            multi_step=multi_step,
             on_encoding=on_encoding,
             **common,
         )
@@ -328,7 +363,7 @@ def main() -> int:
         print(f"=== ordered_rank_edit / {chain} ===", flush=True)
         tracker, rows, captured = run_tracked(
             f"ore_{chain}", step_list, tbs,
-            output_root / "ordered_rank_edit" / chain, None, every_step=False,
+            output_root / "ordered_rank_edit" / chain, None,
         )
         references[chain] = captured["ref"]
         ore_endpoint[chain] = _endpoint(rows)
@@ -371,12 +406,12 @@ def main() -> int:
             )
 
         gains: dict[str, float] = {}
-        for chain, (step_list, tbs) in (chains.items() if "multi" in modes else ()):
+        for chain, (step_list, tbs) in chains.items():
             tc = time.time()
             print(f"=== seed {seed} / multi-step / {chain} ===", flush=True)
             tracker, rows, captured = run_tracked(
                 f"multi_{chain}", step_list, tbs, seed_dir / f"multi_{chain}",
-                rerank_fn, every_step=True, reference=references[chain],
+                rerank_fn, reference=references[chain],
             )
             end = _endpoint(rows)
             gains[chain] = end - ore_endpoint[chain]
@@ -421,32 +456,6 @@ def main() -> int:
                 event_rows.append({"seed": seed, "mode": "multi_step", **row})
             timings[f"seed{seed}_multi_{chain}_s"] = time.time() - tc
 
-        single_mode = f"single_{single_at}"
-        single_chains = list(chains) if single_random else [CONFIGURED]
-        for chain in (single_chains if "single" in modes else ()):
-            tc = time.time()
-            print(f"=== seed {seed} / single event ({single_at} step) / {chain} ===", flush=True)
-            step_list, tbs = chains[chain]
-            tracker, rows, _ = run_tracked(
-                f"{single_mode}_{chain}", step_list, tbs,
-                seed_dir / f"{single_mode}_{chain}", rerank_fn, every_step=False,
-                reference=references[chain],
-                after_step=n_steps if single_at == "last" else feedback_after_step,
-            )
-            end = _endpoint(rows)
-            endpoint_rows.append({
-                "seed": seed, "chain": chain, "mode": single_mode,
-                "endpoint_median": end,
-                "ordered_rank_edit_endpoint": ore_endpoint[chain],
-                "gain_over_ordered_rank_edit": end - ore_endpoint[chain],
-            })
-            if chain == CONFIGURED:
-                with open(seed_dir / f"final_{single_mode}_configured.pkl", "wb") as fh:
-                    pickle.dump([list(map(int, x)) for x in tracker.last], fh)
-            for row in tracker.rows:
-                event_rows.append({"seed": seed, "mode": single_mode, **row})
-            timings[f"seed{seed}_{single_mode}_{chain}_s"] = time.time() - tc
-
         _flush()
         del decoder
         ore._empty_cuda_cache()
@@ -465,17 +474,15 @@ def main() -> int:
         "chains": {c: [s["genes"] for s in sl] for c, (sl, _) in chains.items()},
         "seeds": seeds,
         "split_seed": split_seed,
-        "modes": modes,
-        "single_event_at": single_at,
-        "single_event_random": single_random,
         "idle_events": idle_events,
         "n_random_chains": n_random,
-        "random_seed": random_seed,
+        "random_seeds": random_seeds,
+        "random_population": "model vocabulary minus special tokens and configured genes",
+        "random_min_stratum": min_stratum,
         "topk": list(topk),
-        "feedback_after_step": feedback_after_step,
+        "feedback": {"policy": "after_every_step", "events_per_chain": n_steps},
         "pin_overexpressed": pin_overexpressed,
         "ctrl_reference": ctrl_reference,
-        "multi_step": multi_step.to_dict(),
         "hysteresis": hysteresis,
         "decoders": decoders,
         "forward_batch_size": forward_batch_size,
@@ -534,45 +541,30 @@ def aggregate(run_dirs: list[Path], out_dir: Path) -> dict[str, Any]:
     print(f"Wrote {out_dir / 'stability_verdict.json'}", flush=True)
 
     spec_rows: list[dict[str, Any]] = []
-    spec_by_seed: dict[int, dict[str, dict[str, float]]] = {}
+    running_rows: list[dict[str, Any]] = []
     for d in run_dirs:
         for seed_dir in sorted(d.glob("seed*")):
             if not seed_dir.is_dir():
                 continue
             seed = int(seed_dir.name.removeprefix("seed"))
-            for mode, prefix in (("multi_step", "multi_"), (SINGLE_LAST, f"{SINGLE_LAST}_")):
-                spec = _mode_specific_gain(d, seed_dir, prefix, seed=seed)
-                if spec is None:
-                    continue
-                spec_by_seed.setdefault(seed, {})[mode] = spec
-                spec_rows.append({"seed": seed, "mode": mode, **spec})
+            spec = _specific_gain(d, seed_dir, seed=seed)
+            if spec is not None:
+                spec_rows += [{"seed": seed, **r} for r in spec[0]]
+                running_rows += [{"seed": seed, **r} for r in spec[1]]
     if spec_rows:
-        comparison = mode_comparison_verdict(spec_by_seed, multi="multi_step", single=SINGLE_LAST)
-        single_finals = _load_finals(run_dirs, f"final_{SINGLE_LAST}_configured.pkl")
-        single_agreement = cross_seed_agreement(single_finals, topk)
-        comparison["single_seed_spearman"] = [r["spearman_median"] for r in single_agreement]
-        comparison["multi_seed_spearman"] = [r["spearman_median"] for r in agreement]
-        pd.DataFrame(spec_rows).to_csv(out_dir / "mode_specificity.csv", index=False)
-        pd.DataFrame(single_agreement).to_csv(
-            out_dir / f"seed_agreement_{SINGLE_LAST}.csv", index=False
-        )
-        (out_dir / "mode_comparison.json").write_text(
-            json.dumps(comparison, indent=2, default=str) + "\n"
-        )
+        pd.DataFrame(spec_rows).to_csv(out_dir / "specificity.csv", index=False)
+        pd.DataFrame(running_rows).to_csv(out_dir / "random_running_mean.csv", index=False)
         for r in spec_rows:
             print(
-                f"  seed {r['seed']} {r['mode']:<12} gain={r['configured_gain_mean']:.4f} "
-                f"random={r['random_gain_mean']:.4f} specific={r['specific_gain_mean']:+.4f} "
+                f"  seed {r['seed']} set={r['set']:<4} n={int(r['n_random_chains'])} "
+                f"gain={r['configured_gain_mean']:.4f} "
+                f"random={r['random_gain_mean']:.4f}±{r['random_gain_se_chains']:.4f} "
+                f"specific={r['specific_gain_mean']:+.4f} "
                 f"[{r['specific_gain_ci_low']:+.4f}, {r['specific_gain_ci_high']:+.4f}] "
-                f"fraction={r['specific_fraction']:.3f}",
+                f"null_p={r.get('null_empirical_p', float('nan')):.3f}",
                 flush=True,
             )
-        print(json.dumps({k: comparison[k] for k in ("D1_multi", "D1_single", "D2", "primary")},
-                         indent=2), flush=True)
     return verdict
-
-
-SINGLE_LAST = "single_last"
 
 
 def _load_finals(run_dirs: list[Path], name: str) -> dict[int, list]:
@@ -598,26 +590,50 @@ def _final_cells(chain_dir: Path) -> pd.Series | None:
     return df.set_index("cell_index")["Shift_to_goal_end"].sort_index()
 
 
-def _mode_specific_gain(run_dir: Path, seed_dir: Path, prefix: str, *, seed: int):
+def _random_set(chain: str) -> tuple[str, int]:
+    """``random_s1_7`` -> ("s1", 7); older ``random7`` -> ("all", 7)."""
+    body = chain.removeprefix("random")
+    if body.startswith("_s"):
+        rs, _, idx = body[2:].partition("_")
+        return f"s{rs}", int(idx)
+    return "all", int(body)
+
+
+def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "multi_"):
+    """Specific gain over all random chains and per independent random draw.
+
+    Returns ``(rows, running)``: one ``specific_gain`` row per random set (``set``
+    = ``all`` or ``s<random_seed>``) and the running random mean per set in draw order.
+    """
     conf = _final_cells(seed_dir / f"{prefix}{CONFIGURED}")
     conf_ref = _final_cells(run_dir / "ordered_rank_edit" / CONFIGURED)
     if conf is None or conf_ref is None:
         return None
-    randoms, refs = [], []
-    for chain_dir in sorted(seed_dir.glob(f"{prefix}random*")):
+    by_set: dict[str, list[tuple[int, Any, Any]]] = {}
+    for chain_dir in seed_dir.glob(f"{prefix}random*"):
         chain = chain_dir.name.removeprefix(prefix)
         r = _final_cells(chain_dir)
         rr = _final_cells(run_dir / "ordered_rank_edit" / chain)
-        if r is not None and rr is not None:
-            randoms.append(r.loc[conf.index].to_numpy())
-            refs.append(rr.loc[conf.index].to_numpy())
-    if not randoms:
+        if r is None or rr is None:
+            continue
+        name, idx = _random_set(chain)
+        by_set.setdefault(name, []).append(
+            (idx, r.loc[conf.index].to_numpy(), rr.loc[conf.index].to_numpy())
+        )
+    if not by_set:
         return None
-    out = specific_gain(
-        conf.to_numpy(), conf_ref.loc[conf.index].to_numpy(), randoms, refs, seed=seed
-    )
-    out["n_random_chains"] = float(len(randoms))
-    return out
+    sets = {k: sorted(v, key=lambda x: x[0]) for k, v in sorted(by_set.items())}
+    if "all" not in sets:
+        sets = {"all": [c for v in sets.values() for c in v], **sets}
+    rows, running = [], []
+    c, cr = conf.to_numpy(), conf_ref.loc[conf.index].to_numpy()
+    for name, chains in sets.items():
+        randoms = [x[1] for x in chains]
+        refs = [x[2] for x in chains]
+        rows.append({"set": name, **specific_gain(c, cr, randoms, refs, seed=seed)})
+        if name != "all" or len(sets) == 1:
+            running += [{"set": name, **r} for r in running_random_mean(randoms, refs)]
+    return rows, running
 
 
 if __name__ == "__main__":

@@ -806,11 +806,10 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 )
                 self.assertEqual(sf["conditions"], list(app._SF_ISP_CONDITIONS))
                 self.assertEqual(sf["observed_state"], "WT")
-                self.assertEqual(sf["feedback_after_step"], 1)
-                self.assertTrue(sf["feedback_every_step"])
-                self.assertTrue(sf["feedback_after_last_step"])
+                for removed in ("feedback_after_step", "feedback_every_step",
+                                "feedback_after_last_step", "multi_step"):
+                    self.assertNotIn(removed, sf)
                 self.assertTrue(sf["pin_overexpressed"])
-                self.assertEqual(sf["multi_step"]["max_feedback_events"], 5)
                 self.assertNotIn("specificity", sf)
                 # eval / decoder hyperparameters come from the core template
                 self.assertIn("max_shift_grid", sf["decoder"])
@@ -830,9 +829,6 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                         "sf_isp_max_ncells": 50,
                         "sf_isp_conditions": ["ordered_rank_edit", "linear_deltarank"],
                         "sf_isp_observed_state": "AD",
-                        "sf_isp_feedback_after_step": 9,
-                        "sf_isp_feedback_every_step": True,
-                        "sf_isp_max_feedback_events": 3,
                         "sf_isp_spec_enabled": True,
                         "sf_isp_spec_sets": "3F: Pou5f1 Sox2 Nanog\n# comment\nctl: Actb, Gapdh",
                         "sf_isp_spec_sets_type": "overexpress",
@@ -849,9 +845,6 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 self.assertEqual(cfg["isp"]["max_ncells"], 50)
                 self.assertEqual(sf["conditions"], ["ordered_rank_edit", "linear_deltarank"])
                 self.assertEqual(sf["observed_state"], "AD")
-                self.assertEqual(sf["feedback_after_step"], 1)  # clamped to n_steps - 1
-                self.assertTrue(sf["feedback_every_step"])
-                self.assertEqual(sf["multi_step"]["max_feedback_events"], 3)
                 spec = sf["specificity"]
                 self.assertTrue(spec["enabled"])
                 self.assertEqual(spec["sets"]["3F"], {"type": "overexpress",
@@ -915,8 +908,8 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 (run / "run_manifest.json").write_text(
                     json.dumps({"steps": [{"type": "overexpress", "genes": ["Pou5f1"]}],
                                 "gate": [{"condition": "linear_deltarank"}], "decoder": {},
-                                "multi_step": {"config": {}, "guard": {
-                                    "oracle": {"feedback_events": 3, "capped_before_step": 4}}}})
+                                "feedback": {"policy": "after_every_step",
+                                             "events_per_chain": 1}})
                 )
                 empty = source / "state_feedback_isp" / "state_feedback_isp_000000"
                 empty.mkdir()
@@ -930,7 +923,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 summary = app._load_state_feedback_summary(run)
                 self.assertTrue(summary["verdict"]["pass"])
                 self.assertEqual(summary["gate"], [{"condition": "linear_deltarank"}])
-                self.assertEqual(summary["multi_step_guard"]["oracle"]["capped_before_step"], 4)
+                self.assertEqual(summary["feedback"]["events_per_chain"], 1)
                 self.assertNotIn("specificity_rows", summary)
                 self.assertEqual(app._load_state_feedback_summary(empty), {"run": empty})
                 self.assertEqual(app._discover_sf_isp_runs(Path(tmp) / "missing"), [])
