@@ -69,7 +69,7 @@ from state_feedback.decoder import (
 )
 from state_feedback.evaluate import compare_methods, direction_fidelity_verdict
 from state_feedback.metrics import gap_closed_fraction, spearman_values
-from state_feedback.multistep import FeedbackGuard, MultiStepConfig
+from state_feedback.multistep import check_feedback_config
 from state_feedback.oracle_rerank import build_pseudobulk_rank_priority
 from state_feedback.samples import collect_eval_samples
 from state_feedback.teacher import observed_delta_rank, split_tokens
@@ -169,28 +169,21 @@ def run_condition(
     forward_batch_size: int,
     nproc: int,
     rerank_fn: Callable[[Any, Any], fb.RerankResult] | None = None,
-    feedback_after_step: int = 1,
-    feedback_every_step: bool = True,
-    feedback_after_last_step: bool = True,
     pin_overexpressed: bool = True,
     ctrl_reference: str = "start",
-    multi_step: MultiStepConfig | None = None,
-    guard_summaries: dict[str, Any] | None = None,
+    on_encoding: Callable[[str, int, Any], None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run one condition's perturbation chain, optionally with state feedback.
+    """Run one condition's perturbation chain, with state feedback when ``rerank_fn`` is set.
 
-    With ``feedback_every_step`` the number of feedback events is capped by a
-    ``FeedbackGuard``. ``feedback_after_last_step`` also reranks after the final
-    step, so the endpoint is the post-feedback encoding. ``pin_overexpressed`` keeps
-    the genes overexpressed so far at the front (in their pre-rerank order) and lets
-    the rerank move only the other genes.
+    With ``rerank_fn`` the encoding is reranked after every step, including the last,
+    so a chain of N steps has N feedback events and the endpoint is the post-feedback
+    encoding (see ``state_feedback.multistep``). Without it the chain is Ordered
+    rank-edit ISP. ``pin_overexpressed`` keeps the genes overexpressed so far at the
+    front (in their pre-rerank order) and lets the rerank move only the other genes.
+    ``on_encoding(kind, step, dataset)`` is called with ``kind`` ``"step"`` after each
+    perturbation and ``"feedback"`` after each rerank.
     """
     workers = ore._gpu_resident_map_workers(nproc)
-    guard = (
-        FeedbackGuard(multi_step)
-        if rerank_fn is not None and feedback_every_step
-        else None
-    )
     batch_state = [int(forward_batch_size)]
     working = start_ds
     try:
@@ -199,7 +192,6 @@ def run_condition(
         pass
     rows: list[dict[str, Any]] = []
     n_steps = len(steps)
-    last_feedback_step = n_steps if feedback_after_last_step else n_steps - 1
     overexpressed: set[int] = set()
 
     for step_idx, (step, tokens) in enumerate(zip(steps, token_by_step), start=1):
@@ -215,6 +207,8 @@ def run_condition(
             fn_kwargs={"tokens": list(tokens), "perturb_type": ptype},
             num_proc=workers,
         )
+        if on_encoding is not None:
+            on_encoding("step", step_idx, working)
         df = _score_cell_mean(
             model,
             start_ds,
@@ -249,21 +243,7 @@ def run_condition(
         )
         ore._empty_cuda_cache()
 
-        do_feedback = (
-            rerank_fn is not None
-            and step_idx >= int(feedback_after_step)
-            and step_idx <= last_feedback_step
-            and (feedback_every_step or step_idx == int(feedback_after_step))
-        )
-        if not do_feedback:
-            continue
-        if guard is not None and guard.cap_reached:
-            if guard.mark_cap(step_idx):
-                print(
-                    f"  [{condition}] feedback cap ({guard.cfg.max_feedback_events} events) "
-                    f"reached before step{step_idx}; later steps run without feedback",
-                    flush=True,
-                )
+        if rerank_fn is None:
             continue
 
         ctrl_ds = start_ds if ctrl_reference == "start" else pre_step
@@ -271,8 +251,9 @@ def run_condition(
         if pin_overexpressed and overexpressed:
             before_ids = gs.raw_input_ids(working, 0, len(working), model_input_size)
             new_ids, diag = fb.pin_tokens_front(before_ids, new_ids, frozenset(overexpressed))
-        guard_stats = guard.record_event() if guard is not None else {}
         working = fb.replace_input_ids(working, new_ids, num_proc=workers)
+        if on_encoding is not None:
+            on_encoding("feedback", step_idx, working)
         df_fb = _score_cell_mean(
             model,
             start_ds,
@@ -299,29 +280,18 @@ def run_condition(
                 "shift_metric": SHIFT_METRIC,
                 **stats_fb,
                 **diag,
-                **guard_stats,
+                "feedback_event": step_idx,
             }
-        )
-        guard_note = (
-            f" event={int(guard_stats['guard_event'])}/{guard.cfg.max_feedback_events}"
-            if guard is not None
-            else ""
         )
         print(
             f"  [{condition}] feedback after step{step_idx}: "
             f"median={stats_fb['median']:.6f} "
             f"moved={diag.get('rerank_frac_moved', float('nan')):.3f} "
-            f"rho={diag.get('rerank_spearman_before_after', float('nan')):.4f}"
-            f"{guard_note}",
+            f"rho={diag.get('rerank_spearman_before_after', float('nan')):.4f} "
+            f"event={step_idx}/{n_steps}",
             flush=True,
         )
         ore._empty_cuda_cache()
-
-    if guard is not None:
-        summary = guard.summary()
-        print(f"  [{condition}] feedback guard: {summary}", flush=True)
-        if guard_summaries is not None:
-            guard_summaries[condition] = summary
 
     return rows
 
@@ -512,7 +482,6 @@ def run_direction_fidelity(
     nproc: int,
     alpha: float,
     max_shift: float,
-    feedback_after_step: int,
 ) -> dict[str, Any]:
     """Score every method against the observed Δrank on the held-out gene split.
 
@@ -521,15 +490,12 @@ def run_direction_fidelity(
     the classifier-space shift cannot distinguish from mere encoding disturbance.
     """
     which = str(eval_cfg.get("perturbation", "full_chain"))
-    if which == "feedback_point":
-        n_steps = int(feedback_after_step)
-    elif which == "full_chain":
-        n_steps = None
-    else:
-        raise ValueError("state_feedback.eval.perturbation must be full_chain or feedback_point")
-    pert_ds = _apply_steps_at_once(
-        start_ds, steps, token_by_step, nproc=nproc, n_steps=n_steps
-    )
+    if which != "full_chain":
+        raise ValueError(
+            "state_feedback.eval.perturbation must be full_chain "
+            "(feedback_point was removed with the single-event feedback settings)"
+        )
+    pert_ds = _apply_steps_at_once(start_ds, steps, token_by_step, nproc=nproc)
 
     seed = int(eval_cfg.get("seed", 0))
     samples = collect_eval_samples(
@@ -891,14 +857,10 @@ def main() -> int:
     hysteresis = float(sf_cfg.get("hysteresis", 0.0))
     alpha = float(sf_cfg.get("alpha", 1.0))
     baseline_max_shift = float(sf_cfg.get("baseline_max_shift", 0.1))
-    feedback_after_step = int(sf_cfg.get("feedback_after_step", 1))
-    feedback_every_step = bool(sf_cfg.get("feedback_every_step", True))
-    feedback_after_last_step = bool(sf_cfg.get("feedback_after_last_step", True))
     pin_overexpressed = bool(sf_cfg.get("pin_overexpressed", True))
     ctrl_reference = str(sf_cfg.get("ctrl_reference", "start"))
     if ctrl_reference not in {"start", "previous"}:
         raise ValueError("state_feedback.ctrl_reference must be 'start' or 'previous'")
-    multi_step = MultiStepConfig.from_mapping(sf_cfg.get("multi_step"))
 
     log_species_banner(species_from_config(cfg))
 
@@ -908,6 +870,8 @@ def main() -> int:
         raise ValueError(
             "state-feedback ISP needs explicit state_feedback.steps (genes + type per step)"
         )
+    check_feedback_config(sf_cfg, len(steps))
+    print(f"Feedback after every step: {len(steps)} events per chain", flush=True)
 
     from datasets import load_from_disk
 
@@ -1059,7 +1023,6 @@ def main() -> int:
             nproc=nproc,
             alpha=alpha,
             max_shift=baseline_max_shift,
-            feedback_after_step=feedback_after_step,
         )
         ore._empty_cuda_cache()
 
@@ -1097,7 +1060,6 @@ def main() -> int:
         nproc=nproc,
     )
     all_rows: list[dict[str, Any]] = []
-    guard_summaries: dict[str, Any] = {}
 
     for condition in conditions:
         print(f"=== {condition} ===", flush=True)
@@ -1177,13 +1139,8 @@ def main() -> int:
                 state_embs,
                 output_root / condition,
                 rerank_fn=rerank_fn,
-                feedback_after_step=feedback_after_step,
-                feedback_every_step=feedback_every_step,
-                feedback_after_last_step=feedback_after_last_step,
                 pin_overexpressed=pin_overexpressed,
                 ctrl_reference=ctrl_reference,
-                multi_step=multi_step,
-                guard_summaries=guard_summaries,
                 **common,
             )
         )
@@ -1243,15 +1200,8 @@ def main() -> int:
             {"name": s["name"], "type": s["type"], "genes": s["genes"]} for s in steps
         ],
         "conditions": conditions,
-        "feedback_after_step": feedback_after_step,
-        "feedback_every_step": feedback_every_step,
-        "feedback_after_last_step": feedback_after_last_step,
+        "feedback": {"policy": "after_every_step", "events_per_chain": len(steps)},
         "pin_overexpressed": pin_overexpressed,
-        "multi_step": (
-            {"config": multi_step.to_dict(), "guard": guard_summaries}
-            if feedback_every_step
-            else None
-        ),
         "ctrl_reference": ctrl_reference,
         "hysteresis": hysteresis,
         "decoder": decoder_info,

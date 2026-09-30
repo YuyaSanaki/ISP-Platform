@@ -177,17 +177,17 @@ Oracle: 観測された摂動後ランクリストを next-step input_ids とし
 | 3 | **Null-drift check** | null perturbation → Δr ≈ 0 を検証、drift 量を報告 | 済 — decoder の入力が Δh のみ（bias なし）なので Δh = 0 で変位は構造的に 0。解析値 `decoder.null_drift`（常に 0）と実走条件 `null_feedback` で毎回記録する。旧 decoder（base rank + bias 入り）でも実測は**変位 0.0 / Spearman 1.0 / shift 0.0000**だった（解析 drift 0.004 は `base_rank_norm` の単調関数で順序不変だったため。ただし構造的な保証ではなかった） |
 | 4 | **Swap hysteresis** | \|ŝ_i − ŝ_j\| < ε の隣接ランクは元の順序を保持 | 済 — priority を ε グリッドに量子化してから**安定ソート**（近接差を厳密な同値に変える）。既定 `hysteresis: 0.0`（無効） |
 | 5 | **Cycle detection** | X_t ↔ X_{t+1} の 2-cycle を検出、halt | 削除（下記） |
-| 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | hard cap のみ — chain あたり `max_feedback_events`（既定 5）。収束停止は削除（下記） |
+| 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | 削除 — feedback 回数は常に step 数（下記）。収束停止・cap とも削除 |
 | 7 | **Cell-wise normalization** | ランクは cell-specific 相対量; 異なる sequence length の細胞間でスコアを直接比較しない | 済 — `base_rank_norm = i/(n−1)` で細胞内正規化、z-score も細胞内。教師 Δrank も各 state の平均 encoding 長で正規化 |
 
-6 の hard cap は `feedback_every_step: true`（既定。`feedback_after_step` 以降の各 step の後に feedback。`feedback_after_last_step: true`（既定）なら最終 step の後も feedback し、終点 shift は rerank 後の encoding で読む）のときだけ働く。`feedback_every_step: false`（feedback 1 回）では関係しない。`pin_overexpressed: true`（既定）では、それまでに OE した遺伝子を rerank 前の順序のまま先頭に固定し、残りの遺伝子だけを並べ替える。設定は `state_feedback.multi_step.max_feedback_events`。cap に達した後の step は feedback なしで進む。feedback 回数と cap で飛ばした最初の step は `run_manifest.json` の `multi_step.guard` に、各 feedback 行には `guard_event` が入る。
+feedback は全 step の後（最終 step の後を含む）にかける。これ以外のスケジュールと回数の上限はない（2026-09-30 に削除）。feedback 回数は常に step 数と同じで、終点 shift は最後の rerank 後の encoding で読む。step 間に feedback がなければ結果は最終 encoding だけで決まり、Ordered rank-edit ISP（= 逆順リストの multi-gene ISP）と同じになる。最終 step 後だけの feedback も最終 encoding だけで決まる。したがって逐次（sequential）と言えるのは毎 step feedback だけである。旧キー `feedback_every_step` / `feedback_after_step` / `feedback_after_last_step` / `multi_step` は、毎 step feedback 以外を指定するとエラーになる（`state_feedback.multistep.check_feedback_config`）。`pin_overexpressed: true`（既定）では、それまでに OE した遺伝子を rerank 前の順序のまま先頭に固定し、残りの遺伝子だけを並べ替える。各 feedback 行には `feedback_event`（= step 番号）が入る。
 
 - **細胞単位の停止は置かない**。
   - 収束停止（削除）: 各 step で新しい摂動が入るので、これまでの feedback の変化が小さくても次の step の feedback が小さいとは限らない。encoding 全体の Spearman / top-K Jaccard の閾値は少数遺伝子の大きな移動も見逃す（2048 遺伝子の細胞で 1 遺伝子が最下位→最上位に動いても Spearman 0.997、4096 遺伝子では 0.9985）。当初は 0.995 × 2 回連続で停止していたが、マスターレギュレーター的な少数遺伝子の変化を「収束」とみなして以降の feedback を止めるため削除した。
   - 2-cycle 停止（削除）: 順位リスト全体が 2 回前と完全一致したときだけ発動するが、feedback の間に新しい摂動が入るので実際にはほぼ発動しない（下記 smoke でも 0 件）。
   - 旧設定の `converge_*` / `halt_on_cycle` キーは警告を出して無視する。`feedback_guard.csv` は書かない。
 
-> **注意：multi-step feedback は回を重ねるごとに計算上の誤差が膨らむ。** decoder は start→全 step の Δh から観測された終点の順位変化全体を予測するよう学習されている。毎 step feedback をかけると（`ctrl_reference: start`）、毎回 start 基準で Δh を取り直し（それまでの step と rerank の効果を含む）、すでに動いた順位にさらに終点規模の変化を足す。変化量と decoder の誤差は少なくとも回数に比例して増え、観測された終点を超えた順位では shift はモデルが持つ本来の生物学的意味ではなく encoding の乱れを反映し、生物学的な信号がマスクされていく。`ctrl_reference: previous` はそれまでの step の二重計上を避けるが、1 回ごとに終点規模の変化を予測する点は変わらない。1 回を超えて信号が誤差に埋もれないと予測できる回数は見つかっていない。cap は誤差の上限を抑えるだけで補正はしない。**生物学的な主張をするときは、feedback 1 回（`feedback_every_step: false`）の結果と照らし合わせること。** multi-step が単発 feedback より有益かは評価していない（Phase 3）。
+> **注意：multi-step feedback は回を重ねるごとに計算上の誤差が膨らむ。** decoder は start→全 step の Δh から観測された終点の順位変化全体を予測するよう学習されている。毎 step feedback をかけると（`ctrl_reference: start`）、毎回 start 基準で Δh を取り直し（それまでの step と rerank の効果を含む）、すでに動いた順位にさらに終点規模の変化を足す。変化量と decoder の誤差は少なくとも回数に比例して増え、観測された終点を超えた順位では shift はモデルが持つ本来の生物学的意味ではなく encoding の乱れを反映し、生物学的な信号がマスクされていく。`ctrl_reference: previous` はそれまでの step の二重計上を避けるが、1 回ごとに終点規模の変化を予測する点は変わらない。1 回を超えて信号が誤差に埋もれないと予測できる回数は見つかっていない。**step 数（= feedback 回数）が多いほど誤差は大きい。** chain は短く保ち、step 数の同じ chain どうしだけを比べ、生物学的な主張の前には対応するランダム chain の gain を差し引く（下記「Multi-step stability evaluation」「ランダム chain の設計」）。BBRC OSKM ではランダム分が大きく（gain の約 94%）、今後の改善が必要である。
 
 BBRC OSKM の 4-step（KLF4→MYC→SOX2→POU5F1）を 30 細胞で回した smoke（細胞単位の停止を削除する前、旧 decoder）では、`oracle` は step 2・3 の更新が小さく（ρ ≈ 0.998）、全細胞が step 3 で converged として停止した。`norm` と `linear_deltarank` は更新が大きいまま（ρ 0.95–0.99）3 回とも適用され、cycle は 0 だった。目標そのものである `oracle` が 1 回でほぼ止まる一方、decoder は動き続けており、上の注意と整合する。
 
@@ -494,6 +494,210 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - Rank displacement distribution per step
 - Null-perturbation cumulative drift
 - Multi-seed reproducibility
+
+### Multi-step stability evaluation（事前登録 2026-09-29、実行前に固定）
+
+Runner: `core/run_state_feedback_stability.py`（設定は `state_feedback.stability`）。
+各 decoder seed（既定 0, 1, 2）で decoder を学習し直す。train/val の遺伝子 split は
+`decoder.seed` で固定する。すべて cell-mean cosine の goal-state shift と、
+両 encoding に共通する token 上の順位比較で測る（OE で末尾 token が落ちても定義できる）。
+
+| 系列 | 内容 |
+|---|---|
+| Ordered rank-edit | decoder なし。各 chain の参照経路（seed に依存しないので 1 回） |
+| configured, multi-step | 毎 step feedback（当時の `feedback_every_step: true`）, 最終 step 後も feedback, OE pin, `ctrl_reference: start` |
+| idle events | configured chain の終点から、新しい摂動なしで `idle_events` 回（既定 5）rerank を繰り返す。cap を超えるのは診断のため |
+| configured, single event | `feedback_every_step: false`（step 1 後の 1 回のみ）。比較用 |
+| random chains | configured と同じ step 数・同じ型で、teacher 遺伝子から 1 step 1 遺伝子（既定 5 本、`random_seed` で固定し全 seed で同一） |
+
+判定（configured chain について。S1–S3 は全 seed で成立すること）:
+
+| ID | 問い | 基準 |
+|---|---|---|
+| S1 | 1 回の feedback の変化は有界で、回を追って膨らまないか | feedback 各回の per-event Spearman（細胞中央値）が 1 回目から 0.02 超下がらない。かつ per-event 変位（細胞中央値の中央値, 位置単位）の最大が 1 回目の 1.5 倍以下（1 回目の下限は 1 位置） |
+| S2 | 摂動が止まれば encoding は収束するか（drift しないか） | 最後の idle event の per-event Spearman ≥ 0.99、かつ最後の idle 変位 ≤ 最初の idle 変位 |
+| S3 | 終点の上乗せは摂動特異的か（endpoint 教師への一律の引き寄せでないか） | configured の endpoint gain（multi-step − Ordered rank-edit）がどの random chain の gain よりも大きい |
+| S4 | decoder seed で結果が変わらないか | seed 間の最終 encoding の per-cell Spearman（細胞中央値）の最小 ≥ 0.95、かつ endpoint shift の seed 間 CV ≤ 10% |
+| S5 | single と multi の差 | 報告のみ（基準なし）。endpoint、Ordered rank-edit からの距離 |
+
+**決定規則:** S1–S4 がすべて成立したときに限り、multi-step を論文で結果として報告する。
+一つでも不成立なら論文の State-feedback は single event（`feedback_every_step: false`）で
+報告し、multi-step は不安定だった旨と数値を補遺に置く。基準は結果を見て変えない。
+
+懸念とそれを測る系列: `ctrl_reference: start` では rerank 済みの変位も Δh に含まれるので、
+feedback を重ねると同じ変位を二重に数えうる（idle events が測る）。decoder は endpoint
+（観測 goal state）の教師で学習しているので、どの摂動でも goal へ引き寄せうる（random
+chains が測る）。null（摂動なし）の multi-step は Δh = 0 で構造的に恒等なので測らない。
+
+#### 結果（2026-09-29, Pegasus H100, somatic 300 cells, OSKM を K→M→S→O の順, seed 0/1/2）
+
+**判定: S1 不成立, S2 不成立, S3 成立（差は小さい）, S4 不成立 → multi-step は支持されない。**
+決定規則により、論文の State-feedback は single event（`feedback_every_step: false`）で報告する。
+出力: `ISP-Platform/output/sf_stability_20260929/pegasus_out/aggregate/`（seed ごとの run は同階層）。
+
+| 項目 | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| feedback 各回の Spearman（細胞中央値） | 0.974 / 0.811 / 0.877 / 0.923 | 0.982 / 0.838 / 0.856 / 0.898 | 0.974 / 0.826 / 0.878 / 0.912 |
+| feedback 各回の変位（位置, 細胞中央値） | 78 / 258 / 198 / 144 | 65 / 239 / 218 / 179 | 78 / 247 / 204 / 156 |
+| idle 1→5 の Spearman | 0.947 → 0.981 | 0.931 → 0.984 | 0.931 → 0.968 |
+| idle 1→5 の変位 | 104 → 55 | 137 → 55 | 117 → 62 |
+| idle 5 後の Ordered rank-edit 終点との Spearman | 0.158 | −0.077 | 0.056 |
+| 終点 shift: multi-step（idle 前） | 0.308 | 0.329 | 0.342 |
+| 終点 shift: idle 5 後 | 0.365 | 0.361 | 0.383 |
+| 終点 shift: single event | 0.212 | 0.202 | 0.212 |
+| random chain 5 本の終点 shift | 0.279–0.283 | 0.300–0.306 | 0.305–0.310 |
+
+Ordered rank-edit の終点は OSKM 0.0105、random chain 0.0004–0.0029。seed 間の最終 encoding の
+per-cell Spearman は 0.80 / 0.84 / 0.87（top-100 Jaccard 0.39–0.52）、終点 shift の CV は 5.2%。
+
+読み方:
+
+- **S1**: 2 回目の feedback で変化が 1 回目の約 3 倍（変位 65–78 → 239–258 位）に膨らむ。以降は縮むが 1 回目より大きい
+- **S2**: 摂動なしの rerank でも 1 回あたり 55–62 位動き続け、終点 shift も上がり続ける。変位は減っているので発散ではないが、
+  5 回では収束しない。その間に Ordered rank-edit の終点との相関は 0 付近まで落ち、元の encoding の順序はほぼ残らない。
+  `ctrl_reference: start` の Δh が既に適用した変位を含むことによる二重計上と整合する
+- **S3**: 基準上は成立するが、ランダム遺伝子 4 つの chain でも OSKM の gain の 91–95% が出る。multi-step の終点の上乗せの
+  大部分は摂動に依らない goal 方向への引き寄せで、OSKM 特異的な部分は 0.015–0.022 程度
+- **S4**: 終点 shift の値は seed 間で揃う（CV 5%）が、どの遺伝子がどこに来るかは seed で変わる（Spearman 0.80–0.87）
+- single event の終点（0.20–0.21）も、1 回目の feedback だけで ~0.19 に跳ぶ。この跳びが OSKM 特異的かは単発でのランダム対照が要る
+  （ここでは測っていない。摂動特異性の partial ρ は「摂動特異性」節）
+
+上の single event は step 1 の後の 1 回（`feedback_every_step: false` の意味）。
+
+### 毎回 feedback と単発 feedback の比較（事前登録 2026-09-30、実行前に固定）
+
+完全な安定性は原理的に無い（rerank 後の encoding は start と異なるので Δh はゼロに戻らない）。
+そこで S1/S2 の数値は不安定さの幅として報告し、主結果を毎回 feedback と単発 feedback の
+どちらにするかは「OSKM に特異的な上乗せが両者でどれだけ違うか」で決める。上の S1–S4 の
+判定（S1, S2, S4 不成立）はこの変更とともに併記する。
+
+単発は **最後の step の後に 1 回**（`stability.single_event_at: last`）。同じ最終編集なら経路に
+よらず同じ結果になる（`output/sf_path_dependence_20260929`）。ランダム chain 5 本（上と同じ遺伝子）と
+seed 0/1/2（上と同じ decoder seed）で、毎回 feedback の既存 run と対にする。
+
+指標（seed ごと、細胞で対にする）:
+
+- 細胞ごとの gain = その chain の終点 shift − 同じ chain の Ordered rank-edit 終点 shift
+- 特異的上乗せ Δspec = OSKM の gain − ランダム chain 5 本の gain の平均。細胞平均と、細胞 bootstrap
+  （2,000 回）の 95% CI
+- 特異的な割合 = Δspec / OSKM の gain（細胞平均どうし）
+
+判定:
+
+| ID | 基準 |
+|---|---|
+| D1 | 毎回・単発の両方で、全 seed の Δspec の CI が 0 を含まない |
+| D2 | 全 seed で Δspec(毎回) / Δspec(単発) が 0.5〜2 |
+
+**決定規則:** D1 と D2 が成立 → 毎回 feedback を主結果にする（Δspec、feedback 回数を揃えた比較のみ、
+S1/S2 の幅を併記）。D1 が単発でのみ成立、または D2 不成立 → 単発 feedback を主結果にする。
+単発でも D1 が不成立 → どちらの設定でも終点の上乗せは摂動特異的と言えないので、State-feedback の
+終点 shift は主張に使わない。seed 間の最終 encoding の一致（毎回 0.80–0.87）は単発でも測り、報告する。
+
+#### 比較結果（2026-09-30, Pegasus H100, 300 cells, seed 0/1/2）
+
+**判定: D1 は両方で成立、D2 不成立 → 単発 feedback（最後の step の後に 1 回）を主結果にする。**
+出力: `ISP-Platform/output/sf_stability_20260929/pegasus_out/aggregate/`（`mode_specificity.csv`,
+`mode_comparison.json`, `seed_agreement_single_last.csv`）。単発の run は `single_seed{0,1,2}/`。
+
+| 項目 | 毎回 feedback | 単発（最後の step 後） |
+|---|---|---|
+| OSKM の gain（細胞平均） | 0.303 / 0.321 / 0.333 | 0.271 / 0.252 / 0.273 |
+| ランダム chain 5 本の gain 平均 | 0.283 / 0.304 / 0.309 | 0.217 / 0.208 / 0.217 |
+| 特異的上乗せ Δspec [95% CI] | +0.019 [0.018, 0.020] / +0.018 [0.017, 0.019] / +0.024 [0.023, 0.025] | +0.054 [0.052, 0.056] / +0.043 [0.042, 0.045] / +0.056 [0.054, 0.057] |
+| 特異的な割合 | 6.4% / 5.5% / 7.2% | 19.9% / 17.2% / 20.3% |
+| Δspec 比（毎回 / 単発） | 0.36 / 0.41 / 0.43 | — |
+| seed 間の最終 encoding の Spearman | 0.84 / 0.87 / 0.80 | 0.989 / 0.994 / 0.986 |
+| Ordered rank-edit 終点との Spearman | 0.34–0.47 | 0.93–0.95 |
+
+（seed 0 / 1 / 2 の順。seed 間の Spearman は seed 対 0-1 / 0-2 / 1-2。）
+
+読み方:
+
+- 毎回 feedback は終点を上げるが、上がる分はランダム chain でもほぼ同じだけ上がる。OSKM に特異的な上乗せは
+  単発の 0.36–0.43 倍に減り、特異的な割合は約 20% から約 6% に下がる。feedback を重ねると、摂動に依らない
+  goal 方向への引き寄せが特異的な信号を薄める
+- 単発は decoder seed に対して最終 encoding がほぼ一致する（0.99）。毎回では 0.80–0.87
+- 単発でも gain の約 8 割はランダム chain でも出る（decoder は endpoint 教師で学習しているため）。State-feedback の
+  終点 shift は、ランダム chain の gain を差し引いた Δspec で報告する
+
+#### 決定の更新（2026-09-30）
+
+上の決定規則は単発を主結果に選んだが、単発（最後の step の後に 1 回）は最終 encoding だけで決まり、
+Ordered rank-edit（= 逆順リストの multi-gene ISP）に下流の読み出しを 1 回足したものにすぎず、逐次効果を含まない。
+逐次効果を扱うことが State-feedback の目的なので、**毎回 feedback を唯一の実装とし、ランダム chain の gain を
+並行して取り差し引いた Δspec で報告する**。ランダム分が大きい（gain の約 94%）ことは限界として明記し、今後の
+改善課題とする。単発・途中 1 回・回数上限の設定はコードから削除した（上の比較は commit `ee1ff49` で再現できる）。
+
+上の結果のランダム chain は、teacher 遺伝子（体細胞・多能性細胞の両方で 5 細胞以上検出）から一様に引いたもので、
+摂動の種類が OSKM と揃っていなかった（次節）。上の Δspec はこの点で割り引いて読む。
+
+### ランダム chain の設計と検証（事前登録 2026-09-30、実行前に固定）
+
+**旧設計の問題。** 開始細胞（somatic 300 細胞）で SOX2・POU5F1 は検出 0%（somatic 3,000 細胞でも 0）、
+KLF4・MYC は 3.7%・7.3% で、検出されても順位は末尾側（正規化位置 0.92・0.86）。つまり OSKM の OE は
+ほぼ全細胞で「encoding に無い遺伝子を先頭に挿入する」編集である。旧ランダム 20 遺伝子は検出 0–70%
+（中央値 ~7%）、位置 0.10–0.95 で、多くは「すでにある遺伝子を前へ動かす」編集だった（例: DDR2 は 70% の細胞に
+位置 0.22 で存在）。また母集団を teacher 遺伝子に限ったため、KLF4・SOX2・POU5F1 と同じ種類（片方の state に
+ほぼ無い遺伝子）はそもそも引かれなかった。遺伝子名も記録していなかった。
+
+**新設計**（`core/state_feedback/random_chains.py`）:
+
+| 要素 | 内容 |
+|---|---|
+| 母集団 | モデル語彙の全遺伝子 token − 特殊 token − configured 遺伝子（teacher の検出フィルタを通らない遺伝子も含む） |
+| 構造 | configured と同じ step 数・step あたり遺伝子数・型 |
+| 層（configured 遺伝子ごと） | 開始細胞で検出 0 → 開始細胞のどれにも無い遺伝子。検出 d > 0 → 検出 d/2〜2d かつ位置（検出細胞の中央値）が ±0.1 以内。50 遺伝子未満なら ±0.2, ±0.3, 制限なしの順に広げ記録 |
+| 抽出 | 層の中で一様、chain 間で非復元（層が足りなければ復元、記録）。configured 遺伝子を token 順に引くので、同じ乱数 seed なら step の順序によらず同じランダム遺伝子になる（24 order で同じランダム遺伝子の組を同じ順序で並べられる） |
+| 独立な 2 抽出 | `random_seeds: [0, 1]` × 各 20 本 = 40 本 |
+| 記録 | `random_chains.json`: 遺伝子名、各遺伝子の開始細胞検出・位置、goal 細胞の検出、teacher Δrank、層の大きさ、層に対するバランス（SMD） |
+| CI | 細胞とランダム chain の二段 bootstrap（どのランダム遺伝子を引いたかのばらつきを含む） |
+
+**検証**（configured = K→M→S→O、300 細胞、decoder seed 0/1/2。各基準は全 seed で成立すること）:
+
+| ID | 問い | 基準 |
+|---|---|---|
+| R1 | 抽出は層の公平な標本か | configured 遺伝子ごとに、選ばれた 20 遺伝子の goal 細胞検出率と teacher Δrank の平均が層の平均から \|SMD\| ≤ 0.5（開始細胞の検出・位置は構造上揃う）。teacher Δrank は両 state で検出される遺伝子にしか無いので、開始細胞に無い層では goal 細胞検出率だけで判定する |
+| R2 | 独立な 2 抽出が一致するか | ランダム gain の平均の差 \|s0 − s1\| ≤ 2·√(SE₀² + SE₁²)（SE は chain 間） |
+| R3 | ランダム平均は十分に精密か | 40 本の平均の chain 間 SE ≤ 0.002（旧結果の Δspec の seed 間の幅 0.006 の 1/3） |
+
+報告のみ: Δspec と二段 CI、leave-one-out null に対する位置（`null_empirical_p`）、本数に対するランダム平均の推移
+（`random_running_mean.csv`）、旧ランダム chain の gain（0.283 / 0.304 / 0.309）との比較。
+
+**決定規則:** R1–R3 が成立 → この設計で 24 order の検証に進む。本数は max(20, (chain 間 SD / 0.002)²)。
+R1 不成立 → 層の定義を見直し（結果を見る前に理由を記録）、再抽出する。R2 または R3 不成立 → 本数を
+(SD / 0.002)² に増やして再実行する。
+
+#### 結果（2026-09-30, Pegasus H100, 300 cells, decoder seed 0/1/2, ランダム 2 抽出 × 20 本）
+
+**判定: R1, R2, R3 すべて成立 → この設計で 24 order に進む。本数 20（(0.0058 / 0.002)² ≈ 9 < 20）。**
+出力: `ISP-Platform/output/sf_stability_20260929/pegasus_out/matched_aggregate/`（`specificity.csv`,
+`random_running_mean.csv`）、抽出は `matched_seed0/random_chains.json`（3 seed で同一の遺伝子）。
+
+| 項目 | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| R1 \|SMD\| 最大（goal 検出 / teacher Δrank） | 0.36 / 0.30（両抽出、全遺伝子） | 同左 | 同左 |
+| R2 ランダム gain 平均 s0 / s1（許容差） | 0.2911 / 0.2914（0.0033） | 0.3113 / 0.3118（0.0030） | 0.3164 / 0.3173（0.0035） |
+| R3 40 本の平均の chain 間 SE | 0.0008 | 0.0008 | 0.0009 |
+| OSKM の gain（細胞平均） | 0.3025 | 0.3214 | 0.3328 |
+| Δspec [細胞 + chain の二段 95% CI] | +0.0113 [0.0094, 0.0130] | +0.0099 [0.0082, 0.0115] | +0.0159 [0.0140, 0.0178] |
+| 特異的な割合 | 3.7% | 3.1% | 4.8% |
+| OSKM の順位（41 chain 中、終点 gain の中央値） | 1 | 2 | 1 |
+
+層: KLF4 259 遺伝子、MYC 333、SOX2・POU5F1 は開始細胞に無い 7,116 遺伝子（同じ層なので両者に同じ遺伝子が
+別 chain で当たることがあり、80 本中の重複は s0 で 2、s1 で 0）。
+
+読み方:
+
+- 抽出は層に対して偏りがなく、独立な 2 抽出のランダム平均は 0.001 以内で一致する。ランダム平均は 5 本で
+  すでに ±0.003 以内に落ち着く（`random_running_mean.csv`）
+- 摂動の種類を揃えると、ランダム chain の gain は旧設計より上がり（0.283–0.309 → 0.291–0.317）、Δspec は
+  旧設計の約 6 割（+0.018–0.024 → +0.010–0.016）になる。旧設計は「無い遺伝子の挿入」という OSKM の編集の
+  大きさをランダム側で再現しておらず、特異性を過大に見積もっていた
+- Δspec の CI はすべて 0 を含まないが、特異的な割合は 3–5% で、gain のほとんどは遺伝子に依らない
+- S3（OSKM の gain がどのランダム chain よりも大きい）は seed 1 で不成立: random_s1_16（HIF3A, HES1,
+  NOTCH2NLA, OR4C3）が OSKM を上回り、他の seed でも 2 位。OSKM は 40 本の分布の上端（leave-one-out null の
+  経験 p 0.024–0.049）にある
 
 
 ## Claims boundary for Methods

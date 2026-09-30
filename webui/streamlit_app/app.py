@@ -1144,22 +1144,8 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
         {
             "conditions": conditions,
             "observed_state": observed or out["perturbation"]["end_state"],
-            "feedback_after_step": max(
-                1,
-                min(n_steps - 1, int(st.session_state.get("sf_isp_feedback_after_step") or 1)),
-            ),
-            "feedback_every_step": bool(
-                st.session_state.get("sf_isp_feedback_every_step", True)
-            ),
         }
     )
-    if sf["feedback_every_step"]:
-        sf["multi_step"] = {
-            **(sf.get("multi_step") or {}),
-            "max_feedback_events": max(
-                1, int(st.session_state.get("sf_isp_max_feedback_events") or 5)
-            ),
-        }
     if st.session_state.get("sf_isp_spec_enabled"):
         sets, sets_err = _parse_sf_specificity_sets(
             st.session_state.get("sf_isp_spec_sets"),
@@ -1232,7 +1218,7 @@ def _load_state_feedback_summary(run: Path) -> dict:
     if manifest:
         out["gate"] = manifest.get("gate") or []
         out["decoder"] = manifest.get("decoder") or {}
-        out["multi_step_guard"] = (manifest.get("multi_step") or {}).get("guard") or {}
+        out["feedback"] = manifest.get("feedback") or {}
     return out
 
 
@@ -1437,9 +1423,6 @@ def _render_state_feedback_isp_controls() -> None:
     st.session_state.setdefault("sf_isp_max_ncells", _SF_ISP_DEFAULT_MAX_NCELLS)
     st.session_state.setdefault("sf_isp_conditions", list(_SF_ISP_CONDITIONS))
     st.session_state.setdefault("sf_isp_observed_state", "")
-    st.session_state.setdefault("sf_isp_feedback_after_step", 1)
-    st.session_state.setdefault("sf_isp_feedback_every_step", True)
-    st.session_state.setdefault("sf_isp_max_feedback_events", 5)
     st.session_state.setdefault("sf_isp_eval_only", False)
     st.session_state.setdefault("sf_isp_decoder_choice", _SF_ISP_DECODER_TRAIN)
     st.session_state.setdefault("sf_isp_spec_enabled", False)
@@ -1498,41 +1481,17 @@ def _render_state_feedback_isp_controls() -> None:
             disabled=bool(st.session_state.get("sf_isp_eval_only")),
         )
         n_steps = int(st.session_state.get("isp_steps_n") or _DEFAULT_ISP_STEPS)
-        last_feedback_step = max(1, n_steps - 1)
-        if int(st.session_state.get("sf_isp_feedback_after_step") or 1) > last_feedback_step:
-            st.session_state["sf_isp_feedback_after_step"] = last_feedback_step
-        st.number_input(
-            "Feedback after step",
-            min_value=1,
-            max_value=last_feedback_step,
-            step=1,
-            key="sf_isp_feedback_after_step",
-            help=(
-                "The step after which the decoder reorders the encoding. The reordered "
-                "encoding feeds the next step, so the last step cannot be chosen."
-            ),
+        st.markdown(
+            f"**Feedback after every step:** {n_steps} step(s) = {n_steps} feedback event(s) "
+            "per chain. Overexpressed genes stay at the front."
         )
-        st.checkbox(
-            "Feedback after every step (multi-step)",
-            key="sf_isp_feedback_every_step",
-            help=(
-                "On (default): reorders after this step and every later step, including "
-                "the last, up to the cap below; overexpressed genes stay at the front. "
-                "Off: one feedback event after this step. Caution: the decoder predicts "
-                "the whole start-to-end rank change, so each extra event adds another "
-                "change of that size on top of an order that has already moved. Error "
-                "grows with the number of events and can mask the biology the model has "
-                "learned. For biological claims, compare with this box off."
-            ),
+        st.warning(
+            "The error grows with the number of steps. Each feedback event adds a rank "
+            "change on top of an order that has already moved, and it is not undone; part "
+            "of the gain is non-specific (random genes also move toward the goal). Keep "
+            "chains short, compare only chains with the same number of steps, and subtract "
+            "matched random chains before a biological claim."
         )
-        if st.session_state.get("sf_isp_feedback_every_step"):
-            st.number_input(
-                "Max feedback events per chain",
-                min_value=1,
-                max_value=5,
-                step=1,
-                key="sf_isp_max_feedback_events",
-            )
         st.text_input(
             "Observed state for the teacher (blank = pipeline end state)",
             key="sf_isp_observed_state",
@@ -1666,14 +1625,11 @@ def _render_state_feedback_results(source_run: str | None) -> None:
     if summary.get("gate"):
         st.markdown("**Endpoint goal-state shift** (cell-mean cosine; oracle is a ceiling)")
         st.dataframe(pd.DataFrame(summary["gate"]), use_container_width=True, hide_index=True)
-    if summary.get("multi_step_guard"):
-        st.markdown("**Multi-step feedback events** (per condition; `capped_before_step` = first step skipped by the cap)")
-        st.dataframe(
-            pd.DataFrame(
-                [{"condition": c, **s} for c, s in summary["multi_step_guard"].items()]
-            ),
-            use_container_width=True,
-            hide_index=True,
+    if summary.get("feedback"):
+        n_events = summary["feedback"].get("events_per_chain")
+        st.caption(
+            f"Feedback after every step: {n_events} event(s) per chain. The error grows with "
+            "the number of steps; compare chains of the same length only."
         )
 
 
