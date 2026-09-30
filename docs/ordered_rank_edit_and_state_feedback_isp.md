@@ -188,6 +188,19 @@ new order = genes sorted by ascending priority
 
 A decoder is trained for each value in `max_shift_grid` (default 0.05 / 0.1 / 0.2 / 0.3 / 0.5). The one with the highest Spearman correlation between predicted Δrank and Δr_obs on the held-out 20% of genes is kept. Results go to `decoder/decoder_metrics.json` and the weights to `decoder/delta_rank_decoder.pt`.
 
+**Comparing step lists (for example, perturbation orders)**
+
+Report each step list with the decoder trained in its own run. Do not reuse one decoder across step lists (see 3.7). What differs and what is shared between two runs on the same dataset and model:
+
+- Differs: the training Δh (from that step list's encoding with all steps applied at once), and therefore possibly the selected `max_shift`.
+- Shared: the teacher, the 80:20 gene split, the training cells, the loss and optimizer settings, the `max_shift` grid and the selection rule. The endpoint shift is never used to train or select a decoder.
+
+Consequences for interpretation:
+
+- A difference between two step lists mixes the order of the perturbations with the decoder trained for that order. The design cannot separate the two, so a ranking of orders under State-feedback ISP is not a pure order effect.
+- Exception: step lists whose encodings with all steps applied are identical (for example M→K→S→O and simultaneous `[O, S, K, M]`) get identical training data, so their decoders are identical. On BBRC (n=300, `46035be`) the decoders of such pairs were bit-identical. For these pairs any difference comes from the feedback path alone.
+- The number of feedback events changes the result by itself: the same edits with 4 events instead of 1 raised the endpoint shift by 0.059 on BBRC (n=300). Compare step lists only at the same number of feedback events.
+
 ### 3.4 One feedback event, step by step
 
 1. Pass the reference encoding (the original start encoding by default) and the encoding after the last step through the model.
@@ -251,7 +264,7 @@ On the 20% of genes not used for training, it compares each method's predicted r
   1. `linear_deltarank` beats both `norm` and `delta_mlm`, and the 95% confidence interval of each difference (cell-level bootstrap) excludes 0.
   2. The correlation after removing what the original rank explains (partial ρ given base rank) has a 95% confidence interval above 0.
 - Condition 2 is needed because the teacher is a group-mean rank difference, so much of the correlation can be explained by position alone ("genes that start high tend to go down, genes that start low tend to go up"). The partial ρ is the information Δh adds beyond the original position.
-- Measured on BBRC (n=300): pooled ρ 0.437, partial ρ 0.242 [0.234, 0.250], PASS.
+- Measured on BBRC (n=300, final Δh-only decoder, `46035be`, Pegasus 2026-09-29): pooled ρ **0.482**, partial ρ **0.324** [0.317, 0.330], PASS. Artifacts: `output/sf_pegasus_20260929_final/` (repo checkout) or Pegasus `runs_final_46035be/`.
 
 **Secondary: endpoint gate (`phase12_gate.csv`)**
 
@@ -375,6 +388,7 @@ The defaults (all six conditions, `Feedback after step` = 1, multi-step on inclu
 
 - That either method simulates a cell's time course or stepwise state change. The intermediate-step values of Ordered rank-edit are not the result of passing the model's response forward.
 - That the order effect in Ordered rank-edit reflects the biological order of factor delivery.
+- That an order ranking from State-feedback ISP is a pure order effect. Each order is scored with its own decoder, so order and decoder are mixed (3.3); only orders with identical all-steps encodings share a decoder.
 - That hidden-state norm or MLM logits represent expression, or that the decoder recovers expression.
 - That the `oracle` value is a result or a target of the method.
 - That multi-step feedback is more useful or more stable than a single feedback event (not evaluated).

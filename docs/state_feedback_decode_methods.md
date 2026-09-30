@@ -263,6 +263,12 @@ DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
 
 `--decoder-checkpoint` は同じ step リストで学習した decoder の再利用（条件や specificity の追加）向け。別の step リストに使うのは転移テストで、同じ遺伝子の順番違いも含む（最後に OE した遺伝子が encoding の先頭に来るので Δh が変わる）。BBRC OSKM（n=3000、24 order、毎 step feedback）で、同時 OSKM で学習した decoder を全 order に使い回すと、order ごとに学習した decoder と一致したのは POU5F1 が最後の 6 order（先頭の並びが同時 OE と同じ）だけだった。残り 18 order では direction fidelity（pooled Spearman）が 0.32〜0.36 に落ち、order ごとの decoder は 0.42〜0.47（24 order 平均 0.38 vs 0.46、base rank を除いた partial ρ 0.29 vs 0.35）。終点の order 順位は両者でほぼ無相関（Spearman −0.02）。報告する結果には run ごとに学習した decoder を使う（Web UI の既定）。
 
+**step リスト（order）間の比較の解釈。** run ごとに decoder を学習すると、step リストごとに違うのは学習用 Δh（全 step を一括適用した encoding から作る）と、その結果選ばれる `max_shift` だけで、teacher・遺伝子 80:20 分割・学習細胞・損失と最適化・`max_shift` grid・選択規則（held-out 遺伝子の val Spearman）は共通。終点 shift は decoder の学習にも選択にも使わない。したがって:
+
+- 2 つの order の差には、order の違いとその order 用に学習した decoder の違いが混ざり、この設計では分離できない。State-feedback ISP での order 順位は純粋な order 効果ではない（論文では Discussion に限界として書く）
+- 例外: 全 step 一括適用後の encoding が同じ step リスト（M→K→S→O と同時 `[O,S,K,M]`、`[O,K]`→M→S と K→O→M→S）は学習データが同一なので decoder も同一になる。BBRC n=300（`46035be`）で bit 一致を確認（重み差の最大値 0、`max_shift` はすべて 0.5）。この組の差は feedback の経路だけに由来する
+- feedback 回数それ自体が結果を動かす（同じ編集で 4 回 vs 1 回: 終点 shift +0.059、BBRC n=300）。step リストは feedback 回数をそろえて比較する
+
 The specificity stage (`state_feedback.specificity`, off by default) writes
 `<run>/perturbation_specificity/` (`perturbation_specificity.csv`, `vs_random.csv`,
 `specificity_contrasts.csv`, `.json`). `direction_fidelity/` also gets
@@ -312,7 +318,7 @@ Oracle-A は goal-state の観測 rank を次入力に入れるため endpoint �
 
 | 軸 | Pass の目安 | 意味 | 現状 |
 |---|---|---|---|
-| **Direction fidelity**（主軸） | linear の held-out ρ が norm・ΔMLM を明確に上回る（bootstrap CI が 0 を跨がない）**かつ** base rank を除いた partial ρ の CI が 0 を跨がない | Δh から観測 rank displacement の**方向**を、元の位置だけで説明できる分を超えて読めている | **PASS**（partial ρ 0.24、下記） |
+| **Direction fidelity**（主軸） | linear の held-out ρ が norm・ΔMLM を明確に上回る（bootstrap CI が 0 を跨がない）**かつ** base rank を除いた partial ρ の CI が 0 を跨がない | Δh から観測 rank displacement の**方向**を、元の位置だけで説明できる分を超えて読めている | **PASS**（BBRC n=300: partial ρ 0.324、下記） |
 | Perturbation specificity | 評価対象の摂動の partial ρ がランダム摂動の分布を上回る | 上乗せが採点遺伝子の性質ではなく摂動の Δh に依存する | **PASS**（BBRC・Asano とも全ランダム組を上回る） |
 | Effect prioritization | top-up/down の precision@K・NDCG@K が baseline を上回る | biologically relevant movers を優先できている | PASS（up 方向。down は弱い） |
 | Calibration | Δr̂ の大きさと observed Δr の大きさが単調対応 | 順位変化量を過度に誇張・圧縮していない | 単調性 PASS、**magnitude は圧縮**（下記） |
@@ -351,51 +357,72 @@ chance level は `K / n_genes` なので P@100 ≈ 0.046、P@500 ≈ 0.228。lin
 3. **endpoint shift と direction fidelity が整合しない。** `delta_mlm` は endpoint shift 最高（gap closed 21.8%）でありながら direction fidelity は chance 以下（ρ = −0.016）。Classifier consistency 軸は満たされていない。endpoint shift は本問題では補助指標にもならない。
 4. **external validity は一部のみ。** 下記「外部妥当性」「現 dataset で計算できないもの」参照。
 
-#### Base-rank 対照（2026-09-27 追加。pooled ρ の読み方を改める）
+#### 報告用主結果（final Δh-only decoder, `46035be`, Pegasus 2026-09-29）
+
+- **Code:** `ver1.0.1` @ `46035be`（Δh-only decoder、毎 step feedback、`pin_overexpressed` 既定）。Direction fidelity / specificity の採点は rank-edit を一括適用（`perturbation: full_chain`、feedback モード非依存）。
+- **Runs:** `output/sf_pegasus_20260929_final/`（Pegasus `runs_final_46035be/`）。各 job で decoder を再学習（`train_max_ncells` 200、細胞数で cap）。旧 9/27 Pegasus（`d4337ed`、Δh+base+bias）の n=300 は **n=50 decoder 流用**だった。
+- **本文:** BBRC + Asano の **n=300**。n=50 は付録（random 30 本）。
+
+**BBRC OSKM（direction fidelity, n=300）**
+
+| Method | pooled ρ | partial ρ given base |
+|---|---|---|
+| `linear_deltarank` | **0.482** | **0.324** |
+| `base_rank`（交差適合） | 0.422 | ≤ 0（位置のみ） |
+| `norm` / `delta_mlm` | 0.040 / −0.013 | 0.017 / −0.017 |
+
+Partial ρ の 95% CI（`configured` 行、OSKM chain と同一摂動）: **[0.317, 0.330]**。Decoder grid: `max_shift` **0.5** 選択（val Spearman **0.478**、`null_drift` 全 grid で 0）。
+
+| 対比（linear − baseline, pooled ρ） | Δρ | 95% CI |
+|---|---|---|
+| − `norm` | +0.442 | [+0.434, +0.450] |
+| − `delta_mlm` | +0.495 | [+0.485, +0.505] |
+| − `random` | +0.484 | [+0.476, +0.492] |
+| − `base_rank` | +0.060 | [+0.053, +0.067] |
+
+**BBRC 摂動特異性（partial ρ, 同一 decoder・teacher・cells）**
+
+| 条件 | n=300 [95% CI] | n=50 [95% CI] |
+|---|---|---|
+| OSKM chain | 0.323 [0.317, 0.330] | 0.228 [0.209, 0.247] |
+| OSKM 同時 OE | 0.322 [0.316, 0.329] | 0.227 [0.208, 0.246] |
+| 3F_OSN | 0.328 [0.321, 0.334] | 0.242 [0.224, 0.261] |
+| 7F | 0.370 [0.364, 0.376] | 0.290 [0.275, 0.307] |
+| ランダム OE 4 genes（平均 ± SD） | 0.089 ± 0.035（10 組） | 0.071 ± 0.026（30 組） |
+
+7F − OSKM chain（n=300）: **+0.048** [+0.044, +0.053]。3F − OSKM: **+0.005** [+0.001, +0.008]。chain − 同時 OE: **+0.002** [+0.001, +0.002]。
+
+**Asano PIPseq（Igfbp2 delete, AD → WT）**
+
+| | n=300 | n=50 |
+|---|---|---|
+| linear pooled ρ | 0.212 | 0.190 |
+| linear partial ρ [95% CI] | 0.131 [0.120, 0.144] | 0.113 [0.085, 0.140] |
+| decoder val ρ @ 0.5 | 0.213 | 0.204 |
+| ランダム delete partial（平均 ± SD） | 0.002 ± 0.013（10） | −0.001 ± 0.008（30） |
+
+#### Base-rank 対照（pooled ρ の読み方）
 
 endpoint 教師では、遺伝子が細胞内で元々どの位置にいたか（base rank）だけで観測 Δrank の多くが予測できる（上位の遺伝子は下がり、下位の遺伝子は上がる）。base rank だけを使う予測器（20 分位 bin の平均 Δrank、token の偶奇で 2 分割して交差適合 = `base_rank`）は、pooled ρ で linear とほぼ並ぶ。
 
-| n=300, BBRC | pooled ρ | partial ρ given base rank [95% CI] |
-|---|---|---|
-| `linear_deltarank` | 0.437 | **0.242** [0.234, 0.250] |
-| `base_rank`（交差適合） | 0.422 | 0 以下（位置以外の情報を持たない。5 細胞 smoke で −0.06） |
-| linear、Δh を細胞内でシャッフル | — | 0.010 |
-| linear、base を 0.5 に固定（Δh のみ） | — | ≈ linear と同値（この結果を受けて decoder を Δh のみの入力に変更。以下の数値は変更前の decoder） |
-| `norm` / `delta_mlm` | 0.040 / −0.013 | — |
-
 - partial ρ = base rank の 20 分位 bin ごとに、予測と観測の順位からそれぞれ bin 平均を引いた後の相関。「元の位置を超えて Δh が足している分」
-- **上の実測表の pooled ρ 0.419 の大部分は base rank で説明される。** decoder の Δh 由来の上乗せは partial ρ ≈ 0.24。判定基準にこれを加えた（`direction_fidelity_verdict` の `adds_beyond_base_rank`）
-- Δh をシャッフルすると上乗せは消え、base を固定しても残る。上乗せは Δh の向きに由来する
+- **BBRC n=300 では pooled ρ 0.482 のうち base rank 相当が 0.422 前後。** Δh 由来の上乗せは partial ρ **0.324**。判定基準にこれを加えた（`direction_fidelity_verdict` の `adds_beyond_base_rank`）
+- Δh を細胞内でシャッフルすると上乗せは消える（n=50 開発 run で partial ≈ 0.01）。decoder は **Δh のみ**入力（base / bias なし、`null_drift` 構造的に 0）
 
 #### 摂動特異性（同じ decoder に別の摂動の Δh を入れる）
 
-decoder（OSKM の Δh で学習）・teacher・held-out gene・細胞は固定し、Δh を作る摂動だけを変える。上乗せが採点遺伝子の性質だけなら、摂動によらず同じ値になるはず。摂動した遺伝子は全条件で採点から除外。
+decoder（OSKM の Δh で学習）・teacher・held-out gene・細胞は固定し、Δh を作る摂動だけを変える。上乗せが採点遺伝子の性質だけなら、摂動によらず同じ値になるはず。摂動した遺伝子は全条件で採点から除外。**数値表は上記「報告用主結果」節。**
 
-| BBRC | partial ρ n=50 [95% CI] | partial ρ n=300 [95% CI] |
-|---|---|---|
-| OSKM（config の chain） | 0.229 [0.210, 0.248] | 0.241 [0.234, 0.250] |
-| OSKM 同時 OE | 0.228 [0.208, 0.246] | 0.240 [0.233, 0.249] |
-| 3F（POU5F1, SOX2, NANOG） | 0.249 [0.230, 0.269] | 0.264 [0.256, 0.273] |
-| 7F（NANOG, POU5F1, SOX2, ESRRB, LIN28A, DPPA4, TERT） | 0.289 [0.274, 0.306] | 0.307 [0.300, 0.315] |
-| ランダム OE 4 genes（n=50: 30 組, n=300: 10 組）平均 ± SD（最大） | 0.075 ± 0.026（0.156） | 0.075 ± 0.028（0.128） |
-
-- 4 条件とも全ランダム組を上回る（経験的 p は組数で決まる最小値: n=50 で 0.032、n=300 で 0.091）
-- 7F > 3F > OSKM（n=300: 7F − OSKM = +0.067 [+0.063, +0.071]、3F − OSKM = +0.024 [+0.021, +0.027]）。これは「model 空間で somatic → pluripotent の endpoint 方向により揃う」という意味に限る。decoder は OSKM で学習し 3F・7F と因子を共有するため、reprogramming 効率の比較ではない
-- OSKM の chain と同時 OE の差は +0.001 [+0.000, +0.002]。この指標では順序の効果は見えない
-- ランダム OE の partial が 0 でない（0.075）のは、どの OE でも一部は endpoint 方向に揃うため
+- 4 命名条件ともランダム分布を上回る（経験的 p の下限: n=50 で 0.032、n=300 で 0.091）
+- 7F > 3F ≈ OSKM chain（n=300）。これは「model 空間で somatic → pluripotent の endpoint 方向により揃う」という意味に限る。decoder は OSKM で学習し 3F・7F と因子を共有するため、reprogramming 効率の比較ではない
+- OSKM chain と同時 OE の差は n=300 で +0.002 [+0.001, +0.002]。この指標では順序の効果は見えない
+- ランダム OE の partial が 0 でないのは、どの OE でも一部は endpoint 方向に揃うため
 
 #### 外部妥当性: Asano PIPseq（mouse 大動脈 scRNA-seq, AD → WT）
 
-mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized dataset。摂動は Igfbp2 delete、observed_state = WT。hidden size が違うため decoder は Asano 上で学習し直した（他のハイパーパラメータは BBRC と同一）。
+mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized dataset。摂動は Igfbp2 delete、observed_state = WT。hidden size が違うため decoder は Asano 上で学習し直した（他のハイパーパラメータは BBRC と同一）。**数値表は上記「報告用主結果」節。**
 
-| Asano | n=50 | n=300 |
-|---|---|---|
-| linear pooled ρ / base-only（交差適合） | 0.229 / 0.159 | 0.235 / 0.171 |
-| linear partial ρ [95% CI] | 0.133 [0.110, 0.155] | 0.125 [0.116, 0.135] |
-| Δρ vs norm | +0.104 [+0.075, +0.132] | +0.114 [+0.103, +0.125] |
-| ランダム delete 1 gene（Igfbp2 と検出頻度 0.5〜2 倍）partial 平均（最大） | 0.006（0.027）, 30 組 | 0.007（0.028）, 10 組 |
-
-- 別の種・別の遷移・別の FT モデルでも「norm・ΔMLM を上回り、base rank を超える上乗せがあり、ランダム摂動を上回る」形は再現した。大きさに依存しない Δh のみの partial でも Igfbp2 はランダムと分離する
+- 別の種・別の遷移・別の FT モデルでも「norm・ΔMLM を上回り、base rank を超える上乗せがあり、ランダム摂動を上回る」形は再現した（n=300: Δρ vs norm +0.091 [+0.081, +0.101]）
 - 効果は BBRC の約半分。AD と WT の差自体が小さく、混合細胞集団の pseudobulk なので細胞組成の差も teacher に混じりうる
 - ランダム delete は検出頻度では揃えたが、細胞内の順位は揃えていない。decoder は Igfbp2 の Δh で学習している
 - PIPseq のみなので batch holdout はしていない
@@ -418,9 +445,9 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 
 - Oracle-A reranking は endpoint classifier 空間を大きく動かせる（feasibility）
 - `null_feedback` は完全な恒等置換であり、decoder は無根拠な drift を作らない（変位 0.0 / Spearman 1.0 / top-100 Jaccard 1.0 / shift 0.0000）。旧 decoder では解析 null drift が非ゼロ（0.004）だったが `base_rank_norm` の単調関数なので順序不変。現在の decoder（Δh のみ、bias なし）では構造的に 0
-- linear decoder は held-out gene 上で観測 Δrank に対し pooled ρ = 0.419、cell-wise median ρ = 0.443 を示し、`norm` / `delta_mlm` を bootstrap CI が 0 を跨がない差で上回る（50/50 細胞で優位）。ただし pooled ρ の大部分は base rank で説明でき、Δh 由来の上乗せは partial ρ ≈ 0.24（n=300 で CI [0.234, 0.250]）
-- その上乗せは摂動に依存する（初期化カクテル 0.24〜0.31 対 ランダム OE 0.075）
-- 同じ手順で別の種・別の遷移（Asano PIPseq）でも、小さいながら同じ形が再現する（partial ρ ≈ 0.13、ランダム delete ≈ 0.01）
+- linear decoder は held-out gene 上で観測 Δrank に対し、BBRC n=300 で pooled ρ = **0.482**、partial ρ = **0.324** [0.317, 0.330]、`norm` / `delta_mlm` / `random` / `base_rank` を bootstrap CI が 0 を跨がない差で上回る（n=50 開発 run: pooled 0.419、50/50 細胞で baseline 優位）
+- その上乗せは摂動に依存する（BBRC n=300: 命名セット partial 0.32〜0.37 対 ランダム OE 0.089 ± 0.035）
+- 同じ手順で別の種・別の遷移（Asano PIPseq）でも同じ形が再現する（n=300 partial ρ 0.131、ランダム delete ≈ 0.002）
 - endpoint shift は direction-sensitive な decoder 評価として**不十分**（`delta_mlm` が endpoint 最高かつ direction chance 以下）
 
 **まだ証明できていないこと:**
@@ -430,12 +457,10 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 - 変位の **大きさ** が信用できるか（単調だが圧縮されている）
 - down 方向（発現順位低下）を特異的に捉えられているか
 - multi-step state-feedback が単発 feedback を越えて有益かつ安定か（hard cap のみ配線済み、評価は未実施。回数とともに誤差が膨らむ構造的な理由は「実装ガードレール」節の注意を参照）
-- Δh のみの decoder で上記の数値（旧 decoder: Δh + base rank + bias）が再現するか
-
 #### 次にやること（優先順）
 
-1. `max_ncells: 300` で Phase 0 Oracle-A confirmation を再測（direction fidelity と摂動特異性は n=300 で再測済み、結論は n=50 と同じ）
-2. `max_shift` grid をさらに上へ（val Spearman は 0.5 で `0.458` と**まだ伸びている**。ただし 0.5 は encoding の半分を 1 step で動かせる幅なので、生物学的妥当性の上限も併せて決める）
+1. `max_ncells: 300` で Phase 0 Oracle-A confirmation を再測（direction fidelity と摂動特異性は **46035be** で n=300 再測済み）
+2. `max_shift` grid をさらに上へ（報告 run では 0.5 が grid 最大で val Spearman **0.478**（BBRC n=300）まで単調増加。Methods に「最大値を選択」と明記するか {0.7, 1.0} を追加）
 3. calibration の magnitude 圧縮を是正（Huber 重み / 出力スケールの再検討）
 4. down 方向の弱さの原因究明（compositional な押し出しか、教師の非対称性か）
 5. Oracle-B 用の reprogramming time-course dataset を用意
