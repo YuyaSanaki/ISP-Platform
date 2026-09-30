@@ -77,6 +77,24 @@ docker compose run --rm isp accelerate launch --num_processes 1 /app/core/run_is
 - **Stats (parquet):** `…/ispstats_results`
 - **Figures:** `run_isp.py` runs [`isp_analysis.py`](../isp_analysis.py) → PNGs under `…/figures/` (`shift_distribution.png`, `volcano_plot.png`, `top_significant_genes_barplot.png`, `significant_genes_lollipop.png`, etc.). The significant-gene barplot encodes `N_Detections` as color intensity on a √ scale (colorbar ticks show N). The lollipop shows shift direction, effect size, `N_Detections` / `isp.max_ncells`, and FDR. Disable with `analysis.enabled: false` or `--skip-analysis`.
 
+### Columns of the stats table
+
+With `goal_state_shift` stats (the default) and all genes perturbed, the stats table has one row per gene. The cells are the start-state cells that were perturbed, after `isp.filter_data` and `isp.max_ncells`. A gene is perturbed in a cell only if its token is in that cell's rank-value encoding, so each cell gives at most one shift per gene.
+
+| Column | Meaning |
+|--------|---------|
+| `Gene`, `Gene_name`, `Ensembl_ID` | Gene token, symbol and Ensembl ID |
+| `Shift_to_goal_end` | Mean over cells of the per-cell goal-state shift: cosine similarity of the perturbed cell embedding to the goal-state embedding minus that of the unperturbed cell (positive = toward `end_state`) |
+| `Shift_to_alt_end` | Same toward the alternate end state (only with `alt_states`) |
+| `N_Detections` | Number of those cells whose encoding contains the gene, i.e. the number of per-cell shifts averaged into `Shift_to_goal_end`. At most the number of perturbed start-state cells (≤ `isp.max_ncells`) |
+| `Goal_end_vs_random_pval` | Wilcoxon rank-sum p-value of the gene's per-cell shifts against the pooled per-cell shifts of all perturbed genes (sampled down to 100,000 values, seed 42) |
+| `Goal_end_FDR` | Benjamini–Hochberg correction of `Goal_end_vs_random_pval` over all genes |
+| `Sig` | 1 if `Goal_end_FDR` < 0.05, otherwise 0 |
+
+`N_Detections_test` / `N_Detections_null` appear only with `vs_null` stats: the same count in the test and null datasets.
+
+The lollipop figure plots only significant genes with `N_Detections` ≥ 20 (`min_n_detections` in `isp_analysis.py`) and lists stronger positive hits below that as "thin" hits. This threshold affects the figure only, not the stats table.
+
 ### Per-cell shift (ISP UMAP)
 
 Population ISP ranks **genes**. For per-cell trajectories and **`per_cell_isp_shift.csv`**, see [**isp_umap.md**](isp_umap.md). For **ordered OE and/or KD steps** on the gene-rank tokens (Ordered rank-edit ISP), see [**ordered_rank_edit_isp.md**](ordered_rank_edit_isp.md); for steps with model-output feedback between them (State-feedback ISP), see [**state_feedback_decode_methods.md**](state_feedback_decode_methods.md). How the two compare: [**ordered_rank_edit_and_state_feedback_isp.md**](ordered_rank_edit_and_state_feedback_isp.md) (v1.0.1).
