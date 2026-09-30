@@ -159,6 +159,103 @@ def cross_seed_agreement(
     return rows
 
 
+def specific_gain(
+    configured: Sequence[float],
+    configured_ref: Sequence[float],
+    randoms: Sequence[Sequence[float]],
+    random_refs: Sequence[Sequence[float]],
+    *,
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Per-cell gain of the configured chain beyond the mean random-chain gain.
+
+    Every argument is per cell in the same cell order; ``*_ref`` are the Ordered
+    rank-edit end points of the same chain. Returns the cell mean of
+    ``gain_configured - mean_r gain_random_r`` with a cell-bootstrap 95% CI.
+    """
+    conf = np.asarray(configured, dtype=np.float64) - np.asarray(configured_ref, dtype=np.float64)
+    if not randoms:
+        raise ValueError("specific_gain needs at least one random chain")
+    rand = np.mean(
+        [np.asarray(r, dtype=np.float64) - np.asarray(rr, dtype=np.float64)
+         for r, rr in zip(randoms, random_refs)],
+        axis=0,
+    )
+    if conf.shape != rand.shape:
+        raise ValueError(f"cell counts differ: {conf.shape} vs {rand.shape}")
+    diff = conf - rand
+    rng = np.random.default_rng(int(seed))
+    idx = rng.integers(0, diff.size, size=(int(n_boot), diff.size))
+    boot = diff[idx].mean(axis=1)
+    lo, hi = np.quantile(boot, [0.025, 0.975])
+    gain = float(conf.mean())
+    spec = float(diff.mean())
+    return {
+        "n_cells": float(diff.size),
+        "configured_gain_mean": gain,
+        "random_gain_mean": float(rand.mean()),
+        "specific_gain_mean": spec,
+        "specific_gain_median": float(np.median(diff)),
+        "specific_gain_ci_low": float(lo),
+        "specific_gain_ci_high": float(hi),
+        "specific_fraction": spec / gain if gain != 0 else float("nan"),
+        "frac_cells_positive": float((diff > 0).mean()),
+    }
+
+
+COMPARISON_CRITERIA = {"D2_ratio_min": 0.5, "D2_ratio_max": 2.0}
+
+
+def mode_comparison_verdict(
+    spec_by_seed: Mapping[Any, Mapping[str, Mapping[str, float]]],
+    *,
+    multi: str = "multi_step",
+    single: str = "single_last",
+    criteria: Mapping[str, float] = COMPARISON_CRITERIA,
+) -> dict[str, Any]:
+    """D1/D2 over seeds; ``spec_by_seed[seed][mode]`` is a ``specific_gain`` result."""
+    c = {**COMPARISON_CRITERIA, **dict(criteria)}
+
+    def excludes_zero(r: Mapping[str, float]) -> bool:
+        return bool(r["specific_gain_ci_low"] > 0 or r["specific_gain_ci_high"] < 0)
+
+    per_seed: dict[Any, dict[str, Any]] = {}
+    for seed, modes in spec_by_seed.items():
+        if multi not in modes or single not in modes:
+            continue
+        m, s = modes[multi], modes[single]
+        ratio = (
+            m["specific_gain_mean"] / s["specific_gain_mean"]
+            if s["specific_gain_mean"] != 0
+            else float("nan")
+        )
+        per_seed[seed] = {
+            "multi_excludes_zero": excludes_zero(m),
+            "single_excludes_zero": excludes_zero(s),
+            "ratio_multi_over_single": ratio,
+            "ratio_in_range": bool(ratio == ratio and c["D2_ratio_min"] <= ratio <= c["D2_ratio_max"]),
+        }
+    seeds = list(per_seed.values())
+    d1_multi = bool(seeds) and all(v["multi_excludes_zero"] for v in seeds)
+    d1_single = bool(seeds) and all(v["single_excludes_zero"] for v in seeds)
+    d2 = bool(seeds) and all(v["ratio_in_range"] for v in seeds)
+    if d1_multi and d1_single and d2:
+        primary = "every_step"
+    elif d1_single:
+        primary = "single_event"
+    else:
+        primary = "none"
+    return {
+        "criteria": c,
+        "per_seed": per_seed,
+        "D1_multi": d1_multi,
+        "D1_single": d1_single,
+        "D2": d2,
+        "primary": primary,
+    }
+
+
 def coefficient_of_variation(values: Sequence[float]) -> float:
     vals = np.asarray([v for v in values if v == v], dtype=np.float64)
     if vals.size < 2:

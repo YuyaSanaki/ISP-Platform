@@ -12,7 +12,9 @@ from state_feedback.stability import (  # noqa: E402
     ChainTracker,
     coefficient_of_variation,
     cross_seed_agreement,
+    mode_comparison_verdict,
     pair_metrics,
+    specific_gain,
     stability_verdict,
 )
 
@@ -138,6 +140,53 @@ class TestVerdict(unittest.TestCase):
         self.assertFalse(v["passed"]["S1"])
 
 
+class TestSpecificGain(unittest.TestCase):
+    def test_configured_minus_mean_random(self):
+        r = specific_gain(
+            [0.30, 0.32], [0.01, 0.01],
+            [[0.20, 0.22], [0.24, 0.26]], [[0.0, 0.0], [0.02, 0.02]],
+            n_boot=200,
+        )
+        # configured gain 0.29/0.31, random gain mean 0.21/0.23 -> specific 0.08
+        self.assertAlmostEqual(r["specific_gain_mean"], 0.08)
+        self.assertAlmostEqual(r["configured_gain_mean"], 0.30)
+        self.assertAlmostEqual(r["specific_fraction"], 0.08 / 0.30)
+        self.assertGreater(r["specific_gain_ci_low"], 0.0)
+        self.assertEqual(r["frac_cells_positive"], 1.0)
+
+    def test_needs_random(self):
+        with self.assertRaises(ValueError):
+            specific_gain([0.1], [0.0], [], [])
+
+
+def _spec(mean, lo, hi):
+    return {"specific_gain_mean": mean, "specific_gain_ci_low": lo, "specific_gain_ci_high": hi}
+
+
+class TestModeComparison(unittest.TestCase):
+    def test_every_step_when_both_specific_and_similar(self):
+        v = mode_comparison_verdict({
+            0: {"multi_step": _spec(0.02, 0.01, 0.03), "single_last": _spec(0.015, 0.01, 0.02)},
+            1: {"multi_step": _spec(0.02, 0.01, 0.03), "single_last": _spec(0.03, 0.02, 0.04)},
+        })
+        self.assertEqual((v["D1_multi"], v["D1_single"], v["D2"]), (True, True, True))
+        self.assertEqual(v["primary"], "every_step")
+
+    def test_single_when_ratio_out_of_range(self):
+        v = mode_comparison_verdict({
+            0: {"multi_step": _spec(0.10, 0.08, 0.12), "single_last": _spec(0.02, 0.01, 0.03)},
+        })
+        self.assertFalse(v["D2"])
+        self.assertEqual(v["primary"], "single_event")
+
+    def test_none_when_single_not_specific(self):
+        v = mode_comparison_verdict({
+            0: {"multi_step": _spec(0.02, 0.01, 0.03), "single_last": _spec(0.001, -0.002, 0.004)},
+        })
+        self.assertFalse(v["D1_single"])
+        self.assertEqual(v["primary"], "none")
+
+
 @unittest.skipUnless(HAS_ML, "torch / datasets not available")
 class TestAggregate(unittest.TestCase):
     """Seed jobs written to separate run directories combine into one verdict."""
@@ -189,6 +238,41 @@ class TestAggregate(unittest.TestCase):
             self.assertTrue((root / "agg" / "seed_agreement.csv").exists())
             with self.assertRaises(ValueError):
                 aggregate([a, a], root / "dup")
+
+    @staticmethod
+    def _cells(path: Path, values):
+        import pandas as pd
+
+        path.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame({"cell_index": [1, 0], "Shift_to_goal_end": values[::-1]}).to_csv(
+            path / "per_cell_shifts.csv", index=False
+        )
+
+    def test_mode_comparison_from_per_cell_files(self):
+        import json
+        import tempfile
+
+        from run_state_feedback_stability import aggregate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self._write_run(root, 0, [list(range(1, 21))], 0.30)
+            for chain in ("configured", "random0"):
+                self._cells(run / "ordered_rank_edit" / chain / "step02_x", [0.01, 0.01])
+                self._cells(run / "ordered_rank_edit" / chain / "step01_x", [9.0, 9.0])
+            s = run / "seed0"
+            self._cells(s / "multi_configured" / "step02_x", [9.0, 9.0])
+            self._cells(s / "multi_configured" / "step02_feedback", [0.31, 0.33])
+            self._cells(s / "multi_configured" / "step01_feedback", [9.0, 9.0])
+            self._cells(s / "multi_random0" / "step02_feedback", [0.26, 0.28])
+            self._cells(s / "single_last_configured" / "step02_feedback", [0.21, 0.23])
+            self._cells(s / "single_last_random0" / "step02_feedback", [0.19, 0.21])
+            aggregate([run], run)
+            comp = json.loads((run / "mode_comparison.json").read_text())
+            self.assertTrue(comp["D1_multi"] and comp["D1_single"])
+            # multi specific 0.05, single specific 0.02 -> ratio 2.5
+            self.assertAlmostEqual(comp["per_seed"]["0"]["ratio_multi_over_single"], 2.5)
+            self.assertEqual(comp["primary"], "single_event")
 
 
 @unittest.skipUnless(HAS_ML, "torch / datasets not available")

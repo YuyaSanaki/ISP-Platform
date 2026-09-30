@@ -9,8 +9,8 @@ For each decoder seed (decoder retrained; the train/val gene split stays fixed):
 | Chain | What it measures |
 |-------|------------------|
 | configured, multi-step + ``idle_events`` | per-event change (S1); extra reranks with no new perturbation must converge, not drift (S2) |
-| configured, single event | the paper setting (``feedback_every_step: false``), for comparison (S5) |
 | ``n_random_chains`` random chains, multi-step | endpoint gain over Ordered rank-edit must be larger for the configured chain than for every random chain (S3); a decoder trained on the endpoint teacher could pull any chain toward the goal |
+| configured and random chains, single event | one feedback event after ``single_event_at`` (first or last step); the configured gain beyond the random-chain gain is compared with multi-step (D1, D2) |
 
 Ordered rank-edit runs once per chain (no decoder) and is the reference path.
 Across seeds, the final configured encodings and endpoint shifts must agree (S4).
@@ -58,6 +58,8 @@ from state_feedback.stability import (
     DEFAULT_TOPK,
     ChainTracker,
     cross_seed_agreement,
+    mode_comparison_verdict,
+    specific_gain,
     stability_verdict,
 )
 from state_feedback.teacher import observed_delta_rank, split_tokens
@@ -99,6 +101,12 @@ def main() -> int:
     parser.add_argument("--idle-events", type=int, default=None)
     parser.add_argument("--n-random-chains", type=int, default=None)
     parser.add_argument("--output-root", type=Path, default=None)
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        default=None,
+        help="multi and/or single (default: state_feedback.stability.modes, else both).",
+    )
     parser.add_argument(
         "--run-name",
         default=None,
@@ -144,7 +152,14 @@ def main() -> int:
     )
     random_seed = int(st_cfg.get("random_seed", 0))
     topk = tuple(int(k) for k in (st_cfg.get("topk") or DEFAULT_TOPK))
-    run_single = bool(st_cfg.get("single_event", True))
+    modes = list(args.modes or st_cfg.get("modes") or ["multi", "single"])
+    unknown_modes = sorted(set(modes) - {"multi", "single"})
+    if unknown_modes:
+        raise ValueError(f"unknown stability modes {unknown_modes}; valid: multi, single")
+    single_at = str(st_cfg.get("single_event_at", "last"))
+    if single_at not in {"first", "last"}:
+        raise ValueError("state_feedback.stability.single_event_at must be 'first' or 'last'")
+    single_random = bool(st_cfg.get("single_event_random", True))
 
     dataset_path = Path(paths["dataset"]).expanduser()
     model_path = Path(paths["geneformer_model"]).expanduser()
@@ -274,7 +289,8 @@ def main() -> int:
     def _ids(ds) -> list[list[int]]:
         return gs.raw_input_ids(ds, 0, len(ds), model_input_size)
 
-    def run_tracked(label, step_list, tbs, out_dir, rerank_fn, *, every_step, reference=None):
+    def run_tracked(label, step_list, tbs, out_dir, rerank_fn, *, every_step, reference=None,
+                    after_step=feedback_after_step):
         tracker = ChainTracker(label, start_ids, reference=reference, topk=topk)
         captured: dict[str, Any] = {"ref": {}}
 
@@ -288,7 +304,7 @@ def main() -> int:
         rows = rsf.run_condition(
             label, model, start_ds, step_list, tbs, goal_state, state_embs, out_dir,
             rerank_fn=rerank_fn,
-            feedback_after_step=feedback_after_step,
+            feedback_after_step=after_step,
             feedback_every_step=every_step,
             feedback_after_last_step=True,
             pin_overexpressed=pin_overexpressed,
@@ -355,7 +371,7 @@ def main() -> int:
             )
 
         gains: dict[str, float] = {}
-        for chain, (step_list, tbs) in chains.items():
+        for chain, (step_list, tbs) in (chains.items() if "multi" in modes else ()):
             tc = time.time()
             print(f"=== seed {seed} / multi-step / {chain} ===", flush=True)
             tracker, rows, captured = run_tracked(
@@ -405,25 +421,31 @@ def main() -> int:
                 event_rows.append({"seed": seed, "mode": "multi_step", **row})
             timings[f"seed{seed}_multi_{chain}_s"] = time.time() - tc
 
-        if run_single:
+        single_mode = f"single_{single_at}"
+        single_chains = list(chains) if single_random else [CONFIGURED]
+        for chain in (single_chains if "single" in modes else ()):
             tc = time.time()
-            print(f"=== seed {seed} / single event / {CONFIGURED} ===", flush=True)
-            step_list, tbs = chains[CONFIGURED]
+            print(f"=== seed {seed} / single event ({single_at} step) / {chain} ===", flush=True)
+            step_list, tbs = chains[chain]
             tracker, rows, _ = run_tracked(
-                f"single_{CONFIGURED}", step_list, tbs,
-                seed_dir / f"single_{CONFIGURED}", rerank_fn, every_step=False,
-                reference=references[CONFIGURED],
+                f"{single_mode}_{chain}", step_list, tbs,
+                seed_dir / f"{single_mode}_{chain}", rerank_fn, every_step=False,
+                reference=references[chain],
+                after_step=n_steps if single_at == "last" else feedback_after_step,
             )
             end = _endpoint(rows)
             endpoint_rows.append({
-                "seed": seed, "chain": CONFIGURED, "mode": "single_event",
+                "seed": seed, "chain": chain, "mode": single_mode,
                 "endpoint_median": end,
-                "ordered_rank_edit_endpoint": ore_endpoint[CONFIGURED],
-                "gain_over_ordered_rank_edit": end - ore_endpoint[CONFIGURED],
+                "ordered_rank_edit_endpoint": ore_endpoint[chain],
+                "gain_over_ordered_rank_edit": end - ore_endpoint[chain],
             })
+            if chain == CONFIGURED:
+                with open(seed_dir / f"final_{single_mode}_configured.pkl", "wb") as fh:
+                    pickle.dump([list(map(int, x)) for x in tracker.last], fh)
             for row in tracker.rows:
-                event_rows.append({"seed": seed, "mode": "single_event", **row})
-            timings[f"seed{seed}_single_s"] = time.time() - tc
+                event_rows.append({"seed": seed, "mode": single_mode, **row})
+            timings[f"seed{seed}_{single_mode}_{chain}_s"] = time.time() - tc
 
         _flush()
         del decoder
@@ -443,6 +465,9 @@ def main() -> int:
         "chains": {c: [s["genes"] for s in sl] for c, (sl, _) in chains.items()},
         "seeds": seeds,
         "split_seed": split_seed,
+        "modes": modes,
+        "single_event_at": single_at,
+        "single_event_random": single_random,
         "idle_events": idle_events,
         "n_random_chains": n_random,
         "random_seed": random_seed,
@@ -473,14 +498,7 @@ def aggregate(run_dirs: list[Path], out_dir: Path) -> dict[str, Any]:
         [pd.read_csv(d / "endpoints.csv") for d in run_dirs], ignore_index=True
     )
     topk = tuple(json.loads((run_dirs[0] / "run_manifest.json").read_text())["topk"])
-    finals: dict[int, list] = {}
-    for d in run_dirs:
-        for path in sorted(d.glob("seed*/final_configured.pkl")):
-            seed = int(path.parent.name.removeprefix("seed"))
-            if seed in finals:
-                raise ValueError(f"seed {seed} appears in more than one run: {path}")
-            with open(path, "rb") as fh:
-                finals[seed] = pickle.load(fh)
+    finals = _load_finals(run_dirs, "final_configured.pkl")
 
     fed = events[(events["mode"] == "multi_step") & (events["chain"] == f"multi_{CONFIGURED}")]
     rows_by_seed = {
@@ -514,7 +532,92 @@ def aggregate(run_dirs: list[Path], out_dir: Path) -> dict[str, Any]:
                       "multi_step_supported": verdict["multi_step_supported"]}, indent=2),
           flush=True)
     print(f"Wrote {out_dir / 'stability_verdict.json'}", flush=True)
+
+    spec_rows: list[dict[str, Any]] = []
+    spec_by_seed: dict[int, dict[str, dict[str, float]]] = {}
+    for d in run_dirs:
+        for seed_dir in sorted(d.glob("seed*")):
+            if not seed_dir.is_dir():
+                continue
+            seed = int(seed_dir.name.removeprefix("seed"))
+            for mode, prefix in (("multi_step", "multi_"), (SINGLE_LAST, f"{SINGLE_LAST}_")):
+                spec = _mode_specific_gain(d, seed_dir, prefix, seed=seed)
+                if spec is None:
+                    continue
+                spec_by_seed.setdefault(seed, {})[mode] = spec
+                spec_rows.append({"seed": seed, "mode": mode, **spec})
+    if spec_rows:
+        comparison = mode_comparison_verdict(spec_by_seed, multi="multi_step", single=SINGLE_LAST)
+        single_finals = _load_finals(run_dirs, f"final_{SINGLE_LAST}_configured.pkl")
+        single_agreement = cross_seed_agreement(single_finals, topk)
+        comparison["single_seed_spearman"] = [r["spearman_median"] for r in single_agreement]
+        comparison["multi_seed_spearman"] = [r["spearman_median"] for r in agreement]
+        pd.DataFrame(spec_rows).to_csv(out_dir / "mode_specificity.csv", index=False)
+        pd.DataFrame(single_agreement).to_csv(
+            out_dir / f"seed_agreement_{SINGLE_LAST}.csv", index=False
+        )
+        (out_dir / "mode_comparison.json").write_text(
+            json.dumps(comparison, indent=2, default=str) + "\n"
+        )
+        for r in spec_rows:
+            print(
+                f"  seed {r['seed']} {r['mode']:<12} gain={r['configured_gain_mean']:.4f} "
+                f"random={r['random_gain_mean']:.4f} specific={r['specific_gain_mean']:+.4f} "
+                f"[{r['specific_gain_ci_low']:+.4f}, {r['specific_gain_ci_high']:+.4f}] "
+                f"fraction={r['specific_fraction']:.3f}",
+                flush=True,
+            )
+        print(json.dumps({k: comparison[k] for k in ("D1_multi", "D1_single", "D2", "primary")},
+                         indent=2), flush=True)
     return verdict
+
+
+SINGLE_LAST = "single_last"
+
+
+def _load_finals(run_dirs: list[Path], name: str) -> dict[int, list]:
+    finals: dict[int, list] = {}
+    for d in run_dirs:
+        for path in sorted(d.glob(f"seed*/{name}")):
+            seed = int(path.parent.name.removeprefix("seed"))
+            if seed in finals:
+                raise ValueError(f"seed {seed} appears in more than one run: {path}")
+            with open(path, "rb") as fh:
+                finals[seed] = pickle.load(fh)
+    return finals
+
+
+def _final_cells(chain_dir: Path) -> pd.Series | None:
+    """Per-cell end-point shift of one chain: last feedback if any, else last step."""
+    steps = sorted(p for p in chain_dir.glob("step[0-9][0-9]_*") if p.is_dir())
+    if not steps:
+        return None
+    fed = [p for p in steps if p.name.endswith("_feedback")]
+    last = max(fed or steps, key=lambda p: (int(p.name[4:6]), p.name.endswith("_feedback")))
+    df = pd.read_csv(last / "per_cell_shifts.csv")
+    return df.set_index("cell_index")["Shift_to_goal_end"].sort_index()
+
+
+def _mode_specific_gain(run_dir: Path, seed_dir: Path, prefix: str, *, seed: int):
+    conf = _final_cells(seed_dir / f"{prefix}{CONFIGURED}")
+    conf_ref = _final_cells(run_dir / "ordered_rank_edit" / CONFIGURED)
+    if conf is None or conf_ref is None:
+        return None
+    randoms, refs = [], []
+    for chain_dir in sorted(seed_dir.glob(f"{prefix}random*")):
+        chain = chain_dir.name.removeprefix(prefix)
+        r = _final_cells(chain_dir)
+        rr = _final_cells(run_dir / "ordered_rank_edit" / chain)
+        if r is not None and rr is not None:
+            randoms.append(r.loc[conf.index].to_numpy())
+            refs.append(rr.loc[conf.index].to_numpy())
+    if not randoms:
+        return None
+    out = specific_gain(
+        conf.to_numpy(), conf_ref.loc[conf.index].to_numpy(), randoms, refs, seed=seed
+    )
+    out["n_random_chains"] = float(len(randoms))
+    return out
 
 
 if __name__ == "__main__":

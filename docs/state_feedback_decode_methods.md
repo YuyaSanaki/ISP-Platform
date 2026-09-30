@@ -537,6 +537,38 @@ per-cell Spearman は 0.80 / 0.84 / 0.87（top-100 Jaccard 0.39–0.52）、終�
 - single event の終点（0.20–0.21）も、1 回目の feedback だけで ~0.19 に跳ぶ。この跳びが OSKM 特異的かは単発でのランダム対照が要る
   （ここでは測っていない。摂動特異性の partial ρ は「摂動特異性」節）
 
+上の single event は step 1 の後の 1 回（`feedback_every_step: false` の意味）。
+
+### 毎回 feedback と単発 feedback の比較（事前登録 2026-09-30、実行前に固定）
+
+完全な安定性は原理的に無い（rerank 後の encoding は start と異なるので Δh はゼロに戻らない）。
+そこで S1/S2 の数値は不安定さの幅として報告し、主結果を毎回 feedback と単発 feedback の
+どちらにするかは「OSKM に特異的な上乗せが両者でどれだけ違うか」で決める。上の S1–S4 の
+判定（S1, S2, S4 不成立）はこの変更とともに併記する。
+
+単発は **最後の step の後に 1 回**（`stability.single_event_at: last`）。同じ最終編集なら経路に
+よらず同じ結果になる（`output/sf_path_dependence_20260929`）。ランダム chain 5 本（上と同じ遺伝子）と
+seed 0/1/2（上と同じ decoder seed）で、毎回 feedback の既存 run と対にする。
+
+指標（seed ごと、細胞で対にする）:
+
+- 細胞ごとの gain = その chain の終点 shift − 同じ chain の Ordered rank-edit 終点 shift
+- 特異的上乗せ Δspec = OSKM の gain − ランダム chain 5 本の gain の平均。細胞平均と、細胞 bootstrap
+  （2,000 回）の 95% CI
+- 特異的な割合 = Δspec / OSKM の gain（細胞平均どうし）
+
+判定:
+
+| ID | 基準 |
+|---|---|
+| D1 | 毎回・単発の両方で、全 seed の Δspec の CI が 0 を含まない |
+| D2 | 全 seed で Δspec(毎回) / Δspec(単発) が 0.5〜2 |
+
+**決定規則:** D1 と D2 が成立 → 毎回 feedback を主結果にする（Δspec、feedback 回数を揃えた比較のみ、
+S1/S2 の幅を併記）。D1 が単発でのみ成立、または D2 不成立 → 単発 feedback を主結果にする。
+単発でも D1 が不成立 → どちらの設定でも終点の上乗せは摂動特異的と言えないので、State-feedback の
+終点 shift は主張に使わない。seed 間の最終 encoding の一致（毎回 0.80–0.87）は単発でも測り、報告する。
+
 
 ## Claims boundary for Methods
 

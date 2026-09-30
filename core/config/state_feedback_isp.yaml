@@ -135,13 +135,18 @@ state_feedback:
   # Each seed retrains the decoder; the train/val gene split keeps decoder.seed.
   # `idle_events` reranks the final encoding again with no new perturbation.
   # Random chains draw one teacher gene per configured step (same step types).
+  # `modes`: multi = feedback after every step (+ idle events), single = one feedback
+  # event after the `single_event_at` step (first = feedback_after_step, last = final
+  # step), run on the random chains too when `single_event_random` is true.
   stability:
     seeds: [0, 1, 2]
+    modes: [multi, single]
     idle_events: 5
     n_random_chains: 5
     random_seed: 0
     topk: [100, 500, 1000]
-    single_event: true
+    single_event_at: last
+    single_event_random: true
 
   decoder:
     train_max_ncells: 200
