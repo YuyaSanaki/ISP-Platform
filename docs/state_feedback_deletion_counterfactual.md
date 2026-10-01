@@ -18,7 +18,7 @@ commit `8749a29`）に KO の分岐を足す。親文書:
 | KO-B | TP53 KO → KLF4 → MYC → SOX2 → POU5F1（OE） | somatic → pluripotent（教師 = 観測 pluripotent, OE の X3 と同じ） | OSKM に上乗せする | **TP53 が検出された somatic 細胞すべて（116 / 3,000）** |
 | KO-C | DNMT3B KO → DPPA4 KO | pluripotent → somatic（教師 = 観測 somatic） | 動かない（プラセボの分布の中） | KO-A と同じ細胞 |
 
-生物学的な根拠（引用前にすべて確認する。`review/REVISION_TODO.md` X3 に一覧）:
+生物学的な根拠（引用前にすべて確認する）:
 
 - KO-A: POU5F1 の KD でヒト ES 細胞が分化（Matin 2004; Hay 2004; Zaehres 2005）。L1TD1 はヒト ES 細胞の
   自己複製に必須で LIN28 と結合（Närvä 2012）。
@@ -152,8 +152,7 @@ KO の因子がその細胞に無かった（T_s ∉ X_0,i）slot では、**プ
 | KO-B | 116 | 32 chain（TP53 + 30 プラセボ + OSKM のみ）× 3 seed × V2 約 7 分 + rank-edit + decoder | 約 14 |
 
 - 全部 n=300 なら約 78 ノード時間、KO-A / KO-C を n=100 にすると約 36 ノード時間。
-- 残り予算（手法比較 run の後に約 265、X3 OE 確認・X4・X5・X6（n=100）で約 215 を予定）では、
-  KO-A / KO-C は **n=100** でないと収まらない見込み。分散の分解（n=50 スクリーニング）では推定値の
+- 残りの計算予算では、KO-A / KO-C は **n=100** でないと収まらない見込み。分散の分解（n=50 スクリーニング）では推定値の
   ばらつきの約 99% がプラセボ chain 間の差で、細胞数を減らしても z と CI はほとんど変わらない。
 - 最初の job（seed 0 の数 chain）で実測し、予算表を更新してから残りを投入する。
 
