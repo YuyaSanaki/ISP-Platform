@@ -373,7 +373,8 @@ def main() -> int:
         for chain, (_sl, tbs) in chains.items():
             deleted = {int(t) for k in delete_steps for t in tbs[k]}
             for i, cell in enumerate(start_sets):
-                row = {"chain": chain, "cell_index": i, "treated": deleted <= cell}
+                row = {"chain": chain, "cell_index": i, "treated": deleted <= cell,
+                       "n_factors_present": len(deleted & cell)}
                 if use_contrast:
                     row["n_contrast_placebos"] = pc.n_usable_placebos(cell, chain_subs[chain])
                     row["analyzable"] = row["treated"] and row["n_contrast_placebos"] >= 3
