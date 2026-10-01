@@ -378,7 +378,7 @@ def _build_decoder(
     forward_batch_size: int,
     nproc: int,
     out_dir: Path,
-    contrast_subs: Sequence[Mapping[int, int]] | None = None,
+    contrast_subs: Sequence[Any] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Collect training samples, grid-search ``max_shift``, return best decoder.
 
