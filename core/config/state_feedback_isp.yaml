@@ -143,6 +143,17 @@ state_feedback:
     min_stratum: 50
     topk: [100, 500, 1000]
 
+  # Potential-outcome contrast (core/state_feedback/placebo_contrast.py): the decoder
+  # reads delta_h minus the mean delta_h after swapping the chain's genes for each
+  # estimation placebo, in training and in every rerank. Estimation placebos are a
+  # separate draw (estimation_draw_seed, not in stability.random_seeds); a placebo
+  # sharing a gene with a chain is left out of that chain's contrast. Overexpression
+  # steps only.
+  placebo_contrast:
+    enabled: false
+    n_estimation: 10
+    estimation_draw_seed: 1
+
   decoder:
     train_max_ncells: 200
     max_genes_per_cell: 256

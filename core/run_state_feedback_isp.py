@@ -59,6 +59,7 @@ import run_ordered_rank_edit_isp as ore
 from state_feedback import controls
 from state_feedback import feedback as fb
 from state_feedback import gene_states as gs
+from state_feedback import placebo_contrast as pc
 from state_feedback.decoder import (
     load_decoder,
     null_drift,
@@ -377,25 +378,33 @@ def _build_decoder(
     forward_batch_size: int,
     nproc: int,
     out_dir: Path,
+    contrast_subs: Sequence[Mapping[int, int]] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
-    """Collect training samples, grid-search ``max_shift``, return best decoder."""
+    """Collect training samples, grid-search ``max_shift``, return best decoder.
+
+    With ``contrast_subs`` (``placebo_contrast.slot_substitutions`` of the configured
+    chain) the decoder is trained on the placebo contrast ``delta_h - m_g``.
+    """
     seed = int(dec_cfg.get("seed", 0))
 
     train_pert = _apply_steps_at_once(start_ds, steps, token_by_step, nproc=nproc)
-    data = fb.collect_training_samples(
-        model,
-        start_ds,
-        train_pert,
-        teacher,
+    sample_kw = dict(
         layer_to_quant=layer_to_quant,
         pad_token_id=pad_token_id,
         model_input_size=model_input_size,
         forward_batch_size=forward_batch_size,
-        keep_tokens=None,
         max_genes_per_cell=int(dec_cfg.get("max_genes_per_cell", 256)),
         max_cells=dec_cfg.get("train_max_ncells"),
         seed=seed,
     )
+    if contrast_subs is None:
+        data = fb.collect_training_samples(
+            model, start_ds, train_pert, teacher, keep_tokens=None, **sample_kw
+        )
+    else:
+        data = pc.collect_contrast_training_samples(
+            model, start_ds, train_pert, teacher, contrast_subs, **sample_kw
+        )
     print(f"Decoder training samples: {len(data)}", flush=True)
     if len(data) == 0:
         raise RuntimeError(
@@ -452,6 +461,7 @@ def _build_decoder(
     save_decoder(decoder, out_dir / "delta_rank_decoder.pt")
     info = {
         "n_teacher_tokens": len(teacher),
+        "contrast_placebos": len(contrast_subs) if contrast_subs is not None else 0,
         "n_train_tokens": len(train_tokens),
         "n_val_tokens": len(val_tokens),
         "n_train_pairs": len(train_set),

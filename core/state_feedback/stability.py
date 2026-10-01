@@ -178,7 +178,8 @@ def specific_gain(
 
     ``null_*`` places the configured value against the random chains themselves:
     each random chain in turn is scored as if it were the configured one, against
-    the mean of the others (needs three or more random chains).
+    the mean of the others (needs three or more random chains). ``z_vs_random`` is
+    the configured mean gain in SDs of the random-chain mean gains (same minimum).
     """
     conf = np.asarray(configured, dtype=np.float64) - np.asarray(configured_ref, dtype=np.float64)
     if not randoms:
@@ -217,8 +218,11 @@ def specific_gain(
         "specific_gain_ci_high": float(hi),
         "specific_fraction": spec / gain if gain != 0 else float("nan"),
         "frac_cells_positive": float((diff > 0).mean()),
+        "rank_among_random": float(1 + np.sum(chain_means >= gain)),
+        "frac_cells_above_all_random": float((conf > rand_by_chain.max(axis=0)).mean()),
     }
     if n_chains >= 3:
+        out["z_vs_random"] = float((gain - chain_means.mean()) / chain_means.std(ddof=1))
         pseudo = np.array([
             chain_means[r] - np.delete(chain_means, r).mean() for r in range(n_chains)
         ])

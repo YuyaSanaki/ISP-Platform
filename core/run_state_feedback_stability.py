@@ -19,6 +19,12 @@ random-chain gain (specific gain) is reported per seed with a cell-bootstrap CI.
 Ordered rank-edit runs once per chain (no decoder) and is the reference path.
 Across seeds, the final configured encodings and endpoint shifts must agree (S4).
 
+With ``state_feedback.placebo_contrast.enabled`` the decoder is trained on, and every
+chain is reranked with, the placebo contrast of ``state_feedback.placebo_contrast``
+(estimation placebos drawn separately from the random chains; written to
+``estimation_placebos.json``). The configured schedule's decoder is used for its random
+chains.
+
 Usage:
   python3 core/run_state_feedback_stability.py --config core/config/state_feedback_isp.yaml
   python3 core/run_state_feedback_stability.py --config ... --max-ncells 5 --seeds 0 \
@@ -56,6 +62,7 @@ import run_state_feedback_isp as rsf
 
 from state_feedback import feedback as fb
 from state_feedback import gene_states as gs
+from state_feedback import placebo_contrast as pc
 from state_feedback import random_chains
 from state_feedback.multistep import check_feedback_config
 from state_feedback.stability import (
@@ -159,6 +166,15 @@ def main() -> int:
         int(s) for s in (args.random_seeds or st_cfg.get("random_seeds") or [0])
     ]
     min_stratum = int(st_cfg.get("min_stratum", 50))
+    pc_cfg = sf_cfg.get("placebo_contrast") or {}
+    use_contrast = bool(pc_cfg.get("enabled", False))
+    n_estimation = int(pc_cfg.get("n_estimation", 10))
+    estimation_seed = int(pc_cfg.get("estimation_draw_seed", 1))
+    if use_contrast and estimation_seed in random_seeds:
+        raise ValueError(
+            "state_feedback.placebo_contrast.estimation_draw_seed must differ from "
+            "stability.random_seeds (estimation and comparison placebos are separate draws)"
+        )
     if "random_seed" in st_cfg:
         raise ValueError("state_feedback.stability.random_seed is now random_seeds (a list)")
     topk = tuple(int(k) for k in (st_cfg.get("topk") or DEFAULT_TOPK))
@@ -199,6 +215,8 @@ def main() -> int:
     if not steps:
         raise ValueError("stability evaluation needs explicit state_feedback.steps")
     check_feedback_config(sf_cfg, len(steps))
+    if use_contrast:
+        pc.check_overexpress_only(steps)
 
     from datasets import load_from_disk
 
@@ -309,6 +327,30 @@ def main() -> int:
     (output_root / "random_chains.json").write_text(json.dumps(draws, indent=2) + "\n")
     (output_root / "random_strata.json").write_text(json.dumps(strata_pools) + "\n")
 
+    chain_subs: dict[str, list[dict[int, int]]] = {}
+    if use_contrast:
+        est_placebos, _ = pc.draw_estimation_placebos(
+            steps, token_by_step, population, start_detection, start_rank,
+            n=n_estimation, seed=estimation_seed, min_stratum=min_stratum,
+        )
+        for chain, (_sl, tbs) in chains.items():
+            chain_subs[chain] = pc.slot_substitutions(tbs, est_placebos)
+        left_out = {c: n_estimation - len(s) for c, s in chain_subs.items()
+                    if len(s) < n_estimation}
+        print(
+            f"Placebo contrast: {n_estimation} estimation placebos (draw seed "
+            f"{estimation_seed}); left out for sharing a gene: {left_out or 'none'}",
+            flush=True,
+        )
+        (output_root / "estimation_placebos.json").write_text(json.dumps({
+            "draw_seed": estimation_seed,
+            "n_estimation": n_estimation,
+            "placebos": [[[tok_names.get(int(t), str(t)) for t in ts] for ts in p]
+                         for p in est_placebos],
+            "placebo_tokens": est_placebos,
+            "left_out_by_chain": left_out,
+        }, indent=2) + "\n")
+
     split_seed = int(dec_cfg.get("seed", 0))
     train_tokens, val_tokens = split_tokens(
         teacher.keys(), val_fraction=float(dec_cfg.get("val_fraction", 0.2)), seed=split_seed
@@ -390,25 +432,30 @@ def main() -> int:
         decoder, info = rsf._build_decoder(
             model, start_ds, steps, token_by_step, teacher, {**dec_cfg, "seed": seed},
             train_tokens, val_tokens, out_dir=seed_dir / "decoder", **common,
+            contrast_subs=chain_subs.get(CONFIGURED),
         )
         decoders[seed] = info.get("selected", {})
         ore._empty_cuda_cache()
         timings[f"seed{seed}_decoder_s"] = time.time() - ts
+        fwd = {k: common[k] for k in (
+            "layer_to_quant", "pad_token_id", "model_input_size", "forward_batch_size",
+        )}
 
-        def rerank_fn(ctrl_ds, pert_ds, _decoder=decoder):
-            return fb.rerank_linear_deltarank(
-                model, _decoder, ctrl_ds, pert_ds, hysteresis=hysteresis, **{
-                    k: common[k] for k in (
-                        "layer_to_quant", "pad_token_id", "model_input_size",
-                        "forward_batch_size",
-                    )
-                },
+        def make_rerank(chain, _decoder=decoder):
+            if not use_contrast:
+                return lambda ctrl_ds, pert_ds: fb.rerank_linear_deltarank(
+                    model, _decoder, ctrl_ds, pert_ds, hysteresis=hysteresis, **fwd
+                )
+            return lambda ctrl_ds, pert_ds: pc.rerank_placebo_contrast(
+                model, _decoder, ctrl_ds, pert_ds, chain_subs[chain],
+                hysteresis=hysteresis, **fwd,
             )
 
         gains: dict[str, float] = {}
         for chain, (step_list, tbs) in chains.items():
             tc = time.time()
             print(f"=== seed {seed} / multi-step / {chain} ===", flush=True)
+            rerank_fn = make_rerank(chain)
             tracker, rows, captured = run_tracked(
                 f"multi_{chain}", step_list, tbs, seed_dir / f"multi_{chain}",
                 rerank_fn, reference=references[chain],
@@ -484,6 +531,11 @@ def main() -> int:
         "pin_overexpressed": pin_overexpressed,
         "ctrl_reference": ctrl_reference,
         "hysteresis": hysteresis,
+        "placebo_contrast": {
+            "enabled": use_contrast,
+            "n_estimation": n_estimation if use_contrast else 0,
+            "estimation_draw_seed": estimation_seed if use_contrast else None,
+        },
         "decoders": decoders,
         "forward_batch_size": forward_batch_size,
         "timings": timings,
@@ -561,7 +613,9 @@ def aggregate(run_dirs: list[Path], out_dir: Path) -> dict[str, Any]:
                 f"random={r['random_gain_mean']:.4f}±{r['random_gain_se_chains']:.4f} "
                 f"specific={r['specific_gain_mean']:+.4f} "
                 f"[{r['specific_gain_ci_low']:+.4f}, {r['specific_gain_ci_high']:+.4f}] "
-                f"null_p={r.get('null_empirical_p', float('nan')):.3f}",
+                f"null_p={r.get('null_empirical_p', float('nan')):.3f} "
+                f"z={r.get('z_vs_random', float('nan')):.2f} "
+                f"rank={int(r['rank_among_random'])}",
                 flush=True,
             )
     return verdict
