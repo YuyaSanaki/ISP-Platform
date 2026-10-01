@@ -271,7 +271,17 @@ def specific_gain_conditional(
     rand_by_chain = rand_by_chain[used]
     n_chains, n_cells = rand_by_chain.shape
     if n_cells == 0:
-        raise ValueError("no treated cell has enough random chains")
+        nan = float("nan")
+        return {
+            "n_cells": 0.0, "n_cells_dropped": float(treat.sum()),
+            "n_random_chains": float(n_chains), **{k: nan for k in (
+                "random_chains_per_cell_mean", "configured_gain_mean", "random_gain_mean",
+                "random_gain_sd_chains", "random_gain_se_chains", "specific_gain_mean",
+                "specific_gain_median", "specific_gain_ci_low", "specific_gain_ci_high",
+                "specific_fraction", "frac_cells_positive", "rank_among_random",
+                "frac_cells_above_all_random",
+            )},
+        }
     rand = np.nanmean(rand_by_chain, axis=0)
     diff = conf - rand
     rng = np.random.default_rng(int(seed))

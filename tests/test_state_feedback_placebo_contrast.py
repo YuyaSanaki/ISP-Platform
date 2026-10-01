@@ -485,6 +485,14 @@ class TestSpecificGainConditional(unittest.TestCase):
                        min_random_per_cell=4, n_boot=50)
         self.assertEqual(r3["n_cells_dropped"], 1.0)
 
+    def test_no_analyzable_cell_gives_nan_instead_of_error(self):
+        avail = [[False, True, True, True]] * 4
+        r = self.cond(self.conf, [0.0] * 4, self.randoms, self.refs, [True, False, False, False],
+                      avail, n_boot=50)
+        self.assertEqual((r["n_cells"], r["n_cells_dropped"]), (0.0, 1.0))
+        self.assertTrue(numpy.isnan(r["specific_gain_mean"]))
+        self.assertTrue(numpy.isnan(r["rank_among_random"]))
+
 
 @unittest.skipUnless(HAS_NUMPY, "numpy not available")
 class TestSpecificGainRanks(unittest.TestCase):

@@ -656,7 +656,9 @@ def aggregate(run_dirs: list[Path], out_dir: Path) -> dict[str, Any]:
                 f"[{r['specific_gain_ci_low']:+.4f}, {r['specific_gain_ci_high']:+.4f}] "
                 f"null_p={r.get('null_empirical_p', float('nan')):.3f} "
                 f"z={r.get('z_vs_random', float('nan')):.2f} "
-                f"rank={int(r['rank_among_random'])}",
+                f"rank={r['rank_among_random']:.0f}"
+                + (f" cells={int(r['n_cells'])} dropped={int(r['n_cells_dropped'])}"
+                   if "n_cells_dropped" in r else ""),
                 flush=True,
             )
     return verdict
