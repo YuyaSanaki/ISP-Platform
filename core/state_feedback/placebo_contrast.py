@@ -148,6 +148,16 @@ def swap_tokens(
     return new, set(active) | repl
 
 
+def n_usable_placebos(start_ids: Sequence[int], subs: Sequence[Substitution]) -> int:
+    """Placebos whose delete genes are all in the start encoding, for the factors it holds."""
+    cell = {int(t) for t in start_ids}
+    return sum(
+        all(int(q) in cell for t, q in sub.ko.items() if int(t) in cell)
+        if isinstance(sub, MixedSubstitution) else True
+        for sub in subs
+    )
+
+
 def undo_delete_redo(
     ids: Sequence[int],
     start_ids: Sequence[int],

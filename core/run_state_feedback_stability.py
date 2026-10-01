@@ -342,15 +342,6 @@ def main() -> int:
     (output_root / "random_chains.json").write_text(json.dumps(draws, indent=2) + "\n")
     (output_root / "random_strata.json").write_text(json.dumps(strata_pools) + "\n")
 
-    if delete_steps:
-        start_sets = [set(map(int, ids)) for ids in gs.raw_input_ids(
-            start_ds, 0, len(start_ds), model_input_size)]
-        pd.DataFrame([
-            {"chain": chain, "cell_index": i,
-             "treated": {int(t) for k in delete_steps for t in tbs[k]} <= cell}
-            for chain, (_sl, tbs) in chains.items() for i, cell in enumerate(start_sets)
-        ]).to_csv(output_root / "delete_cells.csv", index=False)
-
     chain_subs: dict[str, list[Any]] = {}
     if use_contrast:
         est_placebos, _ = pc.draw_estimation_placebos(
@@ -374,6 +365,29 @@ def main() -> int:
             "placebo_tokens": est_placebos,
             "left_out_by_chain": left_out,
         }, indent=2) + "\n")
+
+    if delete_steps:
+        start_sets = [set(map(int, ids)) for ids in gs.raw_input_ids(
+            start_ds, 0, len(start_ds), model_input_size)]
+        rows = []
+        for chain, (_sl, tbs) in chains.items():
+            deleted = {int(t) for k in delete_steps for t in tbs[k]}
+            for i, cell in enumerate(start_sets):
+                row = {"chain": chain, "cell_index": i, "treated": deleted <= cell}
+                if use_contrast:
+                    row["n_contrast_placebos"] = pc.n_usable_placebos(cell, chain_subs[chain])
+                    row["analyzable"] = row["treated"] and row["n_contrast_placebos"] >= 3
+                rows.append(row)
+        cells_df = pd.DataFrame(rows)
+        cells_df.to_csv(output_root / "delete_cells.csv", index=False)
+        conf_cells = cells_df[cells_df["chain"] == CONFIGURED]
+        print(
+            f"Delete steps {sorted(i + 1 for i in delete_steps)}: treated cells "
+            f"{int(conf_cells['treated'].sum())}/{len(start_sets)}"
+            + (f", analyzable (>=3 contrast placebos) {int(conf_cells['analyzable'].sum())}"
+               if use_contrast else ""),
+            flush=True,
+        )
 
     split_seed = int(dec_cfg.get("seed", 0))
     train_tokens, val_tokens = split_tokens(
@@ -694,8 +708,9 @@ def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "m
     treated = None
     if (run_dir / "delete_cells.csv").exists():
         cells = pd.read_csv(run_dir / "delete_cells.csv")
+        col = "analyzable" if "analyzable" in cells.columns else "treated"
         treated = {
-            chain: g.set_index("cell_index")["treated"].astype(bool).loc[conf.index].to_numpy()
+            chain: g.set_index("cell_index")[col].astype(bool).loc[conf.index].to_numpy()
             for chain, g in cells.groupby("chain")
         }
     by_set: dict[str, list[tuple[int, str, Any, Any]]] = {}

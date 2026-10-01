@@ -361,6 +361,16 @@ class TestUndoDeleteRedo(unittest.TestCase):
         new, _ = self.f([9, 1, 2, 3], start, _ko({50: 3}, oe={9: 70}))
         self.assertEqual(new, [70, 50, 1, 2])
 
+    def test_usable_placebos_count_only_slots_of_present_factors(self):
+        from state_feedback.placebo_contrast import n_usable_placebos
+
+        subs = [_ko({50: 1, 60: 2}), _ko({50: 1, 60: 99}), _ko({50: 98, 60: 2}),
+                _ko({50: 1}, oe={9: 97})]
+        self.assertEqual(n_usable_placebos([1, 2, 50, 60], subs), 2)
+        # 60 absent: its placebo gene is not needed
+        self.assertEqual(n_usable_placebos([1, 2, 50], subs), 3)
+        self.assertEqual(n_usable_placebos([1, 2], [{9: 97}, {8: 96}]), 2)
+
 
 @unittest.skipUnless(HAS_ML, "torch/datasets not available")
 class TestDeleteContrast(unittest.TestCase):

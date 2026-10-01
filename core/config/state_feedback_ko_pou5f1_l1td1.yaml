@@ -1,0 +1,83 @@
+# State-feedback ISP — sequential knockout KO-A (docs/state_feedback_deletion_counterfactual.md)
+# POU5F1 KO -> L1TD1 KO, pluripotent -> somatic, teacher = observed somatic ranks.
+# Expected to move: larger shift toward somatic than the matched placebo chains (K1).
+# Treated cells (both KO genes in the start encoding) are the training and Delta-spec cells.
+
+paths:
+  dataset: data/bbrcv3/tokenize_human_native/tokenized_dataset/GSE147564_ft6k_qc_human_native_0.dataset
+  geneformer_model: data/bbrcv3/v2_ft_human_native/all_run1
+  output_root: data/bbrcv3/runs/state_feedback_ko
+  output_date_subdir: true
+  output_time_subdir: true
+
+species:
+  model_organism: human
+  model: human_geneformer
+  human_variant: v2_104m
+  ortholog_policy: one2one
+
+perturbation:
+  state_key: disease
+  start_state: pluripotent
+  end_state: somatic
+  alt_states: []
+
+model:
+  type: CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 100
+  emb_layer: 0
+
+state_feedback:
+  steps:
+    - name: POU5F1
+      type: delete
+      genes: [POU5F1]
+    - name: L1TD1
+      type: delete
+      genes: [L1TD1]
+
+  observed_state: somatic
+  observed_max_ncells: 3000
+  min_detection_count: 5
+
+  pin_overexpressed: true
+  # The delete counterfactual restores factors relative to the start encoding.
+  ctrl_reference: start
+  hysteresis: 0.0
+  alpha: 1.0
+  baseline_max_shift: 0.1
+
+  stability:
+    seeds: [0, 1, 2]
+    idle_events: 0
+    n_random_chains: 30
+    random_seeds: [0]
+    min_stratum: 50
+    topk: [100, 500, 1000]
+
+  # 20 estimation placebos: with 10, a treated cell has about 6 placebos whose
+  # genes are all present.
+  placebo_contrast:
+    enabled: true
+    n_estimation: 20
+    estimation_draw_seed: 1
+
+  decoder:
+    train_max_ncells: 200
+    max_genes_per_cell: 256
+    val_fraction: 0.2
+    epochs: 20
+    lr: 0.001
+    batch_size: 4096
+    lam_huber: 1.0
+    lam_pair: 0.5
+    lam_smooth: 0.01
+    max_shift_grid: [0.05, 0.1, 0.2, 0.3, 0.5]
+    seed: 0
+
+runtime:
+  nproc: 1
+  forward_batch_size: auto

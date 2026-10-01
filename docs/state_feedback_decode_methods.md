@@ -715,6 +715,48 @@ R1 不成立 → 層の定義を見直し（結果を見る前に理由を記録
   NOTCH2NLA, OR4C3）が OSKM を上回り、他の seed でも 2 位。OSKM は 40 本の分布の上端（leave-one-out null の
   経験 p 0.024–0.049）にある
 
+### 逐次 KO の検証（事前登録 2026-10-01、投入前に固定）
+
+設計: [state_feedback_deletion_counterfactual.md](state_feedback_deletion_counterfactual.md)。実装:
+`core/state_feedback/placebo_contrast.py`（`undo_delete_redo`）、config は
+`core/config/state_feedback_ko_{pou5f1_l1td1,tp53_oskm,dnmt3b_dppa4}.yaml`。
+
+| ID | chain | 開始細胞 | 処置細胞 |
+|---|---|---|---|
+| KO-A | POU5F1 KO → L1TD1 KO（pluripotent → somatic） | pluripotent, 長さ降順の先頭 100 | 両 KO 遺伝子が開始エンコーディングにある細胞 |
+| KO-B | TP53 KO → KLF4 → MYC → SOX2 → POU5F1（somatic → pluripotent） | TP53 が検出された somatic 細胞すべて（116）。層もこの細胞で作る | 全開始細胞 |
+| KO-C | DNMT3B KO → DPPA4 KO（pluripotent → somatic） | KO-A と同じ 100 細胞 | 両 KO 遺伝子がある細胞 |
+
+固定する条件:
+
+- decoder seed 0/1/2（seed ごとに decoder を学習）。feedback は毎 step 後、idle event なし、`ctrl_reference: start`。
+- 評価用プラセボ: `random_seeds: [0]` の 30 本、層は `random_chains.stratum`。KO-A / KO-C は両 slot、KO-B は
+  KO の slot だけを置き換える（`stability.random_steps: [1]`）。
+- 推定用プラセボ: `estimation_draw_seed: 1` の 20 本。chain と遺伝子を共有するプラセボはその chain の対比から外す。
+- 解析対象の細胞: 処置細胞のうち、KO 遺伝子が開始エンコーディングにそろう推定用プラセボが 3 本以上ある細胞
+  （`delete_cells.csv` の `analyzable`）。外した細胞数を報告する。
+- Δspec: `specific_gain_conditional`。細胞ごとに、その細胞で解析対象になる評価用プラセボ chain だけの gain の
+  平均を引く。評価用 chain が 3 本未満の細胞は外す。z と順位は同じ細胞集合・同じ条件付き平均で、
+  各プラセボ chain を leave-one-out で評価して求める。
+- KO-A と KO-C の直接比較: 両方で解析対象の細胞（4 遺伝子すべてがある細胞）で、細胞ごとの
+  τ_A,i − τ_C,i の平均と細胞 bootstrap 95% CI（2000 回、乱数 seed = decoder seed）。
+
+判定基準（3 seed すべてで成立すること）:
+
+| ID | chain | 基準 |
+|---|---|---|
+| K1 | KO-A | Δspec > 0、評価用プラセボ 30 本に対して z ≥ 3、31 本中 1 位 |
+| K2 | KO-B | Δspec > 0（KO の slot だけのプラセボに対して）、z ≥ 2 |
+| K3 | KO-C | \|z\| < 2、かつ τ_A − τ_C の 95% CI の下限 > 0 |
+| K4 | 全 chain | 投入した commit で null の単体テスト（摂動なし chain・因子が無い細胞で変位 0）が通る。run の中で KO 因子をどれも持たない細胞があれば、State-feedback の終点 shift が Ordered rank-edit と一致する（\|差\| < 1e-6）。該当細胞数を報告する |
+
+- KO-B は処置細胞が 116 で、p53 抑制の効果は初期化の「効率の上昇」なので期待効果が小さい。基準を z ≥ 2 に
+  緩める理由として記録する。
+- K3 は効果が無いことの証明ではない。「生物学的に効かないはずの KO が、マッチしたプラセボと区別できない」ことと、
+  「効くはずの KO より小さい」ことの 2 点として書く。
+- 不成立の基準は数値をそのまま報告する。細胞数・プラセボ本数・層・decoder の設定を結果を見てから変えない。
+- 投入順: KO-A と KO-B の smoke（n=5）で動作と時間を確認し、計算予算を更新してから本番 3 本を投入する。
+
 
 ## Claims boundary for Methods
 

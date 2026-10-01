@@ -1,6 +1,7 @@
 # State-feedback ISP — 逐次 KO の反実仮想と検証設計（2026-10-01）
 
-状態: **設計確定（未実装）**。OE 版の潜在反応 + Δspec（`core/state_feedback/placebo_contrast.py`,
+状態: **実装済み**（commit `bdd8cac`）。判定基準 K1–K4 は
+[state_feedback_decode_methods.md](state_feedback_decode_methods.md) の「逐次 KO の検証」に事前登録した。OE 版の潜在反応 + Δspec（`core/state_feedback/placebo_contrast.py`,
 commit `8749a29`）に KO の分岐を足す。親文書:
 [state_feedback_decode_methods.md](state_feedback_decode_methods.md) の「方針（2026-10-01 決定）」。
 

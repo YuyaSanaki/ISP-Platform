@@ -147,8 +147,9 @@ state_feedback:
   # reads delta_h minus the mean delta_h after swapping the chain's genes for each
   # estimation placebo, in training and in every rerank. Estimation placebos are a
   # separate draw (estimation_draw_seed, not in stability.random_seeds); a placebo
-  # sharing a gene with a chain is left out of that chain's contrast. Overexpression
-  # steps only.
+  # sharing a gene with a chain is left out of that chain's contrast. Delete steps
+  # restore the factor next to its start-encoding neighbour and delete the placebo
+  # gene (docs/state_feedback_deletion_counterfactual.md); they need ctrl_reference: start.
   placebo_contrast:
     enabled: false
     n_estimation: 10
