@@ -71,6 +71,7 @@ from state_feedback.stability import (
     cross_seed_agreement,
     running_random_mean,
     specific_gain,
+    specific_gain_conditional,
     stability_verdict,
 )
 from state_feedback.teacher import observed_delta_rank, split_tokens
@@ -215,14 +216,25 @@ def main() -> int:
     if not steps:
         raise ValueError("stability evaluation needs explicit state_feedback.steps")
     check_feedback_config(sf_cfg, len(steps))
-    if use_contrast:
-        pc.check_overexpress_only(steps)
+    delete_steps = pc.delete_step_indices(steps)
+    if use_contrast and delete_steps and ctrl_reference != "start":
+        raise ValueError("the placebo contrast of delete steps needs ctrl_reference: start")
+    random_steps = st_cfg.get("random_steps")
+    require_detected = list(sf_cfg.get("require_detected") or [])
 
     from datasets import load_from_disk
 
     print(f"Loading dataset: {dataset_path}", flush=True)
     dataset = load_from_disk(str(dataset_path))
-    start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
+    if require_detected:
+        req_tokens = set(ore._resolve_gene_tokens(cfg, require_detected)[0])
+        start_ds = ore._select_start_cells(dataset, state_key, start_state, None)
+        start_ds = start_ds.filter(lambda x: req_tokens <= set(x["input_ids"]))
+        if max_ncells is not None and len(start_ds) > int(max_ncells):
+            start_ds = start_ds.select(range(int(max_ncells)))
+        print(f"Start cells restricted to cells with {require_detected} detected", flush=True)
+    else:
+        start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
     print(f"Start cells ({start_state}): n={len(start_ds)}", flush=True)
     obs_cap = int(sf_cfg.get("observed_max_ncells") or max_ncells or 3000)
     obs_ds = ore._select_start_cells(dataset, state_key, observed_state, obs_cap)
@@ -305,6 +317,9 @@ def main() -> int:
             steps, token_by_step, population, start_detection, start_rank,
             n_chains=n_random, seed=rs, min_stratum=min_stratum, prefix=f"random_s{rs}_",
         )
+        if random_steps:
+            drawn = random_chains.randomize_steps_only(drawn, steps, token_by_step, random_steps)
+            record["random_steps"] = [int(i) for i in random_steps]
         chains.update(drawn)
         draws[str(rs)] = {
             **{k: v for k, v in record.items() if k != "strata"},
@@ -327,14 +342,23 @@ def main() -> int:
     (output_root / "random_chains.json").write_text(json.dumps(draws, indent=2) + "\n")
     (output_root / "random_strata.json").write_text(json.dumps(strata_pools) + "\n")
 
-    chain_subs: dict[str, list[dict[int, int]]] = {}
+    if delete_steps:
+        start_sets = [set(map(int, ids)) for ids in gs.raw_input_ids(
+            start_ds, 0, len(start_ds), model_input_size)]
+        pd.DataFrame([
+            {"chain": chain, "cell_index": i,
+             "treated": {int(t) for k in delete_steps for t in tbs[k]} <= cell}
+            for chain, (_sl, tbs) in chains.items() for i, cell in enumerate(start_sets)
+        ]).to_csv(output_root / "delete_cells.csv", index=False)
+
+    chain_subs: dict[str, list[Any]] = {}
     if use_contrast:
         est_placebos, _ = pc.draw_estimation_placebos(
             steps, token_by_step, population, start_detection, start_rank,
             n=n_estimation, seed=estimation_seed, min_stratum=min_stratum,
         )
         for chain, (_sl, tbs) in chains.items():
-            chain_subs[chain] = pc.slot_substitutions(tbs, est_placebos)
+            chain_subs[chain] = pc.slot_substitutions(tbs, est_placebos, delete_steps)
         left_out = {c: n_estimation - len(s) for c, s in chain_subs.items()
                     if len(s) < n_estimation}
         print(
@@ -531,6 +555,9 @@ def main() -> int:
         "pin_overexpressed": pin_overexpressed,
         "ctrl_reference": ctrl_reference,
         "hysteresis": hysteresis,
+        "delete_steps": sorted(i + 1 for i in delete_steps),
+        "random_steps": [int(i) for i in random_steps] if random_steps else None,
+        "require_detected": require_detected,
         "placebo_contrast": {
             "enabled": use_contrast,
             "n_estimation": n_estimation if use_contrast else 0,
@@ -658,12 +685,20 @@ def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "m
 
     Returns ``(rows, running)``: one ``specific_gain`` row per random set (``set``
     = ``all`` or ``s<random_seed>``) and the running random mean per set in draw order.
+    Chains with delete steps (``delete_cells.csv``) use ``specific_gain_conditional``.
     """
     conf = _final_cells(seed_dir / f"{prefix}{CONFIGURED}")
     conf_ref = _final_cells(run_dir / "ordered_rank_edit" / CONFIGURED)
     if conf is None or conf_ref is None:
         return None
-    by_set: dict[str, list[tuple[int, Any, Any]]] = {}
+    treated = None
+    if (run_dir / "delete_cells.csv").exists():
+        cells = pd.read_csv(run_dir / "delete_cells.csv")
+        treated = {
+            chain: g.set_index("cell_index")["treated"].astype(bool).loc[conf.index].to_numpy()
+            for chain, g in cells.groupby("chain")
+        }
+    by_set: dict[str, list[tuple[int, str, Any, Any]]] = {}
     for chain_dir in seed_dir.glob(f"{prefix}random*"):
         chain = chain_dir.name.removeprefix(prefix)
         r = _final_cells(chain_dir)
@@ -672,7 +707,7 @@ def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "m
             continue
         name, idx = _random_set(chain)
         by_set.setdefault(name, []).append(
-            (idx, r.loc[conf.index].to_numpy(), rr.loc[conf.index].to_numpy())
+            (idx, chain, r.loc[conf.index].to_numpy(), rr.loc[conf.index].to_numpy())
         )
     if not by_set:
         return None
@@ -682,9 +717,16 @@ def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "m
     rows, running = [], []
     c, cr = conf.to_numpy(), conf_ref.loc[conf.index].to_numpy()
     for name, chains in sets.items():
-        randoms = [x[1] for x in chains]
-        refs = [x[2] for x in chains]
-        rows.append({"set": name, **specific_gain(c, cr, randoms, refs, seed=seed)})
+        randoms = [x[2] for x in chains]
+        refs = [x[3] for x in chains]
+        if treated is None:
+            spec = specific_gain(c, cr, randoms, refs, seed=seed)
+        else:
+            spec = specific_gain_conditional(
+                c, cr, randoms, refs, treated[CONFIGURED], [treated[x[1]] for x in chains],
+                seed=seed,
+            )
+        rows.append({"set": name, **spec})
         if name != "all" or len(sets) == 1:
             running += [{"set": name, **r} for r in running_random_mean(randoms, refs)]
     return rows, running

@@ -124,11 +124,18 @@ class TestSwapAndSlots(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.pc.slot_substitutions([[10], [11]], [[[20]]])
 
-    def test_overexpress_only(self):
-        self.pc.check_overexpress_only([{"name": "a", "type": "overexpress"}])
+    def test_delete_step_indices(self):
+        steps = [{"name": "a", "type": "knockdown"}, {"name": "b", "type": "overexpress"},
+                 {"name": "c", "type": "delete"}]
+        self.assertEqual(self.pc.delete_step_indices(steps), frozenset({0, 2}))
+        self.assertEqual(self.pc.delete_step_indices(steps[1:2]), frozenset())
         with self.assertRaises(ValueError):
-            self.pc.check_overexpress_only([{"name": "a", "type": "overexpress"},
-                                       {"name": "b", "type": "delete"}])
+            self.pc.delete_step_indices([{"name": "x", "type": "activate"}])
+
+    def test_mixed_substitution_split_by_step_type(self):
+        subs = self.pc.slot_substitutions([[10], [11], [12]], [[[20], [21], [22]]],
+                                          frozenset({0}))
+        self.assertEqual(subs, [self.pc.MixedSubstitution(oe={11: 21, 12: 22}, ko={10: 20})])
 
 
 @unittest.skipUnless(HAS_ML, "torch/datasets not available")
@@ -284,6 +291,189 @@ class TestRerankAndTraining(unittest.TestCase):
 
 
 REFERENCE_AFTER = [[2, 9, 5, 1, 3, 4, 6], [2, 9, 5, 3, 1, 6, 4], [5, 9, 2, 6, 4, 3, 1]]
+
+
+def _ko(ko, oe=None):
+    from state_feedback.placebo_contrast import MixedSubstitution
+
+    return MixedSubstitution(oe=dict(oe or {}), ko=dict(ko))
+
+
+@unittest.skipUnless(HAS_ML, "torch/datasets not available")
+class TestUndoDeleteRedo(unittest.TestCase):
+    def setUp(self):
+        from state_feedback.placebo_contrast import undo_delete_redo
+
+        self.f = undo_delete_redo
+
+    def _deleted(self, ids, genes):
+        return [t for t in ids if t not in genes]
+
+    def test_before_feedback_equals_placebo_deleted_from_start(self):
+        start = [1, 2, 50, 3, 4, 60, 5, 6, 7]
+        cases = [
+            {50: 2, 60: 6},    # placebo before / after the factor
+            {50: 2, 60: 4},    # placebo right before the factor
+            {50: 7, 60: 1},    # placebo at the end / at the front
+        ]
+        for ko in cases:
+            x_t = self._deleted(start, {50, 60})
+            new, excl = self.f(x_t, start, _ko(ko))
+            self.assertEqual(new, self._deleted(start, set(ko.values())), ko)
+            self.assertEqual(excl, set(ko.values()))
+
+    def test_factor_first_in_start(self):
+        start = [50, 1, 2, 3]
+        new, _ = self.f([1, 2, 3], start, _ko({50: 2}))
+        self.assertEqual(new, [50, 1, 3])
+
+    def test_factor_follows_its_anchor_after_rerank(self):
+        start = [1, 2, 50, 3, 4, 5]
+        x_t = [3, 1, 4, 2, 5]           # reranked after 50 was deleted
+        new, _ = self.f(x_t, start, _ko({50: 5}))
+        self.assertEqual(new, [3, 1, 4, 2, 50])
+        self.assertEqual(len(new), len(x_t))
+        self.assertEqual(set(new), set(x_t) - {5} | {50})
+
+    def test_factor_absent_from_start_gets_no_placebo_edit(self):
+        start = [1, 2, 3, 4]
+        new, excl = self.f([1, 2, 3, 4], start, _ko({50: 3}))
+        self.assertEqual((new, excl), ([1, 2, 3, 4], set()))
+
+    def test_missing_placebo_gene_gives_no_counterfactual(self):
+        self.assertIsNone(self.f([1, 2, 3], [1, 50, 2, 3], _ko({50: 99})))
+
+    def test_mixed_chain(self):
+        # KO of 50, then OE of 9 (front-pinned): the OE slot is swapped as in
+        # swap_tokens, the KO slot goes back after its anchor.
+        from state_feedback.placebo_contrast import swap_tokens
+
+        start = [1, 2, 50, 3, 40, 4]
+        x_t = [9, 1, 2, 3, 40, 4]
+        new, excl = self.f(x_t, start, _ko({50: 3}, oe={9: 40}))
+        oe_only, _ = swap_tokens(x_t, {9: 40})
+        self.assertEqual(oe_only, [40, 1, 2, 3, 4])
+        self.assertEqual(new, [40, 1, 2, 50, 4])
+        self.assertEqual(excl, {9, 40, 3})
+
+    def test_fallback_after_front_overexpressed_placebos(self):
+        start = [50, 1, 2, 3]
+        new, _ = self.f([9, 1, 2, 3], start, _ko({50: 3}, oe={9: 70}))
+        self.assertEqual(new, [70, 50, 1, 2])
+
+
+@unittest.skipUnless(HAS_ML, "torch/datasets not available")
+class TestDeleteContrast(unittest.TestCase):
+    def setUp(self):
+        from state_feedback import placebo_contrast as pc
+
+        self.pc = pc
+        # cell 2 has no factor 50: untreated
+        self.ctrl = [[1, 2, 50, 3, 4, 5], [2, 50, 3, 1, 5, 4], [5, 4, 3, 2, 1, 6]]
+        self.pert = [[1, 2, 3, 4, 5], [2, 3, 1, 5, 4], [5, 4, 3, 2, 1, 6]]
+        self.subs = [_ko({50: 4}), _ko({50: 5}), _ko({50: 1})]
+
+    def test_untreated_cell_has_zero_contrast_and_no_reencoding(self):
+        hidden = fake_hidden_states()
+        calls = []
+
+        def counting(model, raw_ids, pad, layer):
+            calls.append(len(raw_ids))
+            return hidden(model, raw_ids, pad, layer)
+
+        pair = _pair(self.ctrl, self.pert, hidden)
+        with mock.patch("state_feedback.gene_states._hidden_states", counting):
+            m_g, counts = self.pc.placebo_mediator(None, pair, self.subs, **FWD)
+        self.assertEqual(calls, [2, 2, 2])
+        feat, _ = self.pc.contrast_delta_h(pair, 2, m_g[2])
+        self.assertEqual(float(feat.abs().max()), 0.0)
+
+    def test_generic_deletion_gives_zero_contrast(self):
+        # the factor's embedding equals the placebo's: deleting either is the same
+        hidden = fake_hidden_states(alias={50: 4})
+        ctrl = [[1, 2, 50, 3, 4, 5, 6, 7]]
+        pert = [[1, 2, 3, 4, 5, 6, 7]]
+        pair = _pair(ctrl, pert, hidden)
+        with mock.patch("state_feedback.gene_states._hidden_states", hidden):
+            m_g, _ = self.pc.placebo_mediator(None, pair, [_ko({50: 4})], **FWD)
+        feat, _ = self.pc.contrast_delta_h(pair, 0, m_g[0])
+        delta, _ = pair.delta_h(0)
+        self.assertGreater(float(delta.abs().max()), 0.0)
+        # genes between the restored factor and the deleted placebo shift by one
+        # position; the genes before both edits see the same context
+        self.assertLess(float(feat[:2].abs().max()), 1e-5)
+
+    def test_untreated_cell_does_not_move(self):
+        with mock.patch("state_feedback.gene_states._hidden_states", fake_hidden_states()):
+            after, _ = self.pc.rerank_placebo_contrast(
+                None, _decoder(seed=3, max_shift=0.5, scale=50.0), _ds(self.ctrl),
+                _ds(self.pert), self.subs, forward_batch_size=3, **FWD,
+            )
+        self.assertEqual(after[2], self.pert[2])
+
+    def test_training_uses_treated_cells_only(self):
+        teacher = {t: 0.1 * t for t in (1, 2, 3, 4, 5, 6)}
+        with mock.patch("state_feedback.gene_states._hidden_states", fake_hidden_states()):
+            data = self.pc.collect_contrast_training_samples(
+                None, _ds(self.ctrl), _ds(self.pert), teacher, self.subs,
+                forward_batch_size=3, max_genes_per_cell=10, **FWD,
+            )
+        self.assertGreater(len(data), 0)
+        self.assertNotIn(6, data.tokens)   # only cell 2 (untreated) has gene 6
+        self.assertNotIn(50, data.tokens)
+
+
+@unittest.skipUnless(HAS_NUMPY, "numpy not available")
+class TestRandomizeStepsOnly(unittest.TestCase):
+    def test_keeps_configured_steps(self):
+        from state_feedback import random_chains
+
+        steps = [{"index": i + 1, "name": g, "type": t, "genes": [g]}
+                 for i, (g, t) in enumerate([("TP53", "delete"), ("KLF4", "overexpress")])]
+        chains = {"r0": ([{"index": 1, "name": "r0_s1", "type": "delete", "genes": ["7"]},
+                          {"index": 2, "name": "r0_s2", "type": "overexpress", "genes": ["8"]}],
+                         [[7], [8]])}
+        out = random_chains.randomize_steps_only(chains, steps, [[100], [200]], [1])
+        self.assertEqual(out["r0"][1], [[7], [200]])
+        self.assertEqual(out["r0"][0][1]["genes"], ["KLF4"])
+        self.assertEqual(out["r0"][0][0]["genes"], ["7"])
+        with self.assertRaises(ValueError):
+            random_chains.randomize_steps_only(chains, steps, [[100], [200]], [3])
+
+
+@unittest.skipUnless(HAS_NUMPY, "numpy not available")
+class TestSpecificGainConditional(unittest.TestCase):
+    def setUp(self):
+        from state_feedback.stability import specific_gain, specific_gain_conditional
+
+        self.full, self.cond = specific_gain, specific_gain_conditional
+        self.refs = [[0.0] * 4] * 4
+        self.randoms = [[0.1, 0.2, 0.1, 0.0], [0.2, 0.2, 0.3, 0.1],
+                        [0.3, 0.1, 0.3, 0.2], [0.1, 0.1, 0.5, 0.1]]
+        self.conf = [0.4, 0.3, 0.4, 0.2]
+
+    def test_all_available_matches_specific_gain(self):
+        a = self.full(self.conf, [0.0] * 4, self.randoms, self.refs, n_boot=200)
+        b = self.cond(self.conf, [0.0] * 4, self.randoms, self.refs, [True] * 4,
+                      [[True] * 4] * 4, n_boot=200)
+        for k in ("specific_gain_mean", "random_gain_mean", "z_vs_random", "rank_among_random",
+                  "frac_cells_above_all_random", "null_empirical_p", "specific_gain_ci_low"):
+            self.assertAlmostEqual(a[k], b[k], places=10, msg=k)
+        self.assertEqual(b["n_cells_dropped"], 0.0)
+
+    def test_unavailable_chains_and_untreated_cells_are_left_out(self):
+        avail = [[True, True, True, True], [True, True, True, True],
+                 [True, True, True, True], [True, True, False, True]]
+        r = self.cond(self.conf, [0.0] * 4, self.randoms, self.refs,
+                      [True, True, True, False], avail, n_boot=50)
+        self.assertEqual(r["n_cells"], 3.0)
+        rand = numpy.array([[0.1, 0.2, 0.1], [0.2, 0.2, 0.3], [0.3, 0.1, 0.3],
+                            [0.1, 0.1, numpy.nan]])
+        expect = numpy.mean(numpy.array([0.4, 0.3, 0.4]) - numpy.nanmean(rand, axis=0))
+        self.assertAlmostEqual(r["specific_gain_mean"], expect)
+        r3 = self.cond(self.conf, [0.0] * 4, self.randoms, self.refs, [True] * 4, avail,
+                       min_random_per_cell=4, n_boot=50)
+        self.assertEqual(r3["n_cells_dropped"], 1.0)
 
 
 @unittest.skipUnless(HAS_NUMPY, "numpy not available")

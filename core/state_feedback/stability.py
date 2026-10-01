@@ -232,6 +232,92 @@ def specific_gain(
     return out
 
 
+def specific_gain_conditional(
+    configured: Sequence[float],
+    configured_ref: Sequence[float],
+    randoms: Sequence[Sequence[float]],
+    random_refs: Sequence[Sequence[float]],
+    treated: Sequence[bool],
+    available: Sequence[Sequence[bool]],
+    *,
+    min_random_per_cell: int = 3,
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> dict[str, float]:
+    """``specific_gain`` for chains with delete steps.
+
+    Only treated cells count (every deleted factor in the start encoding), and in each
+    cell only the random chains whose deleted genes were all in that cell
+    (``available[r][i]``): a deletion of an absent gene does nothing, so including those
+    chains would favour the configured chain. Cells with fewer than
+    ``min_random_per_cell`` such chains are dropped (``n_cells_dropped``). Random-chain
+    means, z, rank and the null use the same cells and the same availability.
+    """
+    conf_all = np.asarray(configured, dtype=np.float64) - np.asarray(configured_ref, dtype=np.float64)
+    if not randoms:
+        raise ValueError("specific_gain needs at least one random chain")
+    rand_all = np.stack(
+        [np.asarray(r, dtype=np.float64) - np.asarray(rr, dtype=np.float64)
+         for r, rr in zip(randoms, random_refs)]
+    )
+    avail = np.asarray(available, dtype=bool)
+    treat = np.asarray(treated, dtype=bool)
+    if avail.shape != rand_all.shape or treat.shape != conf_all.shape:
+        raise ValueError("treated / available must match the cells and random chains")
+    keep = treat & (avail.sum(axis=0) >= int(min_random_per_cell))
+    conf = conf_all[keep]
+    rand_by_chain = np.where(avail, rand_all, np.nan)[:, keep]
+    used = ~np.all(np.isnan(rand_by_chain), axis=1)
+    rand_by_chain = rand_by_chain[used]
+    n_chains, n_cells = rand_by_chain.shape
+    if n_cells == 0:
+        raise ValueError("no treated cell has enough random chains")
+    rand = np.nanmean(rand_by_chain, axis=0)
+    diff = conf - rand
+    rng = np.random.default_rng(int(seed))
+    boot = np.full(int(n_boot), np.nan)
+    for b in range(int(n_boot)):
+        cells = rng.integers(0, n_cells, n_cells)
+        chains = rng.integers(0, n_chains, n_chains) if n_chains > 1 else np.zeros(1, dtype=int)
+        sub = rand_by_chain[np.ix_(chains, cells)]
+        ok = ~np.all(np.isnan(sub), axis=0)
+        if ok.any():
+            boot[b] = conf[cells][ok].mean() - np.nanmean(sub[:, ok], axis=0).mean()
+    lo, hi = np.nanquantile(boot, [0.025, 0.975])
+    gain = float(conf.mean())
+    spec = float(diff.mean())
+    chain_means = np.nanmean(rand_by_chain, axis=1)
+    out = {
+        "n_cells": float(n_cells),
+        "n_cells_dropped": float(int(treat.sum()) - n_cells),
+        "n_random_chains": float(n_chains),
+        "random_chains_per_cell_mean": float((~np.isnan(rand_by_chain)).sum(axis=0).mean()),
+        "configured_gain_mean": gain,
+        "random_gain_mean": float(rand.mean()),
+        "random_gain_sd_chains": float(chain_means.std(ddof=1)) if n_chains > 1 else float("nan"),
+        "random_gain_se_chains": (
+            float(chain_means.std(ddof=1) / np.sqrt(n_chains)) if n_chains > 1 else float("nan")
+        ),
+        "specific_gain_mean": spec,
+        "specific_gain_median": float(np.median(diff)),
+        "specific_gain_ci_low": float(lo),
+        "specific_gain_ci_high": float(hi),
+        "specific_fraction": spec / gain if gain != 0 else float("nan"),
+        "frac_cells_positive": float((diff > 0).mean()),
+        "rank_among_random": float(1 + np.sum(chain_means >= gain)),
+        "frac_cells_above_all_random": float((conf > np.nanmax(rand_by_chain, axis=0)).mean()),
+    }
+    if n_chains >= 3:
+        out["z_vs_random"] = float((gain - chain_means.mean()) / chain_means.std(ddof=1))
+        pseudo = np.array([
+            chain_means[r] - np.delete(chain_means, r).mean() for r in range(n_chains)
+        ])
+        out["null_sd"] = float(pseudo.std(ddof=1))
+        out["null_max"] = float(pseudo.max())
+        out["null_empirical_p"] = float((1 + np.sum(pseudo >= spec)) / (1 + n_chains))
+    return out
+
+
 def running_random_mean(
     randoms: Sequence[Sequence[float]],
     random_refs: Sequence[Sequence[float]],

@@ -1,4 +1,4 @@
-"""Potential-outcome contrast for State-feedback reranking (overexpression chains).
+"""Potential-outcome contrast for State-feedback reranking (overexpression and delete steps).
 
 The plain decoder reads ``delta_h = h_pert - h_ctrl`` of every gene. Most of that
 change appears for any inserted gene (the encoding shifts down by one slot, the
@@ -18,16 +18,23 @@ Estimation placebos are drawn with their own seed, separate from the random chai
 the configured chain is compared with (cross-fitting). A placebo that shares a gene
 with a chain is left out of that chain's contrast.
 
-Only overexpression steps are defined; deletion needs its own counterfactual.
+Delete steps (docs/state_feedback_deletion_counterfactual.md): the counterfactual undoes
+the deletion of the factor and deletes the placebo gene instead (``undo_delete_redo``).
+The factor goes back right after the nearest gene that preceded it in the start
+encoding and is still present, so before any rerank the result is exactly the start
+encoding with the placebo gene deleted. Slots whose factor was not in the cell's start
+encoding get no placebo edit. The start encoding is the control (``ctrl_reference:
+start``).
 """
 from __future__ import annotations
 
 import random
-from typing import Any, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence, Union
 
 import torch
 
-from ordered_rank_edit import PERTURB_OVEREXPRESS, normalize_step_type
+from ordered_rank_edit import PERTURB_DELETE, normalize_step_type
 from state_feedback import gene_states as gs
 from state_feedback import random_chains
 from state_feedback.decoder import TrainingSet
@@ -41,14 +48,30 @@ RerankResult = tuple[list[list[int]], dict[str, Any]]
 ESTIMATION_POOL = 20
 
 
-def check_overexpress_only(steps: Sequence[Mapping[str, Any]]) -> None:
-    other = [s.get("name") for s in steps
-             if normalize_step_type(str(s["type"])) != PERTURB_OVEREXPRESS]
-    if other:
-        raise ValueError(
-            "the placebo contrast is defined for overexpression steps only; "
-            f"non-overexpression steps: {other}"
-        )
+@dataclass(frozen=True)
+class MixedSubstitution:
+    """Chain-to-placebo genes of a chain with delete steps: ``oe`` slots are swapped as
+    in ``swap_tokens``; ``ko`` slots restore the deleted factor and delete the placebo."""
+
+    oe: dict[int, int]
+    ko: dict[int, int]
+
+
+# Overexpression-only chains use a plain ``{chain gene: placebo gene}`` map.
+Substitution = Union[Mapping[int, int], MixedSubstitution]
+
+
+def delete_step_indices(steps: Sequence[Mapping[str, Any]]) -> frozenset[int]:
+    """0-based indices of the delete steps (raises on unknown step types)."""
+    return frozenset(
+        i for i, s in enumerate(steps) if normalize_step_type(str(s["type"])) == PERTURB_DELETE
+    )
+
+
+def chain_genes(sub: Substitution) -> set[int]:
+    if isinstance(sub, MixedSubstitution):
+        return set(sub.oe) | set(sub.ko)
+    return {int(c) for c in sub}
 
 
 def draw_estimation_placebos(
@@ -76,21 +99,30 @@ def draw_estimation_placebos(
 def slot_substitutions(
     chain_token_by_step: Sequence[Sequence[int]],
     placebos: Sequence[Sequence[Sequence[int]]],
-) -> list[dict[int, int]]:
-    """One ``{chain gene: placebo gene}`` map per usable estimation placebo.
+    delete_steps: frozenset[int] = frozenset(),
+) -> list[Substitution]:
+    """One chain-to-placebo gene map per usable estimation placebo.
 
     Slots are (step, position within step). Placebos sharing a gene with the chain
-    are left out.
+    are left out. Without delete steps each map is a plain dict; with them, a
+    ``MixedSubstitution`` split by step type.
     """
-    chain = [int(t) for ts in chain_token_by_step for t in ts]
-    out: list[dict[int, int]] = []
+    slots = [(i, int(t)) for i, ts in enumerate(chain_token_by_step) for t in ts]
+    chain = [t for _, t in slots]
+    out: list[Substitution] = []
     for p in placebos:
         flat = [int(t) for ts in p for t in ts]
         if len(flat) != len(chain):
             raise ValueError(f"placebo has {len(flat)} slots, chain has {len(chain)}")
         if set(flat) & set(chain):
             continue
-        out.append(dict(zip(chain, flat)))
+        if not delete_steps:
+            out.append(dict(zip(chain, flat)))
+            continue
+        out.append(MixedSubstitution(
+            oe={t: q for (i, t), q in zip(slots, flat) if i not in delete_steps},
+            ko={t: q for (i, t), q in zip(slots, flat) if i in delete_steps},
+        ))
     if not out:
         raise ValueError("every estimation placebo shares a gene with the chain")
     return out
@@ -116,10 +148,57 @@ def swap_tokens(
     return new, set(active) | repl
 
 
+def undo_delete_redo(
+    ids: Sequence[int],
+    start_ids: Sequence[int],
+    sub: MixedSubstitution,
+    max_len: int | None = None,
+) -> tuple[list[int], set[int]] | None:
+    """Counterfactual encoding of a chain with delete steps under one placebo.
+
+    Overexpression slots are swapped as in ``swap_tokens``. For each delete slot whose
+    factor was in the start encoding, the factor goes back right after the nearest
+    gene that preceded it in ``start_ids``, is in the encoding and is not a placebo
+    gene (else after the leading swapped overexpression genes, else first), in
+    start-encoding order; then the placebo gene is deleted. Returns ``None`` when a
+    placebo gene to delete is missing from the encoding (the placebo gives no
+    counterfactual for this cell); otherwise the encoding and the genes with no
+    counterfactual state.
+    """
+    start = [int(t) for t in start_ids]
+    pos0 = {t: j for j, t in enumerate(start)}
+    ko = {int(t): int(q) for t, q in sub.ko.items() if int(t) in pos0}
+    present = {int(t) for t in ids}
+    if any(q not in present for q in ko.values()):
+        return None
+    new, excl = swap_tokens(ids, sub.oe)
+    placebo = {int(q) for q in sub.oe.values()} | {int(q) for q in sub.ko.values()}
+    oe_placed = excl & {int(q) for q in sub.oe.values()}
+    front = 0
+    while front < len(new) and new[front] in oe_placed:
+        front += 1
+    in_new = set(new)
+    for t in sorted(ko, key=pos0.__getitem__):
+        if t in in_new:
+            continue
+        at = front
+        for a in reversed(start[: pos0[t]]):
+            if a in in_new and a not in placebo:
+                at = new.index(a) + 1
+                break
+        new.insert(at, t)
+        in_new.add(t)
+    drop = set(ko.values())
+    new = [t for t in new if t not in drop]
+    if max_len is not None:
+        new = new[: int(max_len)]
+    return new, excl | drop
+
+
 def placebo_mediator(
     model,
     pair: gs.GeneStatePair,
-    subs: Sequence[Mapping[int, int]],
+    subs: Sequence[Substitution],
     *,
     layer_to_quant: int,
     pad_token_id: int,
@@ -130,6 +209,7 @@ def placebo_mediator(
     ``m_g`` is zero where no placebo gives a state (chain genes, genes missing from
     the control). Cells with no chain gene in the encoding are not re-encoded:
     their counterfactual is the perturbed state itself, so the contrast is exactly 0.
+    With delete steps, ``pair.ctrl_ids`` must be the start encodings.
     """
     dev = pair.h_pert.device
     d = pair.h_pert.size(-1)
@@ -138,9 +218,14 @@ def placebo_mediator(
     sums = [torch.zeros(len(ids), d, device=dev) for ids in pair.pert_ids]
     counts = [torch.zeros(len(ids), device=dev) for ids in pair.pert_ids]
     for sub in subs:
-        swapped, excluded = [], []
-        for ids in pair.pert_ids:
-            new, excl = swap_tokens(ids, sub, model_input_size)
+        swapped, excluded, usable = [], [], []
+        for r, ids in enumerate(pair.pert_ids):
+            if isinstance(sub, MixedSubstitution):
+                got = undo_delete_redo(ids, pair.ctrl_ids[r], sub, model_input_size)
+            else:
+                got = swap_tokens(ids, sub, model_input_size)
+            usable.append(got is not None)
+            new, excl = got if got is not None else (list(ids), set())
             swapped.append(new)
             excluded.append(excl)
         rerun = [r for r, ex in enumerate(excluded) if ex]
@@ -148,6 +233,8 @@ def placebo_mediator(
              if rerun else None)
         h_row = {r: i for i, r in enumerate(rerun)}
         for r, ids in enumerate(pair.pert_ids):
+            if not usable[r]:
+                continue
             h_ctrl, valid = ctrl[r]
             if r in h_row:
                 pos = {t: j for j, t in enumerate(swapped[r])}
@@ -182,7 +269,7 @@ def rerank_placebo_contrast(
     decoder,
     ctrl_ds,
     pert_ds,
-    subs: Sequence[Mapping[int, int]],
+    subs: Sequence[Substitution],
     *,
     layer_to_quant: int,
     pad_token_id: int,
@@ -229,7 +316,7 @@ def collect_contrast_training_samples(
     ctrl_ds,
     pert_ds,
     target_delta_rank: Mapping[int, float],
-    subs: Sequence[Mapping[int, int]],
+    subs: Sequence[Substitution],
     *,
     layer_to_quant: int,
     pad_token_id: int,
@@ -243,13 +330,16 @@ def collect_contrast_training_samples(
 
     Same sampling as ``feedback.collect_training_samples``, restricted to genes that
     are in the control encoding, are not chain genes, and have at least one placebo
-    state.
+    state. With delete steps only treated cells are used (every deleted factor in the
+    control encoding): elsewhere ``delta_h`` is 0 and the contrast would be minus the
+    placebo deletion effect.
     """
     rng = random.Random(int(seed))
     rows = list(range(len(pert_ds)))
     if max_cells is not None and len(rows) > int(max_cells):
         rows = rows[: int(max_cells)]
-    chain = {int(c) for sub in subs for c in sub}
+    chain = set().union(*(chain_genes(sub) for sub in subs))
+    deleted = set().union(*(set(sub.ko) for sub in subs if isinstance(sub, MixedSubstitution)))
 
     chunks_dh: list[torch.Tensor] = []
     chunks_base: list[torch.Tensor] = []
@@ -270,6 +360,8 @@ def collect_contrast_training_samples(
             model_input_size=model_input_size,
         )
         for row, ids in enumerate(pair.pert_ids):
+            if deleted and not deleted <= {int(t) for t in pair.ctrl_ids[row]}:
+                continue
             feat, valid = contrast_delta_h(pair, row, m_g[row])
             ok = (valid & (counts[row] > 0)).tolist()
             usable = [
