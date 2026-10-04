@@ -34,6 +34,7 @@ from ordered_rank_edit import (
     OSKM_FACTOR_KEYS,
     OSKM_FACTORS,
     config_block,
+    distinct_tokens,
 )
 
 import run_ordered_rank_edit_isp as ore
@@ -167,7 +168,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         pass
 
     step_rows: list[dict[str, Any]] = []
+    cumulative_oe: list[int] = []
     for step_idx, (tag, label, tokens) in enumerate(stages, start=1):
+        cumulative_oe.extend(tokens)
+        score_tokens = distinct_tokens(cumulative_oe)
         step_dir = output_root / "steps" / f"step{step_idx:02d}_{tag}"
         csv_path = step_dir / "single_gene_per_cell_shifts.csv"
         ds_path = step_dir / "perturbed.dataset"
@@ -190,7 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model,
                 start_ds,
                 working,
-                list(tokens),
+                score_tokens,
                 goal_state,
                 cell_states,
                 state_embs,

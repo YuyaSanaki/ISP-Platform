@@ -23,6 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - Ordered rank-edit ISP scored a gene overexpressed in two steps twice. The cumulative token list passed to group-OE scoring kept repeats, and scoring strips one leading position per token, so it also dropped the next genes after the factor block from both embeddings. Steps that repeat no gene (all OSKM orders) are unchanged. On BBRC (n=3000), K→M→S→O followed by the 7-factor cocktail (POU5F1 and SOX2 again) scored a median of 0.032935 against 0.033215 for the identical final encoding given as one simultaneous list; repeats are now dropped before scoring.
+- `core/run_oskm4_then_7factor_isp.py` scored the 7-factor stage against the cocktail genes only, leaving MYC and KLF4 from the OSKM stage in the perturbed embedding. It now excludes every gene overexpressed so far (each once), as the Ordered rank-edit runner does. This runner was not used for any published number.
 - State-feedback ISP endpoint gate now reads the feedback row at the last step when there is one, instead of relying on how step names sort against `feedback`.
 
 ### Removed
