@@ -13,6 +13,7 @@ from ordered_rank_edit import (
     all_oskm_orders,
     apply_ordered_overexpress,
     apply_single_step_overexpress,
+    distinct_tokens,
     front_token_order_after_steps,
     order_label,
     simultaneous_token_order,
@@ -79,6 +80,21 @@ class TestOrderedRankEditOE(unittest.TestCase):
                 self.assertEqual(grouped["input_ids"], single["input_ids"])
                 self.assertEqual(grouped["input_ids"][:4], [s, m, o, k])
                 self.assertEqual(len(grouped["input_ids"]), len(base))
+
+    def test_repeated_gene_scores_one_front_position(self):
+        o, s, k, m = self._O, self._S, self._K, self._M
+        cocktail = [901, o, s, 902, 903, 904, 905]
+        steps = [[k], [m], [s], [o], cocktail]
+        cumulative = [t for step in steps for t in step]
+        for label, base in self._BASES.items():
+            with self.subTest(base=label):
+                ex = _fake_example(base)
+                sequential = apply_ordered_overexpress(ex, steps)
+                simultaneous = apply_ordered_overexpress(ex, [cocktail + [m, k]])
+                self.assertEqual(sequential["input_ids"], simultaneous["input_ids"])
+                front = distinct_tokens(cumulative)
+                self.assertEqual(len(front), 9)
+                self.assertEqual(sorted(sequential["input_ids"][: len(front)]), sorted(front))
 
     def test_length_preserved_when_inserting_absent(self):
         ex = _fake_example(list(range(100, 120)))

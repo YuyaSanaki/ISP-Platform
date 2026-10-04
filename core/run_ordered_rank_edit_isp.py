@@ -48,6 +48,7 @@ from ordered_rank_edit import (
     apply_step,
     apply_single_step_overexpress,
     config_block,
+    distinct_tokens,
     normalize_step_type,
     order_label,
     parse_steps,
@@ -419,7 +420,7 @@ def run_order(
             fn_kwargs={"tokens": tokens},
             num_proc=map_workers,
         )
-        oe_tokens = list(cumulative_tokens)
+        oe_tokens = distinct_tokens(cumulative_tokens)
         step_dir = order_dir / f"step{step_idx:02d}_{factor_key}"
         df = compute_goal_state_shifts(
             model,
@@ -695,7 +696,7 @@ def run_typed_steps(
                     batch_state=batch_state,
                 )
             else:
-                score_tokens = list(cumulative_kd if ptype == PERTURB_DELETE else cumulative_oe)
+                score_tokens = distinct_tokens(cumulative_kd if ptype == PERTURB_DELETE else cumulative_oe)
                 df = compute_goal_state_shifts(
                     model,
                     start_ds,

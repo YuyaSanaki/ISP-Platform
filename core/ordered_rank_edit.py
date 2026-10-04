@@ -259,6 +259,15 @@ def perturb_index_for_tokens(input_ids: Sequence[int], oe_tokens: Sequence[int])
     return present if present else [-100]
 
 
+def distinct_tokens(tokens: Sequence[int]) -> list[int]:
+    """Tokens in first-seen order without repeats.
+
+    A gene overexpressed in two steps occupies one front position, and group-OE
+    scoring strips one leading position per token, so repeats must be dropped.
+    """
+    return list(dict.fromkeys(tokens))
+
+
 def front_token_order_after_steps(step_token_lists: Sequence[Sequence[int]]) -> list[int]:
     """Token order at the sequence front after ordered OE steps (last step leftmost)."""
     front: list[int] = []
