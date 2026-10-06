@@ -1,23 +1,16 @@
-# Ordered rank-edit ISP and State-feedback ISP — how they work and how to use them
+# State-feedback ISP — how it works and how to use it
 
 *Added in v1.0.1.*
 
-The platform has two ways to apply several perturbations in order.
+State-feedback ISP applies several perturbation steps in order. After each step it **turns the fine-tuned model's response back into a gene order** and uses that order as the input to the next step. A Δrank decoder is trained per run (or reused) for this translation.
 
-| | Ordered rank-edit ISP | State-feedback ISP |
-|---|---|---|
-| What carries into the next step | The **token edits** made so far (edited gene ranks) only | The model output after the perturbation, **decoded back into a gene order** |
-| Model output reused | No (each step's shift is only read out) | Yes (feedback) |
-| Training | None | A Δrank decoder is trained per run (or reused) |
-| Role | Default path used in the paper | Extension (evaluated in model space only) |
+This document explains **what the method does and what it does not do**. It is a readout in the representation space of a fine-tuned model. **It does not simulate how a cell changes over time.**
 
-This document explains, chapter by chapter, **what each method does and what it does not do**. Both are readouts in the representation space of a fine-tuned model. **Neither simulates how a cell changes over time.**
-
-Details and measured results are in [ordered_rank_edit_isp.md](ordered_rank_edit_isp.md) (Ordered rank-edit configuration reference) and [state_feedback_decode_methods.md](state_feedback_decode_methods.md) (State-feedback design and validation).
+Design and measured results are in [state_feedback_decode_methods.md](state_feedback_decode_methods.md).
 
 ---
 
-## 1. Shared background
+## 1. Background
 
 ### 1.1 Rank-value encoding
 
@@ -25,9 +18,9 @@ Geneformer reads a cell as a list of gene tokens sorted from the highest to the 
 
 ### 1.2 Perturbations (OE / KD)
 
-In both methods, one step is a group perturbation of one or more genes applied together.
+One step is a group perturbation of one or more genes applied together.
 
-- **overexpress (OE):** moves the genes to the front of the list. Length is preserved: as many tokens as were inserted are cut from the end. A gene already in the list is removed from its old position and moved to the front. How this differs from official Geneformer group OE: [upstream_overexpression.md](upstream_overexpression.md).
+- **overexpress (OE):** moves the genes to the front of the list. Length is preserved: as many tokens as were inserted are cut from the end. A gene already in the list is removed from its old position and moved to the front. Within one step the first gene in the list is leftmost; a gene overexpressed in a later step sits left of earlier ones. How this differs from official Geneformer group OE: [upstream_overexpression.md](upstream_overexpression.md).
 - **delete (KD):** removes the genes from the list, so the list gets shorter.
 
 ### 1.3 goal_state_shift (scoring)
@@ -40,90 +33,15 @@ shift = cos(perturbed cell embedding, goal centroid) − cos(original cell embed
 
 - The comparison is always against the **original start-cell encoding**, not the previous step.
 - A positive value means the cell moved toward the goal state.
+- All conditions are scored with the **cell-mean cosine without alignment** (mean embedding over all tokens), because reordering does not keep the perturbed genes at fixed positions. These values are not comparable with multi-gene ISP, which aligns the perturbed genes before comparing. **Compare only within the same run.**
 
 ### 1.4 Fine-tuning is required
 
-ISP results are only reliable with a model fine-tuned for cell-state classification. In the Web UI both methods start from a finished **Pipeline (E2E)** run and reuse its tokenized dataset, fine-tuned model and start / end states.
+ISP results are only reliable with a model fine-tuned for cell-state classification. In the Web UI, State-feedback ISP starts from a finished **Pipeline (E2E)** run and reuses its tokenized dataset, fine-tuned model and start / end states.
 
 ---
 
-## 2. Ordered rank-edit ISP
-
-### 2.1 What it does
-
-It applies OE / KD steps to start-state cells one at a time, in the order you give. After each step it scores and writes the goal_state_shift of the encoding at that point.
-
-```text
-start encoding X0
-  step 1: X1 = edit(X0, genes of step 1)    -> write shift(X1 vs X0)
-  step 2: X2 = edit(X1, genes of step 2)    -> write shift(X2 vs X0)
-  ...
-  step T: XT = edit(XT-1, genes of step T)  -> write shift(XT vs X0)  (final shift)
-```
-
-`edit` is only the token operation from 1.2.
-
-### 2.2 Intermediate states are reported, but the model's response is not passed to the next step
-
-The shift after each step (the 1st-step result, the 2nd-step result, …) is written out, but **it is a readout; it is never used as input to the next step.**
-
-- The input to step 2, X1, is the original encoding with the step-1 token edit applied. How the model responded at step 1 (hidden states or the shift value) is not reflected in X1 at all.
-- So the method does **not** work as "step 1 changed the cell like this, so apply step 2 to that changed cell". The step-1 intermediate state is simply **the encoding with the token edits up to step 1, passed through the model**.
-- A curve of step results shows how the readout changes as edits are added one by one. It does not represent a time course or a stepwise change in cell state.
-
-To feed the model's response into the next step, use State-feedback ISP (chapter 3).
-
-### 2.3 The final shift depends only on the final encoding — which genes were edited, and in what order
-
-The final shift is determined by the final encoding XT alone. Whether intermediate steps were scored, and what their shifts were, has no effect on it.
-
-- **The same final encoding gives the same final shift.** Building XT directly without scoring the intermediate steps gives the same result.
-- **Order matters only when it changes the final encoding.**
-  - OE only: the later a gene is overexpressed, the further left it sits. A then B gives `[B, A, …]` at the front; B then A gives `[A, B, …]`. The final encodings differ, so the shifts can differ. The differences between the 24 OSKM orders come from this **arrangement at the front of the encoding**.
-  - KD only: deletion does not depend on order, so the final encoding is the same and order has no effect on the final shift.
-  - OE and KD on the same gene: OE then KD removes the gene; KD then OE puts it back at the front. Here too, order acts only through the final encoding.
-- A simultaneous group OE (one step with `[A, B]`) gives `[A, B, …]` (the first gene in the list is leftmost). This is the reverse of applying A then B in order, which gives `[B, A, …]`.
-
-**The "order effect" is therefore the effect of different gene arrangements near the front of the final encoding on the fine-tuned model's readout.** Do not interpret it as the biological order of factor delivery or as temporal causation.
-
-### 2.4 Notes on scoring
-
-- For step lists that are OE only or KD only, scoring uses the standard Geneformer group ISP score (the perturbed genes are aligned with the original encoding before comparing).
-- When OE and KD are mixed the positions cannot be aligned, so scoring uses the cell-mean cosine (mean embedding over all tokens) without alignment.
-- Each step runs two forward passes (perturbed and original encoding), so it uses more GPU memory than genome-wide ISP. `batch=auto` uses a separate measurement (see the `batch=auto` section of [ordered_rank_edit_isp.md](ordered_rank_edit_isp.md)).
-
-### 2.5 Web UI settings
-
-Choose the Run type **Ordered rank-edit ISP**.
-
-| Setting | Meaning |
-|---|---|
-| ISP source run (left column) | Pipeline (E2E) run to reuse. It sets the dataset, fine-tuned model and start / end states |
-| Number of steps | Number of steps |
-| Step N: type | `overexpress (OE)` or `delete (KD)` |
-| Step N: name | Tag added to the output folder name (optional) |
-| Step N: genes | Genes perturbed together in this step (one per line; symbols or Ensembl IDs) |
-| max_ncells | Number of start-state cells used |
-| Save intermediate perturbed datasets | Save the perturbed dataset after each step (needed only for UMAP; off by default) |
-| GPU batch size | `auto` (recommended) or manual. Reusing the genome-wide ISP batch size often causes out-of-memory errors |
-
-**Apply run + steps to Config YAML** writes the settings into the YAML; **Run job** runs it.
-
-### 2.6 Outputs
-
-Written under `{pipeline_run}/ordered_rank_edit_isp/…/`.
-
-- `steps/stepNN_<name>/single_gene_per_cell_shifts.csv` — per-cell shift after each step (`Shift_to_goal_end`)
-- `step_summary.csv` — median / mean / quartiles / fraction positive per step
-- `run_manifest.json` — settings and run information
-
----
-
-## 3. State-feedback ISP
-
-### 3.1 What it does
-
-It applies the same kind of step list as Ordered rank-edit, but after a chosen step it **turns the model's response back into a gene order and uses that as the input to the next step**.
+## 2. What it does
 
 ```text
 start encoding X0
@@ -133,23 +51,27 @@ start encoding X0
                                                              -> write shift
   step 2: X2 = edit(X1', step 2)                             -> write shift
   ...
+  step T: XT = edit(XT-1', step T) -> feedback -> XT'         (end point)
 ```
 
+- `edit` is only the token operation from 1.2.
 - Only **the order of the genes already in each cell** is changed. No genes are added or removed.
-- The reordered X1' is what the next perturbation acts on. This is the essential difference from Ordered rank-edit.
-- By default feedback is applied after `Feedback after step` and after every later step, including the last, so each perturbation acts on the order the model predicted after the previous one and the endpoint is the reordered encoding (3.7). Genes overexpressed so far stay at the front; only the other genes are reordered. Switching multi-step off gives one feedback event; the model output is still fed into the next input, so it is still State-feedback ISP.
+- The reordered X1' is what the next perturbation acts on.
+- Feedback is applied after every step, including the last, so each perturbation acts on the order the model predicted after the previous one and the end point is the reordered encoding. Genes overexpressed so far stay at the front; only the other genes are reordered.
 
-### 3.2 What "decode" means
+**Baseline (`no_feedback`).** The same steps without any reordering: X1 = edit(X0, step 1), X2 = edit(X1, step 2), and so on. Its result depends only on the final encoding. The feedback gain of a chain is its end-point shift minus the `no_feedback` end-point shift of the same chain.
+
+### 2.1 What "decode" means
 
 Geneformer has no head that outputs expression. For each gene token the model returns a hidden state (a vector of several hundred dimensions), which is not a gene order. To pass the model's response to the next step, the hidden states must be **translated into the input format (a gene order)**. That translation is the decode step.
 
 - The decoder outputs **not expression values but how far, and in which direction, to move each gene (Δrank)**.
 - Its input is the perturbation-induced **change** in hidden state, Δh = h(perturbed) − h(reference), not the reference hidden state itself. This keeps the decoder reading the perturbation effect rather than the cell's baseline identity.
-- It cannot be said that expression is recovered from hidden states. What can be said is that "from the perturbation-induced change in representation, the decoder predicts the **direction** of the observed rank change beyond what the original rank alone explains" (3.6).
+- It cannot be said that expression is recovered from hidden states. What can be said is that "from the perturbation-induced change in representation, the decoder predicts the **direction** of the observed rank change beyond what the original rank alone explains" (2.5).
 
-### 3.3 Training the Δrank decoder
+### 2.2 Training the Δrank decoder
 
-The decoder is trained per run from that run's dataset and model (an existing decoder can also be reused; see 3.7).
+The decoder is trained per run from that run's dataset and model (an existing decoder can also be reused; see 3).
 
 **Teacher signal (what counts as correct)**
 
@@ -164,6 +86,8 @@ This is **a difference between the start and observed-state groups**, not a meas
 1. Pass the encoding with **all configured steps applied at once**, and the original encoding, through the fine-tuned model (up to `train_max_ncells` cells, default 200).
 2. For each gene present in both, take Δh (genes are matched by token, not position) and pair it with its teacher value `Δr_obs` (up to 256 genes per cell). The gene's original normalized position `base_rank` is kept for the base-rank control but is not a decoder input.
 3. Split the **genes** (not the cells) 80:20. The 20% are never used for training and are kept for evaluation. Because the teacher is one value per gene, splitting by cell would leak the answers.
+
+With `state_feedback.placebo_contrast.enabled`, the decoder is trained on, and every feedback event uses, Δh minus the mean Δh of matched placebo perturbations in the same cell (see [state_feedback_decode_methods.md](state_feedback_decode_methods.md)).
 
 **Model**
 
@@ -190,7 +114,7 @@ A decoder is trained for each value in `max_shift_grid` (default 0.05 / 0.1 / 0.
 
 **Comparing step lists (for example, perturbation orders)**
 
-Report each step list with the decoder trained in its own run. Do not reuse one decoder across step lists (see 3.7). What differs and what is shared between two runs on the same dataset and model:
+Report each step list with the decoder trained in its own run. Do not reuse one decoder across step lists (see the Δrank decoder row in 3). What differs and what is shared between two runs on the same dataset and model:
 
 - Differs: the training Δh (from that step list's encoding with all steps applied at once), and therefore possibly the selected `max_shift`.
 - Shared: the teacher, the 80:20 gene split, the training cells, the loss and optimizer settings, the `max_shift` grid and the selection rule. The endpoint shift is never used to train or select a decoder.
@@ -201,30 +125,29 @@ Consequences for interpretation:
 - Exception: step lists whose encodings with all steps applied are identical (for example M→K→S→O and simultaneous `[O, S, K, M]`) get identical training data, so their decoders are identical. On BBRC (n=300, `46035be`) the decoders of such pairs were bit-identical. For these pairs any difference comes from the feedback path alone.
 - The number of feedback events changes the result by itself: the same edits with 4 events instead of 1 raised the endpoint shift by 0.059 on BBRC (n=300). Compare step lists only at the same number of feedback events.
 
-### 3.4 One feedback event, step by step
+### 2.3 One feedback event, step by step
 
 1. Pass the reference encoding (the original start encoding by default) and the encoding after the last step through the model.
-2. Take Δh per gene and compute a score with the condition's method (3.5).
+2. Take Δh per gene and compute a score with the condition's method (2.4).
 3. Reorder the cell's genes by ascending `priority = base_rank + bounded displacement`.
 4. Score the reordered encoding and use it as the input to the next step.
 
-Notes:
+The genes overexpressed so far are pinned at the front (`pin_overexpressed`, default on); only the other genes move.
 
-- The genes just overexpressed are also reordered. The displacement is capped by `max_shift`, so a gene placed at the front cannot fall far back, but it can move a little from the front.
-- Within a State-feedback run, all conditions are scored with the **cell-mean cosine without alignment**, because reordering does not keep the perturbed genes at fixed positions. So the `ordered_rank_edit` condition inside a State-feedback run does not match the numbers from running Ordered rank-edit ISP on its own (which uses the group ISP score). **Compare only within the same run.**
+### 2.4 Conditions — what each one does and why it is there
 
-### 3.5 Conditions — what each one does and why it is there
-
-One run compares the selected conditions on **the same cells and the same step list**. By default all six are run. Only `linear_deltarank` is the method; the others are comparisons, a ceiling and a safety check. **Do not report the result of any condition other than `linear_deltarank` as the State-feedback ISP result.**
+One run compares the selected conditions on **the same cells and the same step list**. By default all six are run. Only `linear_deltarank` is the method; the others are a baseline, comparisons, a ceiling and a safety check. **Do not report the result of any condition other than `linear_deltarank` as the State-feedback ISP result.**
 
 | Condition | What the feedback uses | Role | How to read it |
 |---|---|---|---|
-| `ordered_rank_edit` | Nothing (no feedback) | Baseline: the same step list as Ordered rank-edit | Reference for whether a method moves cells closer to the goal |
+| `no_feedback` | Nothing (no feedback) | Baseline: the same step list without reordering | Reference for whether a method moves cells closer to the goal |
 | `norm` | Change in each gene's hidden-state length (L2 norm) | Training-free comparison | If the decoder cannot clearly beat it, the decoder's value is not shown |
 | `delta_mlm` | Change in the pretrained MLM head's logit for each gene token | Training-free comparison | Same as above |
-| `linear_deltarank` | The trained Δrank decoder (3.3) | **The method** | Judged by direction fidelity (3.6) |
+| `linear_deltarank` | The trained Δrank decoder (2.2) | **The method** | Judged by direction fidelity (2.5) |
 | `oracle` | Reorders each cell's genes by the observed state's mean positions | Rough ceiling | Not a performance target (see below) |
 | `null_feedback` | The decoder applied with no perturbation (reference and input are both the original encoding) | Safety check | Normal if the order does not change at all and the shift is 0 |
+
+Configs written before v1.0.1 name the baseline `ordered_rank_edit`; that name is still read as `no_feedback`.
 
 **`norm` (hidden-state norm)**
 
@@ -240,8 +163,8 @@ One run compares the selected conditions on **the same cells and the same step l
 
 **`linear_deltarank` (the method)**
 
-- The decoder trained in 3.3 predicts each gene's displacement from its Δh and original rank, and reorders the genes.
-- It is judged mainly by direction fidelity (3.6); endpoint shift is secondary.
+- The decoder trained in 2.2 predicts each gene's displacement from its Δh and reorders the genes.
+- It is judged mainly by direction fidelity (2.5); endpoint shift is secondary.
 
 **`oracle` (ceiling)**
 
@@ -254,7 +177,7 @@ One run compares the selected conditions on **the same cells and the same step l
 - Runs the decoder with no perturbation (reference and input are the same original encoding). Δh = 0, so a correct decoder changes nothing.
 - If the order changes or the shift moves away from 0, the decoder has learned an unfounded reordering. On BBRC the measured displacement was 0 and the shift was 0.
 
-### 3.6 Evaluation — how the method is judged
+### 2.5 Evaluation — how the method is judged
 
 **Primary axis: direction fidelity (shown as PASS / not passed in the Web UI Outputs)**
 
@@ -268,15 +191,32 @@ On the 20% of genes not used for training, it compares each method's predicted r
 
 **Secondary: endpoint gate (`phase12_gate.csv`)**
 
-For each condition it shows how much of the gap between `ordered_rank_edit` (baseline) and `oracle` (ceiling) the median final-step shift closes (`gap_closed_fraction`). Endpoint shift cannot tell "reordered in the right direction" from "the encoding was disturbed", so **do not judge a method by this alone** (see the `delta_mlm` example in 3.5).
+For each condition it shows how much of the gap between `no_feedback` (baseline) and `oracle` (ceiling) the median final-step shift closes (`gap_closed_fraction`). Endpoint shift cannot tell "reordered in the right direction" from "the encoding was disturbed", so **do not judge a method by this alone** (see the `delta_mlm` example in 2.4).
+
+**Specific gain over matched placebo chains**
+
+Part of the feedback gain is not specific to the chosen genes: random genes placed in the same steps also gain. `core/run_state_feedback_stability.py` runs matched random (placebo) chains with the same structure and reports the configured gain minus the mean placebo gain per cell (`specificity.csv`). Use this, not the raw gain, before a biological claim.
 
 **Optional: perturbation specificity**
 
 The same decoder is given Δh from other gene sets and from random gene perturbations, and the partial ρ values are compared. If the configured perturbation's partial ρ is above the distribution for random perturbations, the gain depends on the perturbation's Δh rather than on properties of the scored genes.
 
-### 3.7 Web UI settings
+---
 
-Choose the Run type **State-feedback ISP**. ISP source run, steps and GPU batch size are the same as for Ordered rank-edit (2.5).
+## 3. Web UI settings
+
+Choose the Run type **State-feedback ISP**.
+
+**Source run and steps**
+
+| Setting | Meaning |
+|---|---|
+| ISP source run (left column) | Pipeline (E2E) run to reuse. It sets the dataset, fine-tuned model and start / end states |
+| Number of steps | Number of steps |
+| Step N: type | `overexpress (OE)` or `delete (KD)` |
+| Step N: name | Tag added to the output folder name (optional) |
+| Step N: genes | Genes perturbed together in this step (one per line; symbols or Ensembl IDs) |
+| GPU batch size | `auto` (recommended) or manual. Scoring runs two forward passes per step (perturbed and original), so reusing the genome-wide ISP batch size often causes out-of-memory errors |
 
 **Basic settings**
 
@@ -286,11 +226,11 @@ Choose the Run type **State-feedback ISP**. ISP source run, steps and GPU batch 
 | Δrank decoder | Train a new decoder in this run | Train a new decoder, or reuse one trained earlier on the same Pipeline run (same fine-tuned model). The steps it was trained on are shown in brackets. **Reusing it for a different step list is a transfer test; performance is not guaranteed.** This includes the same genes in a different order: the gene added last ends up at the front of the encoding, so the Δh the decoder sees changes. On BBRC OSKM (n=3000, all 24 orders, feedback after every step), a decoder trained on simultaneous OSKM matched a decoder trained on each order only for the 6 orders ending in POU5F1, whose encodings match the simultaneous one at the front. On the other 18 its direction fidelity (pooled Spearman) fell to 0.32–0.36, against 0.42–0.47 for per-order decoders (mean over 24 orders: 0.38 vs 0.46; partial ρ given base rank 0.29 vs 0.35). The endpoint order ranking from the two decoders was uncorrelated (Spearman −0.02) |
 | Direction fidelity only | Off | When on, the endpoint conditions are skipped and only decoder training (or loading) and direction fidelity (and specificity) run. Works with a single step |
 
-**Conditions and feedback**
+**Conditions**
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Conditions | All six | Conditions to run (3.5). The `linear_deltarank` verdict needs `norm` and `delta_mlm`, and the gap needs `ordered_rank_edit` and `oracle`, so **keeping all of them selected is recommended** |
+| Conditions | All six | Conditions to run (2.4). The `linear_deltarank` verdict needs `norm` and `delta_mlm`, and the gap needs `no_feedback` and `oracle`, so **keeping all of them selected is recommended** |
 | Observed state for the teacher | Blank = pipeline end state | State that supplies the decoder's teacher and the `oracle` ranks. It must exist in the same dataset under the same state key, with enough cells. If the dataset has an intermediate-state label, it can be used here |
 
 **Feedback after every step**
@@ -299,9 +239,9 @@ Feedback is applied after every step, including the last. There is no other sche
 
 KLF4 → **feedback** → MYC → **feedback** → SOX2 → **feedback** → POU5F1 → **feedback**
 
-This is what makes State-feedback ISP sequential: each step acts on the state the model inferred after the previous step. Without feedback between steps the result depends only on the final encoding. That is Ordered rank-edit ISP, which equals multi-gene ISP with the gene list reversed. Feedback only after the last step also depends only on the final encoding. The endpoint conditions therefore need at least 2 steps.
+This is what makes State-feedback ISP sequential: each step acts on the state the model inferred after the previous step. Without feedback between steps (`no_feedback`) the result depends only on the final encoding, and so does feedback only after the last step. The endpoint conditions therefore need at least 2 steps.
 
-> **Caution: the error grows with the number of steps.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. Each feedback event (with `ctrl_reference: start`) recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Nothing undoes it. Displacement and decoder error therefore grow with the number of steps, and past the observed end-state ranks the shift reflects encoding disturbance rather than the biology the model has learned. Part of the gain is not specific to the chosen genes: on BBRC OSKM (4 steps), random genes gained most of what OSKM gained (docs/state_feedback_decode_methods.md, "Multi-step stability evaluation"). **Keep chains short, compare only chains with the same number of steps, and before a biological claim subtract matched random chains** (`core/run_state_feedback_stability.py`). This random effect is large and needs to be reduced in future versions.
+> **Caution: the error grows with the number of steps.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. Each feedback event (with `ctrl_reference: start`) recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Nothing undoes it. Displacement and decoder error therefore grow with the number of steps, and past the observed end-state ranks the shift reflects encoding disturbance rather than the biology the model has learned. Part of the gain is not specific to the chosen genes: on BBRC OSKM (4 steps), random genes gained most of what OSKM gained (docs/state_feedback_decode_methods.md, "Multi-step stability evaluation"). **Keep chains short, compare only chains with the same number of steps, and before a biological claim subtract matched random chains** (`core/run_state_feedback_stability.py`).
 
 There is no per-cell stop. A convergence stop (Spearman > 0.995 twice in a row) was removed: each step adds a new perturbation, so small feedback changes so far do not mean the next step's feedback will be small, and a whole-encoding threshold misses large moves of a few genes (in a 2048-gene cell, one gene moving from the bottom to the top still gives Spearman 0.997). A 2-cycle stop was also removed: it required the whole order to return exactly to the one from two events ago, which practically never happens because a new perturbation enters between events.
 
@@ -309,13 +249,15 @@ There is no per-cell stop. A convergence stop (Spearman > 0.995 twice in a row) 
 
 | Setting | Meaning |
 |---|---|
-| Feed the same decoder Δh from other perturbations | Run the specificity evaluation (3.6) |
+| Feed the same decoder Δh from other perturbations | Run the specificity evaluation (2.5) |
 | Named sets | Gene sets to compare (one per line: `name: GENE1 GENE2 …`) |
 | Named-set type | Apply the sets as OE or KD |
 | Random draws / Genes per random draw / Random type | Number of random perturbations, genes per draw, and their type |
 | Match random genes' detection rate to | Restrict random genes to those detected in 0.5–2× as many start cells as this gene. Recommended for KD, since deleting an undetected gene changes nothing |
 
-### 3.8 Settings available only in the YAML
+**Apply run + steps to Config YAML** writes the settings into the YAML; **Run job** runs it.
+
+### 3.1 Settings available only in the YAML
 
 These can be changed by editing the **Config YAML** in the Web UI. The defaults are normally fine.
 
@@ -326,13 +268,16 @@ These can be changed by editing the **Config YAML** in the Web UI. The defaults 
 | `hysteresis` | 0.0 | Genes whose displacements differ by less than this keep their original relative order (prevents jitter swaps). 0 disables it |
 | `alpha`, `baseline_max_shift` | 1.0, 0.1 | Scale and cap of the displacement for `norm` / `delta_mlm` (no effect on the decoder) |
 | `observed_max_ncells`, `min_detection_count` | 3000, 5 | Maximum cells used to build the teacher, and minimum number of cells a gene must be detected in to be used |
-| `decoder.*` | See 3.3 | Training cells, genes per cell, epochs, loss weights, `max_shift_grid`, held-out gene fraction |
+| `decoder.*` | See 2.2 | Training cells, genes per cell, epochs, loss weights, `max_shift_grid`, held-out gene fraction |
 | `eval.*` | | Direction-fidelity settings (top-K, bootstrap and permutation counts) |
 | `stability.*` | | Random-chain control and stability evaluation (`core/run_state_feedback_stability.py`): decoder seeds, `n_random_chains`, `random_seeds` (one independent draw each), `min_stratum` |
+| `placebo_contrast.*` | off | Train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell |
 
 `feedback_every_step`, `feedback_after_step`, `feedback_after_last_step` and `multi_step` were removed. A config that still sets them to anything other than feedback after every step stops with an error.
 
-### 3.9 Outputs
+Steps are read from `state_feedback.steps`. Older configs that list them under `ordered_rank_edit:` or `sequential:` are still read.
+
+### 3.2 Outputs
 
 Written under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`.
 
@@ -349,41 +294,30 @@ Written under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`.
 
 The Web UI Outputs panel shows the direction-fidelity verdict, the per-method table, the specificity tables, the endpoint gate and the multi-step counts.
 
-### 3.10 Running with the defaults, and what to check
+### 3.3 Running with the defaults, and what to check
 
-The defaults (all six conditions, `Feedback after step` = 1, multi-step on including the last step, max_ncells 300, train a new decoder) include every condition needed for the comparison.
+The defaults (all six conditions, feedback after every step, max_ncells 300, train a new decoder) include every condition needed for the comparison.
 
 1. Look at the **direction-fidelity verdict** first. If it does not pass, the decoder cannot be said to read the direction of rank change, however large the endpoint shift is.
 2. If it passes, use the endpoint gate as secondary information. The `oracle` value is a rough ceiling, not a target.
 3. Check that `null_feedback` has a shift of 0 and an unchanged order.
-4. To save time, reuse a decoder trained on the same Pipeline run with the same step list (for example to add conditions or specificity). Using it on a different step list than it was trained on is a transfer test; train a new decoder for results you report (see the Δrank decoder row in 3.7).
+4. Before a biological claim, run `core/run_state_feedback_stability.py` and report the specific gain over matched placebo chains.
+5. To save time, reuse a decoder trained on the same Pipeline run with the same step list (for example to add conditions or specificity). Using it on a different step list than it was trained on is a transfer test; train a new decoder for results you report (see the Δrank decoder row in 3).
 
 ---
 
-## 4. Which one to use
-
-| Goal | Method |
-|---|---|
-| Get the readout for genes perturbed in order, as in the paper | Ordered rank-edit ISP |
-| See how perturbation order (the arrangement at the front of the final encoding) changes the readout | Ordered rank-edit ISP |
-| Feed the model's response to a perturbation into the input of the next perturbation | State-feedback ISP |
-| Test whether the perturbation-induced change in representation predicts the direction of observed rank change | State-feedback ISP (Direction fidelity only is enough) |
-
----
-
-## 5. What can and cannot be claimed
+## 4. What can and cannot be claimed
 
 **Can be claimed**
 
-- Ordered rank-edit ISP: how much an encoding, with the given genes edited in the given order, moves toward the goal state in the fine-tuned model's space.
-- State-feedback ISP: a decoder trained on perturbation-induced hidden-state changes predicts the direction of observed rank change beyond what the original rank explains (held-out genes; BBRC and Asano PIPseq). Also, the readout when the encoding reordered by that prediction is used for the next perturbation.
+- A decoder trained on perturbation-induced hidden-state changes predicts the direction of observed rank change beyond what the original rank explains (held-out genes; BBRC and Asano PIPseq).
+- The readout when the encoding reordered by that prediction is used for the next perturbation, and its gain over matched placebo chains.
 
 **Cannot be claimed**
 
-- That either method simulates a cell's time course or stepwise state change. The intermediate-step values of Ordered rank-edit are not the result of passing the model's response forward.
-- That the order effect in Ordered rank-edit reflects the biological order of factor delivery.
-- That an order ranking from State-feedback ISP is a pure order effect. Each order is scored with its own decoder, so order and decoder are mixed (3.3); only orders with identical all-steps encodings share a decoder.
+- That the method simulates a cell's time course or stepwise state change.
+- That differences between step orders reflect the biological order of factor delivery.
+- That an order ranking from State-feedback ISP is a pure order effect. Each order is scored with its own decoder, so order and decoder are mixed (2.2); only orders with identical all-steps encodings share a decoder.
 - That hidden-state norm or MLM logits represent expression, or that the decoder recovers expression.
 - That the `oracle` value is a result or a target of the method.
-- That multi-step feedback is more useful or more stable than a single feedback event (not evaluated).
 - That the **size** of the decoder's displacements is accurate (the direction matches, but the size is compressed).

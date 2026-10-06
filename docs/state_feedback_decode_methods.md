@@ -1,6 +1,8 @@
 # State-feedback ISP v1.0.1 — permutation decoder 設計
 
-User-facing guide (how it works, conditions, Web UI settings): [ordered_rank_edit_and_state_feedback_isp.md](ordered_rank_edit_and_state_feedback_isp.md) (v1.0.1). This page is the design and validation record.
+User-facing guide (how it works, conditions, Web UI settings): [state_feedback_isp.md](state_feedback_isp.md) (v1.0.1). This page is the design and validation record.
+
+この記録で "Ordered rank-edit" と書いた経路は、同じ step を feedback なしで順に適用する基準経路である。v1.0.1 で Ordered rank-edit ISP を独立した run type から外し、この基準は条件 `no_feedback`（出力フォルダ `no_feedback/`、列 `gain_over_no_feedback`）になった。それ以前の run は `ordered_rank_edit/` に書かれており、`run_state_feedback_stability.py` の集計は両方を読む。
 
 ## 問題の正確な定義
 
@@ -180,7 +182,7 @@ Oracle: 観測された摂動後ランクリストを next-step input_ids とし
 | 6 | **Convergence stopping** | Spearman(r_t, r_{t+1}) > 0.995 × 2 step、または top-1000 Jaccard > 0.99、または hard cap T ≤ 5 | 削除 — feedback 回数は常に step 数（下記）。収束停止・cap とも削除 |
 | 7 | **Cell-wise normalization** | ランクは cell-specific 相対量; 異なる sequence length の細胞間でスコアを直接比較しない | 済 — `base_rank_norm = i/(n−1)` で細胞内正規化、z-score も細胞内。教師 Δrank も各 state の平均 encoding 長で正規化 |
 
-feedback は全 step の後（最終 step の後を含む）にかける。これ以外のスケジュールと回数の上限はない（2026-09-30 に削除）。feedback 回数は常に step 数と同じで、終点 shift は最後の rerank 後の encoding で読む。step 間に feedback がなければ結果は最終 encoding だけで決まり、Ordered rank-edit ISP（= 逆順リストの multi-gene ISP）と同じになる。最終 step 後だけの feedback も最終 encoding だけで決まる。したがって逐次（sequential）と言えるのは毎 step feedback だけである。旧キー `feedback_every_step` / `feedback_after_step` / `feedback_after_last_step` / `multi_step` は、毎 step feedback 以外を指定するとエラーになる（`state_feedback.multistep.check_feedback_config`）。`pin_overexpressed: true`（既定）では、それまでに OE した遺伝子を rerank 前の順序のまま先頭に固定し、残りの遺伝子だけを並べ替える。各 feedback 行には `feedback_event`（= step 番号）が入る。
+feedback は全 step の後（最終 step の後を含む）にかける。これ以外のスケジュールと回数の上限はない（2026-09-30 に削除）。feedback 回数は常に step 数と同じで、終点 shift は最後の rerank 後の encoding で読む。step 間に feedback がなければ結果は最終 encoding だけで決まり、基準経路 `no_feedback` と同じになる。最終 step 後だけの feedback も最終 encoding だけで決まる。したがって逐次（sequential）と言えるのは毎 step feedback だけである。旧キー `feedback_every_step` / `feedback_after_step` / `feedback_after_last_step` / `multi_step` は、毎 step feedback 以外を指定するとエラーになる（`state_feedback.multistep.check_feedback_config`）。`pin_overexpressed: true`（既定）では、それまでに OE した遺伝子を rerank 前の順序のまま先頭に固定し、残りの遺伝子だけを並べ替える。各 feedback 行には `feedback_event`（= step 番号）が入る。
 
 - **細胞単位の停止は置かない**。
   - 収束停止（削除）: 各 step で新しい摂動が入るので、これまでの feedback の変化が小さくても次の step の feedback が小さいとは限らない。encoding 全体の Spearman / top-K Jaccard の閾値は少数遺伝子の大きな移動も見逃す（2048 遺伝子の細胞で 1 遺伝子が最下位→最上位に動いても Spearman 0.997、4096 遺伝子では 0.9985）。当初は 0.995 × 2 回連続で停止していたが、マスターレギュレーター的な少数遺伝子の変化を「収束」とみなして以降の feedback を止めるため削除した。
@@ -250,11 +252,11 @@ Implemented, generic (no OSKM hardcoding anywhere in `core/state_feedback/`):
 
 ```bash
 DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
-  docker compose run --rm --no-deps ordered_rank_edit_isp \
+  docker compose run --rm --no-deps isp \
   python3 core/run_state_feedback_isp.py --config core/config/state_feedback_isp.yaml --max-ncells 50
 # tests
 DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
-  docker compose run --rm --no-deps ordered_rank_edit_isp \
+  docker compose run --rm --no-deps isp \
   python3 -m unittest tests.test_state_feedback_phase12 tests.test_state_feedback_controls tests.test_state_feedback_oracle
 # perturbation specificity with an existing decoder (no retraining, no endpoint conditions)
   python3 core/run_state_feedback_isp.py --config ... --eval-only --specificity \
@@ -475,14 +477,13 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
    再学習する、T step を展開して終点の教師との誤差で学習する、が候補。S2 の一因である `ctrl_reference: start`
    による変位の二重計上の扱いも併せて決める。評価は S1/S2 と idle rerank の収束で行う。
 10. **遺伝子に依らない gain の分離（Plan B / 将来）。** マッチしたランダム chain でも gain の 95–97% が出る
-   （上記 X5-R 結果）。decoder は教師が一つ（somatic → pluripotent）なので、Δh に含まれる遺伝子の識別情報から
+   （下記「ランダム chain の設計と検証」の結果）。decoder は教師が一つ（somatic → pluripotent）なので、Δh に含まれる遺伝子の識別情報から
    教師を引き当てられる可能性がある。報告の軸はプラセボとの差（Δspec, 計量経済のプラセボ検定・摂動予測の
    Systema と同じ考え方）とし、将来の改善として decoder の入力側で遺伝子に依らない成分を除く:
    (a) 概念消去（プラセボで当てはめた回帰で、遺伝子の文脈表現 h_ctrl から予測できる Δh 成分を除く;
    base rank は LEACE, Belrose et al. 2023 / INLP, Ravfogel et al. 2020）、(b) 潜在反応の考え方での
    プラセボ対照 Δh（細胞・遺伝子ごとに Δh − プラセボ chain の平均 Δh）。評価は decoder の selectivity
    （OSKM とランダムの val Spearman の差、Hewitt & Liang 2019 の control task）と Δspec の特異的な割合。
-   少数細胞のスクリーニングは `review/REVISION_TODO.md` X7。
    **方針（2026-10-01 決定）: 潜在反応（ループ内）と Δspec（結果側）を組み合わせる。**
    - ループ内（V2, 潜在反応のプラセボ対照）: decoder は Δh − (同じ細胞・同じ遺伝子の推定用プラセボ chain の
      平均 Δh) で学習する。各 rerank では Δh − m_g を入れる。m_g は、現在のエンコーディングで chain が
@@ -515,8 +516,8 @@ mouse Geneformer の FT モデル（AD/WT）と PIPseq のみの tokenized datas
 
 | Condition | Description |
 | --- | --- |
-| Ordered rank-edit (current) | Paper baseline; token-edit chain, no embedding feedback |
-| No-feedback | 1st step rank list frozen for all subsequent steps |
+| `no_feedback`（旧 Ordered rank-edit） | Baseline; token-edit chain, no embedding feedback |
+| Frozen first step | 1st step rank list frozen for all subsequent steps |
 | Identity (Δr̂ = 0) | 厳密 null。定数予測なので Spearman は定義されない（それが正しい答え） |
 | Random bounded shift | rank-independent noise。permutation null |
 | Norm reranking | Parameter-free unsupervised scalar baseline（勝てなければ decoder の主張が成立しない） |
@@ -666,7 +667,7 @@ S1/S2 の幅を併記）。D1 が単発でのみ成立、または D2 不成立 
 #### 決定の更新（2026-09-30）
 
 上の決定規則は単発を主結果に選んだが、単発（最後の step の後に 1 回）は最終 encoding だけで決まり、
-Ordered rank-edit（= 逆順リストの multi-gene ISP）に下流の読み出しを 1 回足したものにすぎず、逐次効果を含まない。
+基準経路（feedback なし）に下流の読み出しを 1 回足したものにすぎず、逐次効果を含まない。
 逐次効果を扱うことが State-feedback の目的なので、**毎回 feedback を唯一の実装とし、ランダム chain の gain を
 並行して取り差し引いた Δspec で報告する**。ランダム分が大きい（gain の約 94%）ことは限界として明記し、今後の
 改善課題とする。単発・途中 1 回・回数上限の設定はコードから削除した（上の比較は commit `ee1ff49` で再現できる）。
@@ -740,6 +741,48 @@ R1 不成立 → 層の定義を見直し（結果を見る前に理由を記録
 - S3（OSKM の gain がどのランダム chain よりも大きい）は seed 1 で不成立: random_s1_16（HIF3A, HES1,
   NOTCH2NLA, OR4C3）が OSKM を上回り、他の seed でも 2 位。OSKM は 40 本の分布の上端（leave-one-out null の
   経験 p 0.024–0.049）にある
+
+### 逐次 KO の検証（事前登録 2026-10-01、投入前に固定）
+
+設計: [state_feedback_deletion_counterfactual.md](state_feedback_deletion_counterfactual.md)。実装:
+`core/state_feedback/placebo_contrast.py`（`undo_delete_redo`）、config は
+`core/config/state_feedback_ko_{pou5f1_l1td1,tp53_oskm,dnmt3b_dppa4}.yaml`。
+
+| ID | chain | 開始細胞 | 処置細胞 |
+|---|---|---|---|
+| KO-A | POU5F1 KO → L1TD1 KO（pluripotent → somatic） | pluripotent, 長さ降順の先頭 100 | 両 KO 遺伝子が開始エンコーディングにある細胞 |
+| KO-B | TP53 KO → KLF4 → MYC → SOX2 → POU5F1（somatic → pluripotent） | TP53 が検出された somatic 細胞すべて（116）。層もこの細胞で作る | 全開始細胞 |
+| KO-C | DNMT3B KO → DPPA4 KO（pluripotent → somatic） | KO-A と同じ 100 細胞 | 両 KO 遺伝子がある細胞 |
+
+固定する条件:
+
+- decoder seed 0/1/2（seed ごとに decoder を学習）。feedback は毎 step 後、idle event なし、`ctrl_reference: start`。
+- 評価用プラセボ: `random_seeds: [0]` の 30 本、層は `random_chains.stratum`。KO-A / KO-C は両 slot、KO-B は
+  KO の slot だけを置き換える（`stability.random_steps: [1]`）。
+- 推定用プラセボ: `estimation_draw_seed: 1` の 20 本。chain と遺伝子を共有するプラセボはその chain の対比から外す。
+- 解析対象の細胞: 処置細胞のうち、KO 遺伝子が開始エンコーディングにそろう推定用プラセボが 3 本以上ある細胞
+  （`delete_cells.csv` の `analyzable`）。外した細胞数を報告する。
+- Δspec: `specific_gain_conditional`。細胞ごとに、その細胞で解析対象になる評価用プラセボ chain だけの gain の
+  平均を引く。評価用 chain が 3 本未満の細胞は外す。z と順位は同じ細胞集合・同じ条件付き平均で、
+  各プラセボ chain を leave-one-out で評価して求める。
+- KO-A と KO-C の直接比較: 両方で解析対象の細胞（4 遺伝子すべてがある細胞）で、細胞ごとの
+  τ_A,i − τ_C,i の平均と細胞 bootstrap 95% CI（2000 回、乱数 seed = decoder seed）。
+
+判定基準（3 seed すべてで成立すること）:
+
+| ID | chain | 基準 |
+|---|---|---|
+| K1 | KO-A | Δspec > 0、評価用プラセボ 30 本に対して z ≥ 3、31 本中 1 位 |
+| K2 | KO-B | Δspec > 0（KO の slot だけのプラセボに対して）、z ≥ 2 |
+| K3 | KO-C | \|z\| < 2、かつ τ_A − τ_C の 95% CI の下限 > 0 |
+| K4 | 全 chain | 投入した commit で null の単体テスト（摂動なし chain・因子が無い細胞で変位 0）が通る。run の中で KO 因子をどれも持たない細胞があれば、State-feedback の終点 shift が Ordered rank-edit と一致する（\|差\| < 1e-6）。該当細胞数を報告する |
+
+- KO-B は処置細胞が 116 で、p53 抑制の効果は初期化の「効率の上昇」なので期待効果が小さい。基準を z ≥ 2 に
+  緩める理由として記録する。
+- K3 は効果が無いことの証明ではない。「生物学的に効かないはずの KO が、マッチしたプラセボと区別できない」ことと、
+  「効くはずの KO より小さい」ことの 2 点として書く。
+- 不成立の基準は数値をそのまま報告する。細胞数・プラセボ本数・層・decoder の設定を結果を見てから変えない。
+- 投入順: KO-A と KO-B の smoke（n=5）で動作と時間を確認し、計算予算を更新してから本番 3 本を投入する。
 
 
 ## Claims boundary for Methods

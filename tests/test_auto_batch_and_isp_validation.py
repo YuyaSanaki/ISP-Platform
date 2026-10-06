@@ -670,67 +670,14 @@ class TestBatchSizeYamlControls(unittest.TestCase):
         finally:
             _restore_modules(saved)
 
-    def test_ordered_rank_edit_isp_command_wiring(self):
+    def test_ordered_rank_edit_run_type_removed(self):
         app, _st, saved = _load_streamlit_app_helpers()
         try:
-            self.assertEqual(app.RUN_TYPE_ORDERED_RANK_EDIT_ISP, "Ordered rank-edit ISP")
-            self.assertEqual(
-                app.RUN_FILES[app.RUN_TYPE_ORDERED_RANK_EDIT_ISP], "ordered_rank_edit_isp.yaml"
-            )
-            self.assertTrue(app._default_config_path(app.RUN_TYPE_ORDERED_RANK_EDIT_ISP).is_file())
-            cfg = Path("/tmp/fake_ordered_rank_edit_isp.yaml")
-            cmd, env = app._build_command_and_env(app.RUN_TYPE_ORDERED_RANK_EDIT_ISP, cfg)
-            self.assertEqual(cmd[0], "python3")
-            self.assertTrue(cmd[1].endswith("run_ordered_rank_edit_isp.py"))
-            self.assertEqual(env.get("ORDERED_RANK_EDIT_ISP_CONFIG"), str(cfg))
-        finally:
-            _restore_modules(saved)
-
-    def test_build_ordered_rank_edit_isp_yaml_from_pipeline_run(self):
-        app, st, saved = _load_streamlit_app_helpers()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                run_dir = Path(tmp) / "pipeline_test"
-                stage = run_dir / "stage_configs"
-                stage.mkdir(parents=True)
-                (stage / "isp.yaml").write_text(
-                    "paths:\n  dataset: /app/data/x.dataset\n"
-                    "  geneformer_model: /app/models/ft\n"
-                    "perturbation:\n  state_key: disease\n  start_state: AD\n  end_state: WT\n"
-                    "model:\n  type: CellClassifier\n  num_classes: 2\n"
-                    "isp:\n  max_ncells: 500\n"
-                    "runtime:\n  nproc: 4\n"
-                    "species:\n  model_organism: mouse\n",
-                    encoding="utf-8",
-                )
-                st.session_state.clear()
-                st.session_state["isp_steps_n"] = 2
-                st.session_state["isp_steps_0_type"] = "overexpress"
-                st.session_state["isp_steps_0_genes"] = "Pou5f1\nSox2"
-                st.session_state["isp_steps_0_name"] = "oskm"
-                st.session_state["isp_steps_1_type"] = "delete"
-                st.session_state["isp_steps_1_genes"] = "Igfbp2"
-                st.session_state["isp_steps_1_name"] = "kd"
-                st.session_state["isp_steps_batch_mode"] = app.BATCH_MODE_AUTO
-                st.session_state["ore_isp_max_ncells"] = 200
-                yaml_text, err = app._build_ordered_rank_edit_isp_yaml_from_pipeline_run(run_dir)
-                self.assertIsNone(err, err)
-                cfg = __import__("yaml").safe_load(yaml_text)
-                self.assertEqual(cfg["paths"]["dataset"], "/app/data/x.dataset")
-                self.assertTrue(
-                    str(cfg["paths"]["output_root"]).endswith("ordered_rank_edit_isp")
-                )
-                self.assertFalse(cfg["paths"]["output_time_subdir"])
-                ore = cfg["ordered_rank_edit"]
-                self.assertEqual(ore["steps"][0]["type"], "overexpress")
-                self.assertEqual(ore["steps"][0]["genes"], ["Pou5f1", "Sox2"])
-                self.assertEqual(ore["steps"][0]["name"], "oskm")
-                self.assertEqual(ore["steps"][1]["type"], "delete")
-                self.assertEqual(cfg["runtime"]["forward_batch_size"], "auto")
-                self.assertEqual(cfg["isp"]["max_ncells"], 200)
-                self.assertFalse(ore["save_intermediate_datasets"])
-                self.assertNotIn("sequential", cfg)
-                self.assertNotIn("state_feedback", cfg)
+            self.assertFalse(hasattr(app, "RUN_TYPE_ORDERED_RANK_EDIT_ISP"))
+            self.assertNotIn("Ordered rank-edit ISP", app.RUN_FILES)
+            self.assertEqual(app._STEP_RUN_TYPES, frozenset({app.RUN_TYPE_STATE_FEEDBACK_ISP}))
+            self.assertIn("no_feedback", app._SF_ISP_CONDITIONS)
+            self.assertNotIn("ordered_rank_edit", app._SF_ISP_CONDITIONS)
         finally:
             _restore_modules(saved)
 
@@ -827,7 +774,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 st.session_state.update(
                     {
                         "sf_isp_max_ncells": 50,
-                        "sf_isp_conditions": ["ordered_rank_edit", "linear_deltarank"],
+                        "sf_isp_conditions": ["no_feedback", "linear_deltarank"],
                         "sf_isp_observed_state": "AD",
                         "sf_isp_spec_enabled": True,
                         "sf_isp_spec_sets": "3F: Pou5f1 Sox2 Nanog\n# comment\nctl: Actb, Gapdh",
@@ -843,7 +790,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 cfg = __import__("yaml").safe_load(yaml_text)
                 sf = cfg["state_feedback"]
                 self.assertEqual(cfg["isp"]["max_ncells"], 50)
-                self.assertEqual(sf["conditions"], ["ordered_rank_edit", "linear_deltarank"])
+                self.assertEqual(sf["conditions"], ["no_feedback", "linear_deltarank"])
                 self.assertEqual(sf["observed_state"], "AD")
                 spec = sf["specificity"]
                 self.assertTrue(spec["enabled"])
@@ -880,7 +827,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 st.session_state["isp_steps_n"] = 1
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("at least 2 steps", err)
-                st.session_state["sf_isp_conditions"] = ["ordered_rank_edit", "null_feedback"]
+                st.session_state["sf_isp_conditions"] = ["no_feedback", "null_feedback"]
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIsNone(err, err)
                 st.session_state["sf_isp_conditions"] = list(app._SF_ISP_CONDITIONS)

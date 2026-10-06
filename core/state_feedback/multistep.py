@@ -5,8 +5,8 @@ including the last, so each step acts on the state reranked after the previous o
 
     step 1 -> feedback -> step 2 -> feedback -> ... -> step T -> feedback (end point)
 
-This is what makes it sequential. Without feedback between steps the result depends only on
-the final encoding, as for Ordered rank-edit ISP (= multi-gene ISP with the reversed list).
+This is what makes it sequential. Without feedback between steps (the no-feedback baseline)
+the result depends only on the final encoding.
 
 The number of feedback events equals the number of steps. Every event adds a bounded
 displacement and the displacement is not undone, so the error grows with the number of steps

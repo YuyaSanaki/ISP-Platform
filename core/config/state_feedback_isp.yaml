@@ -54,10 +54,11 @@ state_feedback:
       type: overexpress
       genes: [POU5F1]
 
-  # Conditions compared in one run. `oracle` is a ceiling (observed ranks pasted in),
-  # `null_feedback` is the zero-perturbation guardrail.
+  # Conditions compared in one run. `no_feedback` applies the same steps with no feedback
+  # (the baseline; `ordered_rank_edit` is read as its old name), `oracle` is a ceiling
+  # (observed ranks pasted in), `null_feedback` is the zero-perturbation guardrail.
   conditions:
-    - ordered_rank_edit
+    - no_feedback
     - norm
     - delta_mlm
     - linear_deltarank
@@ -142,6 +143,18 @@ state_feedback:
     random_seeds: [0, 1]
     min_stratum: 50
     topk: [100, 500, 1000]
+
+  # Potential-outcome contrast (core/state_feedback/placebo_contrast.py): the decoder
+  # reads delta_h minus the mean delta_h after swapping the chain's genes for each
+  # estimation placebo, in training and in every rerank. Estimation placebos are a
+  # separate draw (estimation_draw_seed, not in stability.random_seeds); a placebo
+  # sharing a gene with a chain is left out of that chain's contrast. Delete steps
+  # restore the factor next to its start-encoding neighbour and delete the placebo
+  # gene (docs/state_feedback_deletion_counterfactual.md); they need ctrl_reference: start.
+  placebo_contrast:
+    enabled: false
+    n_estimation: 10
+    estimation_draw_seed: 1
 
   decoder:
     train_max_ncells: 200

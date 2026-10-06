@@ -1,52 +1,26 @@
-"""Ordered rank-edit operators: length-preserving OE / KD on rank-value encodings.
+"""Rank-edit step operators: length-preserving OE / KD on rank-value encodings.
 
-Each step applies one (or more) genes on ``input_ids`` — never on embeddings.
-Only the edited token ranks are carried into the next step; model outputs are
-never fed back (that is State-feedback ISP, ``core/state_feedback/``).
+Each step applies one or more genes on ``input_ids``, never on embeddings.
+State-feedback ISP (``core/state_feedback/``) applies these steps and, between
+steps, reorders the genes from the model output. Its no-feedback baseline applies
+the same steps without that reordering.
 
 - overexpress (OE): move-to-front insert, matching the platform group-OE operator.
-  Rank convention: later OE steps call ``insert(0)``, so the most recently added
-  factor occupies the highest rank (leftmost token).
+  Later OE steps call ``insert(0)``, so the most recently added factor occupies the
+  highest rank (leftmost token).
 - delete (KD): remove those tokens from the encoding (length shrinks).
 """
 from __future__ import annotations
 
-import itertools
 from typing import Any, Mapping, Sequence
-
-# Run-config block of the Ordered rank-edit ISP runner. Configs written before
-# the rename use ``sequential:``; it is still read when the new key is absent.
-CONFIG_KEY = "ordered_rank_edit"
-LEGACY_CONFIG_KEY = "sequential"
 
 PERTURB_OVEREXPRESS = "overexpress"
 PERTURB_DELETE = "delete"
 VALID_STEP_TYPES = frozenset({PERTURB_OVEREXPRESS, PERTURB_DELETE})
 
-OSKM_FACTOR_KEYS: tuple[str, ...] = ("O", "S", "K", "M")
-
-OSKM_FACTORS: dict[str, dict[str, str]] = {
-    "O": {
-        "human": "ENSG00000204531",
-        "mouse": "ENSMUSG00000024406",
-        "symbol": "POU5F1",
-    },
-    "S": {
-        "human": "ENSG00000181449",
-        "mouse": "ENSMUSG00000074637",
-        "symbol": "SOX2",
-    },
-    "K": {
-        "human": "ENSG00000136826",
-        "mouse": "ENSMUSG00000003032",
-        "symbol": "KLF4",
-    },
-    "M": {
-        "human": "ENSG00000136997",
-        "mouse": "ENSMUSG00000022346",
-        "symbol": "MYC",
-    },
-}
+# Step blocks of configs written for the removed Ordered rank-edit runner. State-feedback
+# reads their ``steps`` when ``state_feedback.steps`` is absent.
+LEGACY_STEP_KEYS: tuple[str, ...] = ("ordered_rank_edit", "sequential")
 
 
 def _delete_indices(example: dict[str, Any]) -> dict[str, Any]:
@@ -79,38 +53,6 @@ def _overexpress_tokens(example: dict[str, Any]) -> dict[str, Any]:
     return example
 
 
-def order_label(factor_keys: Sequence[str]) -> str:
-    """Human-readable order tag, e.g. ``O-S-K-M``."""
-    return "-".join(factor_keys)
-
-
-COCKTAIL_FACTOR_KEYS: tuple[str, ...] = (
-    "NANOG",
-    "OCT4",
-    "SOX2",
-    "ESRRB",
-    "LIN28A",
-    "DPPA4",
-    "TERT",
-)
-
-COCKTAIL_FACTORS: dict[str, dict[str, str]] = {
-    "NANOG": {"human": "ENSG00000111704", "symbol": "NANOG"},
-    "OCT4": {"human": "ENSG00000204531", "symbol": "POU5F1"},
-    "SOX2": {"human": "ENSG00000181449", "symbol": "SOX2"},
-    "ESRRB": {"human": "ENSG00000119715", "symbol": "ESRRB"},
-    "LIN28A": {"human": "ENSG00000131914", "symbol": "LIN28A"},
-    "DPPA4": {"human": "ENSG00000121570", "symbol": "DPPA4"},
-    "TERT": {"human": "ENSG00000164362", "symbol": "TERT"},
-}
-
-
-def all_oskm_orders(factor_keys: Sequence[str] | None = None) -> list[tuple[str, ...]]:
-    """All permutations of the four Yamanaka factor keys (24 by default)."""
-    keys = tuple(factor_keys or OSKM_FACTOR_KEYS)
-    return list(itertools.permutations(keys))
-
-
 def normalize_step_type(perturb_type: str | None) -> str:
     """Map UI / YAML aliases onto ``overexpress`` or ``delete``."""
     raw = str(perturb_type or PERTURB_OVEREXPRESS).strip().lower()
@@ -124,13 +66,14 @@ def normalize_step_type(perturb_type: str | None) -> str:
     )
 
 
-def config_block(cfg: Mapping[str, Any] | None) -> dict[str, Any]:
-    """``ordered_rank_edit`` block of a run config (falls back to legacy ``sequential``)."""
+def legacy_steps_block(cfg: Mapping[str, Any] | None) -> dict[str, Any]:
+    """First legacy step block (``ordered_rank_edit:`` then ``sequential:``) of a run config."""
     cfg = cfg or {}
-    block = cfg.get(CONFIG_KEY)
-    if block is None:
-        block = cfg.get(LEGACY_CONFIG_KEY)
-    return dict(block or {})
+    for key in LEGACY_STEP_KEYS:
+        block = cfg.get(key)
+        if block is not None:
+            return dict(block)
+    return {}
 
 
 def parse_steps(block: Mapping[str, Any] | None) -> list[dict[str, Any]]:
@@ -193,25 +136,14 @@ def apply_step(
     tokens: Sequence[int],
     perturb_type: str = PERTURB_OVEREXPRESS,
 ) -> dict[str, Any]:
-    """Apply one ordered rank-edit step (OE or KD) on ``input_ids``."""
+    """Apply one rank-edit step (OE or KD) on ``input_ids``."""
     ptype = normalize_step_type(perturb_type)
     if ptype == PERTURB_DELETE:
         return apply_single_step_delete(example, tokens)
     return apply_single_step_overexpress(example, tokens)
 
 
-def apply_ordered_overexpress(
-    example: Mapping[str, Any],
-    step_token_lists: Sequence[Sequence[int]],
-) -> dict[str, Any]:
-    """Apply length-preserving OE steps in order on rank-value ``input_ids``."""
-    ex = dict(example)
-    for tokens in step_token_lists:
-        ex = apply_single_step_overexpress(ex, tokens)
-    return ex
-
-
-def apply_ordered_rank_edits(
+def apply_rank_edits(
     example: Mapping[str, Any],
     steps: Sequence[tuple[str, Sequence[int]]],
 ) -> dict[str, Any]:
@@ -220,37 +152,6 @@ def apply_ordered_rank_edits(
     for perturb_type, tokens in steps:
         ex = apply_step(ex, tokens, perturb_type)
     return ex
-
-
-def perturb_dataset_ordered_overexpress(
-    dataset,
-    step_token_lists: Sequence[Sequence[int]],
-    batch_size: int = 64,
-):
-    """Apply ordered OE steps to every row in a HuggingFace dataset."""
-    steps = [list(s) for s in step_token_lists]
-
-    def _map_batch(batch):
-        out_ids, out_len, out_mask = [], [], []
-        for i in range(len(batch["input_ids"])):
-            row = {k: batch[k][i] for k in batch}
-            pert = apply_ordered_overexpress(row, steps)
-            out_ids.append(pert["input_ids"])
-            out_len.append(pert["length"])
-            out_mask.append(pert["attention_mask"])
-        return {"input_ids": out_ids, "length": out_len, "attention_mask": out_mask}
-
-    cols = [c for c in dataset.column_names if c not in {"input_ids", "length", "attention_mask"}]
-    meta = {c: dataset[c] for c in cols}
-    perturbed = dataset.map(
-        _map_batch,
-        batched=True,
-        batch_size=batch_size,
-        remove_columns=dataset.column_names,
-    )
-    for col, values in meta.items():
-        perturbed = perturbed.add_column(col, values)
-    return perturbed
 
 
 def perturb_index_for_tokens(input_ids: Sequence[int], oe_tokens: Sequence[int]) -> list[int] | list:
@@ -266,27 +167,3 @@ def distinct_tokens(tokens: Sequence[int]) -> list[int]:
     scoring strips one leading position per token, so repeats must be dropped.
     """
     return list(dict.fromkeys(tokens))
-
-
-def front_token_order_after_steps(step_token_lists: Sequence[Sequence[int]]) -> list[int]:
-    """Token order at the sequence front after ordered OE steps (last step leftmost)."""
-    front: list[int] = []
-    for tokens in step_token_lists:
-        for t in reversed(list(tokens)):
-            if t in front:
-                front.remove(t)
-            front.insert(0, t)
-    return front
-
-
-def tokens_for_order(
-    order: Sequence[str],
-    token_by_factor: Mapping[str, int],
-) -> list[list[int]]:
-    """Per-step single-token lists for a factor-key permutation."""
-    return [[token_by_factor[k]] for k in order]
-
-
-def simultaneous_token_order(step_token_lists: Sequence[Sequence[int]]) -> list[int]:
-    """Front token order if all steps were applied in one group-OE call."""
-    return [t for step in step_token_lists for t in step]

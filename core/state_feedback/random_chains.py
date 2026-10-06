@@ -119,6 +119,34 @@ def draw_random_chains(
     return chains, record
 
 
+def randomize_steps_only(
+    chains: Mapping[str, tuple[list[dict[str, Any]], list[list[int]]]],
+    steps: Sequence[Mapping[str, Any]],
+    token_by_step: Sequence[Sequence[int]],
+    random_steps: Iterable[int],
+) -> dict[str, tuple[list[dict[str, Any]], list[list[int]]]]:
+    """Random chains with only the steps in ``random_steps`` (1-based) replaced.
+
+    The other steps keep the configured genes, so the comparison is the configured
+    factor of those steps against matched random genes in the same chain.
+    """
+    keep = {int(i) for i in random_steps}
+    bad = keep - set(range(1, len(steps) + 1))
+    if not keep or bad:
+        raise ValueError(f"random_steps must be step numbers 1..{len(steps)}: {sorted(keep)}")
+    out = {}
+    for name, (step_list, tbs) in chains.items():
+        new_tbs = [list(t) if i + 1 in keep else [int(x) for x in conf]
+                   for i, (t, conf) in enumerate(zip(tbs, token_by_step))]
+        new_steps = [
+            {**s, "genes": [str(t) for t in toks]} if i + 1 in keep
+            else {**s, "genes": list(steps[i]["genes"])}
+            for i, (s, toks) in enumerate(zip(step_list, new_tbs))
+        ]
+        out[name] = (new_steps, new_tbs)
+    return out
+
+
 def standardized_mean_difference(a: Sequence[float], b: Sequence[float]) -> float:
     a = np.asarray([x for x in a if x == x], dtype=np.float64)
     b = np.asarray([x for x in b if x == x], dtype=np.float64)

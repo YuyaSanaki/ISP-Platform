@@ -162,7 +162,6 @@ WORKSPACE = Path(os.environ.get("WEBUI_WORKSPACE", ROOT / "data" / "streamlit_wo
 RUN_TYPE_PIPELINE = "Pipeline (E2E)"
 RUN_TYPE_FT_BATCH = "FT batch size (calibrate)"
 RUN_TYPE_ISP_UMAP = "ISP UMAP"
-RUN_TYPE_ORDERED_RANK_EDIT_ISP = "Ordered rank-edit ISP"
 RUN_TYPE_STATE_FEEDBACK_ISP = "State-feedback ISP"
 
 ISP_UMAP_POSITION_DIRECT = "Direct UMAP (default)"
@@ -175,17 +174,16 @@ RUN_FILES = {
     RUN_TYPE_PIPELINE: "pipeline.yaml",
     RUN_TYPE_FT_BATCH: "ft_batch_calibrate.yaml",
     RUN_TYPE_ISP_UMAP: "isp_umap.yaml",
-    RUN_TYPE_ORDERED_RANK_EDIT_ISP: "ordered_rank_edit_isp.yaml",
     RUN_TYPE_STATE_FEEDBACK_ISP: "state_feedback_isp.yaml",
 }
 
 # Run types that share Study name / Data input with Pipeline.
 _STUDY_RUN_TYPES = frozenset({RUN_TYPE_PIPELINE, RUN_TYPE_FT_BATCH})
-# Run types built from a past pipeline ISP run + the shared OE/KD step widgets.
-_STEP_RUN_TYPES = frozenset({RUN_TYPE_ORDERED_RANK_EDIT_ISP, RUN_TYPE_STATE_FEEDBACK_ISP})
+# Run types built from a past pipeline ISP run + the OE/KD step widgets.
+_STEP_RUN_TYPES = frozenset({RUN_TYPE_STATE_FEEDBACK_ISP})
 
 _SF_ISP_CONDITIONS = (
-    "ordered_rank_edit",
+    "no_feedback",
     "norm",
     "delta_mlm",
     "linear_deltarank",
@@ -195,7 +193,7 @@ _SF_ISP_CONDITIONS = (
 # The runner reorders only between steps, so these conditions need >= 2 steps.
 _SF_ISP_BETWEEN_STEP_CONDITIONS = frozenset({"norm", "delta_mlm", "linear_deltarank", "oracle"})
 _SF_ISP_CONDITION_HELP = {
-    "ordered_rank_edit": "Ordered rank-edit (paper path, no feedback)",
+    "no_feedback": "no_feedback — same steps, no feedback (baseline)",
     "norm": "norm — hidden-state norm rerank (null baseline)",
     "delta_mlm": "delta_mlm — pretrained MLM self-logit rerank",
     "linear_deltarank": "linear_deltarank — trained Δrank decoder (State-feedback)",
@@ -204,7 +202,6 @@ _SF_ISP_CONDITION_HELP = {
 }
 _SF_ISP_DEFAULT_MAX_NCELLS = 300
 _SF_ISP_OUTPUT_SUBDIR = "state_feedback_isp"
-_ORE_ISP_OUTPUT_SUBDIR = "ordered_rank_edit_isp"
 _SF_ISP_DECODER_TRAIN = "Train a new decoder in this run"
 
 _STEP_TYPE_LABELS = {
@@ -460,9 +457,6 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
         else:
             cmd.append("--no-trajectory-arrows")
         env["ISP_UMAP_CONFIG"] = cfg
-    elif run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
-        cmd = ["python3", str(CORE / "run_ordered_rank_edit_isp.py"), "--config", cfg]
-        env["ORDERED_RANK_EDIT_ISP_CONFIG"] = cfg
     elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
         cmd = ["python3", str(CORE / "run_state_feedback_isp.py"), "--config", cfg]
         checkpoint = str(st.session_state.get("sf_isp_decoder_checkpoint") or "").strip()
@@ -490,12 +484,6 @@ def _guess_output_roots(run_label: str, cfg: dict) -> list[Path]:
         if source:
             roots.append(Path(source))
             roots.append(Path(source) / "isp_umap")
-        roots.append(ROOT / "output")
-    elif run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
-        source = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
-        if source:
-            roots.append(Path(source) / _ORE_ISP_OUTPUT_SUBDIR)
-            roots.append(Path(source))
         roots.append(ROOT / "output")
     elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
         source = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
@@ -542,9 +530,7 @@ def _discover_figures_dirs(roots: list[str | Path], run_label: str) -> list[Path
         root = Path(raw)
         if not root.is_dir():
             continue
-        if root.name.startswith(
-            ("pipeline_", "isp_", "ordered_rank_edit_isp_", "sequential_isp_")
-        ):
+        if root.name.startswith(("pipeline_", "isp_")):
             add(root / "figures")
             if run_label == RUN_TYPE_ISP_UMAP:
                 umaps = [p for p in root.glob("umap_*.png") if p.is_file()]
@@ -1001,9 +987,9 @@ def _isp_steps_cfg_from_pipeline_run(
     max_ncells_key: str,
     output_time_subdir: bool,
 ) -> tuple[dict | None, str | None]:
-    """Config dict shared by Ordered rank-edit and State-feedback ISP (pipeline ISP stage).
+    """State-feedback ISP config dict from a pipeline ISP stage.
 
-    Steps are left to the caller (``ordered_rank_edit.steps`` / ``state_feedback.steps``).
+    Steps are left to the caller (``state_feedback.steps``).
     """
     steps = _isp_steps_collect()
     if not steps or any(not s.get("genes") for s in steps):
@@ -1058,27 +1044,6 @@ def _isp_steps_cfg_from_pipeline_run(
 
 def _dump_run_yaml(cfg: dict) -> str:
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
-
-
-def _build_ordered_rank_edit_isp_yaml_from_pipeline_run(
-    run_dir: Path,
-) -> tuple[str | None, str | None]:
-    """Build Ordered rank-edit ISP YAML from a pipeline ISP stage + step widgets."""
-    out, err = _isp_steps_cfg_from_pipeline_run(
-        run_dir,
-        output_subdir=_ORE_ISP_OUTPUT_SUBDIR,
-        max_ncells_key="ore_isp_max_ncells",
-        output_time_subdir=False,
-    )
-    if err:
-        return None, err
-    runtime = out.pop("runtime")
-    out["ordered_rank_edit"] = {
-        "save_intermediate_datasets": bool(st.session_state.get("ore_isp_save_datasets", False)),
-        "steps": _isp_steps_collect(),
-    }
-    out["runtime"] = runtime
-    return _dump_run_yaml(out), None
 
 
 def _parse_sf_specificity_sets(text: str | None, ptype: str) -> tuple[dict, str | None]:
@@ -1222,21 +1187,12 @@ def _load_state_feedback_summary(run: Path) -> dict:
     return out
 
 
-def _apply_ordered_rank_edit_isp_from_pipeline_run(run_dir: Path) -> str | None:
-    yaml_text, err = _build_ordered_rank_edit_isp_yaml_from_pipeline_run(run_dir)
-    if err:
-        return err
-    st.session_state["yaml_editor"] = yaml_text
-    st.session_state["isp_steps_source_run_dir"] = str(run_dir.resolve())
-    return None
-
-
 def _render_isp_steps_source_picker() -> None:
     """Column-1 UI: pick a past pipeline ISP run (dataset + FT model + states)."""
     st.subheader("ISP source run")
     st.caption(
         "Select a completed **Pipeline (E2E)** folder that has ISP "
-        "(`stage_configs/isp.yaml`). Ordered rank-edit / State-feedback ISP reuse that run’s tokenized "
+        "(`stage_configs/isp.yaml`). State-feedback ISP reuses that run’s tokenized "
         "dataset, fine-tuned model, and start/end states — not a fresh Data input zip."
     )
     runs = _discover_isp_pipeline_runs()
@@ -1281,51 +1237,6 @@ def _render_isp_steps_source_picker() -> None:
         st.caption(f"model: `{paths.get('geneformer_model')}`")
 
 
-def _render_ordered_rank_edit_isp_controls() -> None:
-    """Run-type column: ordered OE / KD steps + batch size."""
-    st.info(
-        "Applies **group OE and/or KD** steps in order on start-state cells. Each step "
-        "edits the previous step’s gene ranks (token space); after each step the "
-        "`goal_state_shift` toward the pipeline end state is scored against the original "
-        "start encoding. Model outputs are not fed back into the next step (that is "
-        "**State-feedback ISP**). Outputs go under `{pipeline_run}/ordered_rank_edit_isp/`."
-    )
-    st.caption(
-        "OE = length-preserving move-to-front (later OE genes sit leftmost). "
-        "KD = delete those genes from the encoding. Mixed OE+KD is allowed."
-    )
-    st.session_state.setdefault("ore_isp_save_datasets", False)
-    st.session_state.setdefault("ore_isp_max_ncells", _DEFAULT_ISP_MAX_NCELLS)
-
-    _render_isp_steps_widgets()
-
-    st.number_input(
-        "max_ncells (start-state cells)",
-        min_value=1,
-        max_value=100_000,
-        step=100,
-        key="ore_isp_max_ncells",
-    )
-    st.checkbox(
-        "Save intermediate perturbed datasets",
-        key="ore_isp_save_datasets",
-        help="Off by default (host RAM / disk). Needed only if you will plot UMAP from a step.",
-    )
-    _render_isp_steps_batch_widgets()
-    _render_isp_steps_ready_status()
-
-    if st.button("Apply run + steps to Config YAML", type="secondary", key="ore_isp_apply_btn"):
-        run_dir = Path(str(st.session_state.get("isp_steps_source_run_dir") or ""))
-        err = _apply_ordered_rank_edit_isp_from_pipeline_run(run_dir) if run_dir.is_dir() else (
-            "Select a past Pipeline ISP run in the left column."
-        )
-        if err:
-            st.error(err)
-        else:
-            st.success(f"Filled Ordered rank-edit ISP config from `{run_dir.name}`.")
-            st.rerun()
-
-
 def _render_isp_steps_ready_status() -> None:
     source = st.session_state.get("isp_steps_source_run_dir")
     steps = _isp_steps_collect()
@@ -1340,7 +1251,7 @@ def _render_isp_steps_ready_status() -> None:
 
 
 def _render_isp_steps_widgets() -> None:
-    """Ordered OE / KD step widgets (shared by Ordered rank-edit and State-feedback ISP)."""
+    """Ordered OE / KD step widgets of State-feedback ISP."""
     st.session_state.setdefault("isp_steps_n", _DEFAULT_ISP_STEPS)
     st.number_input(
         "Number of steps",
@@ -1412,7 +1323,8 @@ def _render_state_feedback_isp_controls() -> None:
         "Trains a **Δrank decoder** on this run's observed start → goal rank change, "
         "then uses it to reorder each cell's genes after the perturbation steps "
         "(the gene set is unchanged; only the order moves). Every selected condition "
-        "is scored in one run, including **Ordered rank-edit** as the baseline. "
+        "is scored in one run, including **no_feedback** (the same steps without feedback) "
+        "as the baseline. "
         "Outputs go under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`."
     )
     st.caption(
@@ -1864,19 +1776,13 @@ def _render_run_directory_output(run_label: str) -> None:
                 genes = "+".join(s.get("genes") or []) or "(no genes)"
                 lines.append(f"{i}. {s.get('type', 'overexpress')} {genes}")
             st.code("steps\n" + "\n".join(lines), language="text")
-        if run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
-            st.caption(
-                "**Run job** writes per-step `goal_state_shift` CSVs under "
-                "`<selected pipeline run>/ordered_rank_edit_isp/`."
-            )
-        else:
-            checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
-            st.code(f"decoder\n{checkpoint or 'train new'}", language="text")
-            st.caption(
-                "**Run job** writes `direction_fidelity/`, per-condition folders, "
-                "`phase12_gate.csv` and `run_manifest.json` under "
-                "`<selected pipeline run>/state_feedback_isp/state_feedback_isp_<time>/`."
-            )
+        checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
+        st.code(f"decoder\n{checkpoint or 'train new'}", language="text")
+        st.caption(
+            "**Run job** writes `direction_fidelity/`, per-condition folders, "
+            "`phase12_gate.csv` and `run_manifest.json` under "
+            "`<selected pipeline run>/state_feedback_isp/state_feedback_isp_<time>/`."
+        )
     else:
         source = st.session_state.get("isp_umap_source_run_dir")
         genes = _normalize_isp_umap_genes(st.session_state.get("isp_umap_genes_text"))
@@ -3880,9 +3786,6 @@ def _render_analysis_panel() -> None:
             else:
                 st.warning("Select a past ISP / pipeline run in the left column.")
 
-        elif run_sel == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
-            _render_ordered_rank_edit_isp_controls()
-
         elif run_sel == RUN_TYPE_STATE_FEEDBACK_ISP:
             _render_state_feedback_isp_controls()
 
@@ -4107,12 +4010,7 @@ def _render_analysis_panel() -> None:
                 st.session_state["isp_umap_gene"] = gene
         elif run_label in _STEP_RUN_TYPES:
             source = Path(str(st.session_state.get("isp_steps_source_run_dir") or ""))
-            build = (
-                _build_ordered_rank_edit_isp_yaml_from_pipeline_run
-                if run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP
-                else _build_state_feedback_isp_yaml_from_pipeline_run
-            )
-            prepared, apply_err = build(source)
+            prepared, apply_err = _build_state_feedback_isp_yaml_from_pipeline_run(source)
             if apply_err:
                 st.error(apply_err)
                 prep_failed = True
@@ -4174,20 +4072,10 @@ def _render_analysis_panel() -> None:
                         f"ISP UMAP from pipeline run `{source}` · gene=`{gene}` "
                         "(writes under that run’s `isp_umap/`)."
                     )
-                elif run_label == RUN_TYPE_ORDERED_RANK_EDIT_ISP:
-                    source = st.session_state.get("isp_steps_source_run_dir")
-                    block = cfg_obj.get("ordered_rank_edit") or cfg_obj.get("sequential") or {}
-                    n_steps = len(block.get("steps") or [])
-                    st.info(
-                        f"Ordered rank-edit ISP from pipeline run `{source}` · {n_steps} step(s) "
-                        f"(writes under that run’s `{_ORE_ISP_OUTPUT_SUBDIR}/`)."
-                    )
                 elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
                     source = st.session_state.get("isp_steps_source_run_dir")
                     n_steps = len(
-                        (cfg_obj.get("state_feedback") or {}).get("steps")
-                        or (cfg_obj.get("sequential") or {}).get("steps")
-                        or []
+                        (cfg_obj.get("state_feedback") or {}).get("steps") or []
                     )
                     checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
                     decoder = f"decoder `{checkpoint}`" if checkpoint else "new decoder"
