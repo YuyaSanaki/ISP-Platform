@@ -15,6 +15,7 @@ from geneformer import in_silico_perturber as isp
 from rank_edit import (
     PERTURB_OVEREXPRESS,
     apply_step,
+    distinct_tokens,
     normalize_step_type,
     perturb_index_for_tokens,
 )
@@ -149,6 +150,7 @@ def compute_goal_state_shifts(
     forward can exceed a 1-forward auto cache).
     """
     ptype = normalize_step_type(perturb_type)
+    oe_tokens = distinct_tokens(oe_tokens)
     orig_input_ids = [list(x) for x in original_ds["input_ids"]]
     indices_to_perturb = [perturb_index_for_tokens(ids, oe_tokens) for ids in orig_input_ids]
     try:

@@ -24,6 +24,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Group-OE scoring that assumes the overexpressed genes sit at the sequence front (`state_feedback.runtime.compute_goal_state_shifts`, used by the oracle runner's no-feedback path) counted a gene overexpressed in two steps twice. Scoring strips one leading position per token, so it also dropped the genes right after the factor block from both embeddings. Repeats are now dropped before scoring. Steps that repeat no gene (all OSKM orders) are unchanged, and the State-feedback ISP runner's cell-mean scoring was never affected.
 - State-feedback ISP endpoint gate now reads the feedback row at the last step when there is one, instead of relying on how step names sort against `feedback`.
 
 ### Removed

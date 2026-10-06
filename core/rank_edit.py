@@ -158,3 +158,12 @@ def perturb_index_for_tokens(input_ids: Sequence[int], oe_tokens: Sequence[int])
     """Present-gene indices for group-OE alignment (``[-100]`` if all absent)."""
     present = [input_ids.index(t) for t in oe_tokens if t in input_ids]
     return present if present else [-100]
+
+
+def distinct_tokens(tokens: Sequence[int]) -> list[int]:
+    """Tokens in first-seen order without repeats.
+
+    A gene overexpressed in two steps occupies one front position, and group-OE
+    scoring strips one leading position per token, so repeats must be dropped.
+    """
+    return list(dict.fromkeys(tokens))

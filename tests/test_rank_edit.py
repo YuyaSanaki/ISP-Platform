@@ -13,6 +13,7 @@ from rank_edit import (
     apply_single_step_delete,
     apply_single_step_overexpress,
     apply_step,
+    distinct_tokens,
     legacy_steps_block,
     normalize_step_type,
     parse_steps,
@@ -49,6 +50,17 @@ class TestOverexpress(unittest.TestCase):
     def test_perturb_index(self):
         self.assertEqual(perturb_index_for_tokens([5, 6, 7], [7, 9]), [2])
         self.assertEqual(perturb_index_for_tokens([5, 6, 7], [9]), [-100])
+
+    def test_repeated_gene_scores_one_front_position(self):
+        o, s, k, m = 501, 502, 503, 504
+        cocktail = [901, o, s, 902, 903, 904, 905]
+        steps = [("overexpress", [k]), ("overexpress", [m]), ("overexpress", [s]),
+                 ("overexpress", [o]), ("overexpress", cocktail)]
+        cumulative = [t for _, toks in steps for t in toks]
+        out = apply_rank_edits(_fake_example(list(range(10, 40))), steps)
+        front = distinct_tokens(cumulative)
+        self.assertEqual(front, [k, m, s, o, 901, 902, 903, 904, 905])
+        self.assertEqual(sorted(out["input_ids"][: len(front)]), sorted(front))
 
 
 class TestDelete(unittest.TestCase):
