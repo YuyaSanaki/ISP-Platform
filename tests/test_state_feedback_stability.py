@@ -236,7 +236,10 @@ class TestRandomChains(unittest.TestCase):
 class TestAggregate(unittest.TestCase):
     """Seed jobs written to separate run directories combine into one verdict."""
 
-    def _write_run(self, root: Path, seed: int, final: list[list[int]], end: float) -> Path:
+    def _write_run(
+        self, root: Path, seed: int, final: list[list[int]], end: float,
+        ref: str = "no_feedback",
+    ) -> Path:
         import json
         import pickle
 
@@ -257,12 +260,12 @@ class TestAggregate(unittest.TestCase):
         ]
         pd.DataFrame(ev).to_csv(run / "events.csv", index=False)
         pd.DataFrame([
-            {"seed": None, "chain": "configured", "mode": "ordered_rank_edit",
+            {"seed": None, "chain": "configured", "mode": ref,
              "endpoint_median": 0.01},
             {"seed": seed, "chain": "configured", "mode": "multi_step",
-             "endpoint_median": end, "gain_over_ordered_rank_edit": end - 0.01},
+             "endpoint_median": end, f"gain_over_{ref}": end - 0.01},
             {"seed": seed, "chain": "random0", "mode": "multi_step",
-             "endpoint_median": 0.02, "gain_over_ordered_rank_edit": 0.01},
+             "endpoint_median": 0.02, f"gain_over_{ref}": 0.01},
         ]).to_csv(run / "endpoints.csv", index=False)
         return run
 
@@ -293,7 +296,24 @@ class TestAggregate(unittest.TestCase):
             path / "per_cell_shifts.csv", index=False
         )
 
+    def test_legacy_reference_name(self):
+        """Runs written before the rename (``ordered_rank_edit``) still aggregate."""
+        import tempfile
+
+        from run_state_feedback_stability import aggregate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run = self._write_run(Path(tmp), 0, [list(range(1, 21))], 0.25,
+                                  ref="ordered_rank_edit")
+            verdict = aggregate([run], Path(tmp) / "agg")
+            self.assertTrue(verdict["passed"]["S3"])
+
     def test_specific_gain_per_random_set_from_per_cell_files(self):
+        for ref in ("no_feedback", "ordered_rank_edit"):
+            with self.subTest(ref=ref):
+                self._check_specific_gain(ref)
+
+    def _check_specific_gain(self, ref: str):
         import tempfile
 
         import pandas as pd
@@ -302,12 +322,12 @@ class TestAggregate(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            run = self._write_run(root, 0, [list(range(1, 21))], 0.30)
+            run = self._write_run(root, 0, [list(range(1, 21))], 0.30, ref=ref)
             random_end = {"random_s0_0": 0.26, "random_s0_1": 0.24, "random_s0_10": 0.28,
                           "random_s1_0": 0.22}
             for chain in ("configured", *random_end):
-                self._cells(run / "ordered_rank_edit" / chain / "step02_x", [0.01, 0.01])
-                self._cells(run / "ordered_rank_edit" / chain / "step01_x", [9.0, 9.0])
+                self._cells(run / ref / chain / "step02_x", [0.01, 0.01])
+                self._cells(run / ref / chain / "step01_x", [9.0, 9.0])
             s = run / "seed0"
             self._cells(s / "multi_configured" / "step02_x", [9.0, 9.0])
             self._cells(s / "multi_configured" / "step02_feedback", [0.31, 0.31])

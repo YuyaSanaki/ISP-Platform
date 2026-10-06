@@ -54,10 +54,11 @@ state_feedback:
       type: overexpress
       genes: [POU5F1]
 
-  # Conditions compared in one run. `oracle` is a ceiling (observed ranks pasted in),
-  # `null_feedback` is the zero-perturbation guardrail.
+  # Conditions compared in one run. `no_feedback` applies the same steps with no feedback
+  # (the baseline; `ordered_rank_edit` is read as its old name), `oracle` is a ceiling
+  # (observed ranks pasted in), `null_feedback` is the zero-perturbation guardrail.
   conditions:
-    - ordered_rank_edit
+    - no_feedback
     - norm
     - delta_mlm
     - linear_deltarank

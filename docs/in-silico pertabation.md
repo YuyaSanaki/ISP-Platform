@@ -79,11 +79,10 @@ docker compose run --rm isp accelerate launch --num_processes 1 /app/core/run_is
 
 ### Per-cell shift (ISP UMAP)
 
-Population ISP ranks **genes**. For per-cell trajectories and **`per_cell_isp_shift.csv`**, see [**isp_umap.md**](isp_umap.md). For **ordered OE and/or KD steps** on the gene-rank tokens (Ordered rank-edit ISP), see [**ordered_rank_edit_isp.md**](ordered_rank_edit_isp.md); for steps with model-output feedback between them (State-feedback ISP), see [**state_feedback_decode_methods.md**](state_feedback_decode_methods.md). How the two compare: [**ordered_rank_edit_and_state_feedback_isp.md**](ordered_rank_edit_and_state_feedback_isp.md) (v1.0.1).
+Population ISP ranks **genes**. For per-cell trajectories and **`per_cell_isp_shift.csv`**, see [**isp_umap.md**](isp_umap.md). For **ordered OE and/or KD steps** with model-output feedback between them (State-feedback ISP), see [**state_feedback_isp.md**](state_feedback_isp.md) (v1.0.1); design and validation are in [**state_feedback_decode_methods.md**](state_feedback_decode_methods.md).
 
 ```bash
 docker compose run --rm isp_umap
-docker compose run --rm ordered_rank_edit_isp
 ```
 
 ---

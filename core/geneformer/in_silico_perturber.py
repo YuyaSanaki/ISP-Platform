@@ -194,7 +194,7 @@ def resolve_forward_batch_size(
     """Turn forward_batch_size="auto" into a number measured on this GPU.
 
     ``n_forwards`` sizes the probe to the peak of the real scoring loop.
-    Group / Ordered rank-edit ISP holds a perturbed forward and an original forward;
+    Group and State-feedback ISP hold a perturbed forward and an original forward;
     pass ``n_forwards=2`` and a distinct ``task`` so that cache is not reused
     from a single-forward genome-wide ISP calibration (that mismatch OOMs).
     """

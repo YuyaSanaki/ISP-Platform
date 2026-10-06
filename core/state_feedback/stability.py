@@ -6,7 +6,7 @@ A chain is observed as a sequence of encodings (one token list per cell):
 
 ``idle`` events rerank again with no new perturbation. For every observed encoding
 ``ChainTracker`` records the per-cell change from the previous encoding and the
-cumulative distance from a reference path (Ordered rank-edit at the same step).
+cumulative distance from a reference path (the no-feedback baseline at the same step).
 ``stability_verdict`` applies the pre-registered criteria S1-S4 in
 docs/state_feedback_decode_methods.md.
 
@@ -389,7 +389,7 @@ def stability_verdict(
 
     ``event_rows_by_seed[s]`` are the ``ChainTracker`` rows of the configured
     multi-step chain; ``endpoint_gain_by_seed[s]`` maps each chain name to its
-    endpoint shift minus the Ordered rank-edit endpoint of the same chain.
+    endpoint shift minus the no-feedback endpoint of the same chain.
     """
     c = {**CRITERIA, **dict(criteria)}
     per_seed: dict[Any, dict[str, Any]] = {}

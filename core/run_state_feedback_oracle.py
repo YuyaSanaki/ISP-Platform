@@ -3,14 +3,14 @@
 
 Compares, on the same start cells / FT model / goal centroids:
 
-1. **ordered_rank_edit** — current paper Ordered rank-edit OE steps (insert-0).
+1. **no_feedback** — the OE steps applied in order (insert-0), no feedback.
 2. **oracle_mid** — after step-1 OE, permute to observed endpoint ranks
    (fixed gene set), then continue OE for remaining factors.
 3. **oracle_endpoint** — permute start cells to observed endpoint ranks
    (no OE); ceiling if the goal state ranks alone explain the shift.
 
 Hard gate: if oracle_mid (and/or oracle_endpoint) does not improve median
-``goal_state_shift`` over ordered_rank_edit in a meaningful way, stop —
+``goal_state_shift`` over no_feedback in a meaningful way, stop —
 do not implement Phase 1–2 decoders.
 
 Usage:
@@ -42,21 +42,33 @@ from geneformer.species_context import (
     log_species_banner,
     species_from_config,
 )
-from ordered_rank_edit import (
-    OSKM_FACTOR_KEYS,
-    OSKM_FACTORS,
-    apply_single_step_overexpress,
-    order_label,
-    tokens_for_order,
-)
+from rank_edit import apply_single_step_overexpress
 from state_feedback.oracle_rerank import (
     build_pseudobulk_rank_priority,
     rerank_fixed_gene_set,
     spearman_rank_correlation,
 )
 
-# Reuse Ordered rank-edit ISP helpers without importing __main__ side effects.
-import run_ordered_rank_edit_isp as ore
+from state_feedback import runtime as rt
+
+OSKM_FACTOR_KEYS: tuple[str, ...] = ("O", "S", "K", "M")
+
+OSKM_FACTORS: dict[str, dict[str, str]] = {
+    "O": {"human": "ENSG00000204531", "mouse": "ENSMUSG00000024406", "symbol": "POU5F1"},
+    "S": {"human": "ENSG00000181449", "mouse": "ENSMUSG00000074637", "symbol": "SOX2"},
+    "K": {"human": "ENSG00000136826", "mouse": "ENSMUSG00000003032", "symbol": "KLF4"},
+    "M": {"human": "ENSG00000136997", "mouse": "ENSMUSG00000022346", "symbol": "MYC"},
+}
+
+
+def order_label(factor_keys: Sequence[str]) -> str:
+    """Order tag, e.g. ``K-M-S-O``."""
+    return "-".join(factor_keys)
+
+
+def tokens_for_order(order: Sequence[str], token_by_factor: Mapping[str, int]) -> list[list[int]]:
+    """Per-step single-token lists for a factor-key permutation."""
+    return [[token_by_factor[k]] for k in order]
 
 
 def _resolve_factor_tokens(species_key: str, cfg: Mapping[str, Any]) -> dict[str, int]:
@@ -114,7 +126,7 @@ def _score(
     nproc: int,
     batch_state: list[int],
 ) -> pd.DataFrame:
-    return ore.compute_goal_state_shifts(
+    return rt.compute_goal_state_shifts(
         model,
         start_ds,
         working,
@@ -131,7 +143,7 @@ def _score(
     )
 
 
-def run_ordered_rank_edit(
+def run_no_feedback(
     model,
     start_ds,
     order: tuple[str, ...],
@@ -147,8 +159,8 @@ def run_ordered_rank_edit(
     forward_batch_size: int,
     nproc: int,
 ) -> list[dict[str, Any]]:
-    """Baseline: cumulative length-preserving OE (Ordered rank-edit ISP)."""
-    map_workers = ore._gpu_resident_map_workers(nproc)
+    """Baseline: cumulative length-preserving OE, no feedback."""
+    map_workers = rt.gpu_resident_map_workers(nproc)
     batch_state = [int(forward_batch_size)]
     working = start_ds
     try:
@@ -185,7 +197,7 @@ def run_ordered_rank_edit(
         stats = _summarize(df)
         rows.append(
             {
-                "condition": "ordered_rank_edit",
+                "condition": rt.NO_FEEDBACK,
                 "order": order_label(order),
                 "step": step_idx,
                 "factor": fk,
@@ -194,11 +206,11 @@ def run_ordered_rank_edit(
             }
         )
         print(
-            f"  [ordered_rank_edit] step{step_idx} {fk}: "
+            f"  [{rt.NO_FEEDBACK}] step{step_idx} {fk}: "
             f"median={stats['median']:.6f} n={int(stats['n'])}",
             flush=True,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
     return rows
 
 
@@ -221,7 +233,7 @@ def run_oracle_mid(
     oracle_after_step: int = 1,
 ) -> list[dict[str, Any]]:
     """OE chain with an oracle fixed-gene-set permute after ``oracle_after_step``."""
-    map_workers = ore._gpu_resident_map_workers(nproc)
+    map_workers = rt.gpu_resident_map_workers(nproc)
     batch_state = [int(forward_batch_size)]
     working = start_ds
     try:
@@ -271,7 +283,7 @@ def run_oracle_mid(
             f"median={stats['median']:.6f} n={int(stats['n'])}",
             flush=True,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
         if step_idx == int(oracle_after_step) and step_idx < len(order):
             # Spearman vs pre-oracle on a few cells for diagnostics
@@ -323,7 +335,7 @@ def run_oracle_mid(
                 f"spearman_vs_pre≈{mean_rho:.4f}",
                 flush=True,
             )
-            ore._empty_cuda_cache()
+            rt.empty_cuda_cache()
     return rows
 
 
@@ -343,14 +355,14 @@ def run_oracle_endpoint(
     nproc: int,
 ) -> list[dict[str, Any]]:
     """Ceiling: permute start → observed endpoint ranks; score with empty OE list via cell means."""
-    map_workers = ore._gpu_resident_map_workers(nproc)
+    map_workers = rt.gpu_resident_map_workers(nproc)
     batch_state = [int(forward_batch_size)]
     working = start_ds.map(
         lambda ex, p=dict(oracle_priority): _apply_oracle(ex, p),
         num_proc=map_workers,
     )
     # No OE tokens — use cell-mean goal shift path
-    df = ore.compute_cell_mean_goal_state_shifts(
+    df = rt.compute_cell_mean_goal_state_shifts(
         model,
         start_ds,
         working,
@@ -434,12 +446,12 @@ def main() -> int:
 
     print(f"Loading dataset: {dataset_path}", flush=True)
     dataset = load_from_disk(str(dataset_path))
-    start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
+    start_ds = rt.select_start_cells(dataset, state_key, start_state, max_ncells)
     print(f"Start cells ({start_state}): n={len(start_ds)}", flush=True)
 
     # Observed ranks from endpoint / intermediate state (pseudobulk positions)
     obs_cap = int(oracle_cfg.get("observed_max_ncells") or max_ncells or 3000)
-    obs_ds = ore._select_start_cells(dataset, state_key, observed_state, obs_cap)
+    obs_ds = rt.select_start_cells(dataset, state_key, observed_state, obs_cap)
     print(f"Observed-rank cells ({observed_state}): n={len(obs_ds)}", flush=True)
     oracle_priority = build_pseudobulk_rank_priority(obs_ds["input_ids"])
     print(f"Oracle priority tokens: {len(oracle_priority)}", flush=True)
@@ -455,7 +467,7 @@ def main() -> int:
 
     fbs_raw = args.forward_batch_size or runtime.get("forward_batch_size", "auto")
     species_default = default_isp_forward_batch_size(backend.max_input_size)
-    forward_batch_size = ore.resolve_dual_forward_batch_size(
+    forward_batch_size = rt.resolve_dual_forward_batch_size(
         coerce_batch_size(fbs_raw, default=species_default),
         model,
         start_ds,
@@ -471,7 +483,7 @@ def main() -> int:
         "alt_states": list(pert.get("alt_states") or []),
     }
     centroid_states = [start_state, goal_state, *list(pert.get("alt_states") or [])]
-    centroid_ds = ore._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
+    centroid_ds = rt.centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
     state_embs = isp.get_cell_state_avg_embs(
         model,
         centroid_ds,
@@ -479,9 +491,9 @@ def main() -> int:
         layer_to_quant,
         pad_token_id,
         forward_batch_size,
-        ore._gpu_resident_map_workers(nproc),
+        rt.gpu_resident_map_workers(nproc),
     )
-    ore._empty_cuda_cache()
+    rt.empty_cuda_cache()
 
     token_by_factor = _resolve_factor_tokens(species_key, cfg)
     raw_orders = args.orders or oracle_cfg.get("orders") or ["K-M-S-O"]
@@ -516,9 +528,9 @@ def main() -> int:
 
     for order in orders:
         tag = order_label(order)
-        print(f"=== ordered_rank_edit {tag} ===", flush=True)
+        print(f"=== {rt.NO_FEEDBACK} {tag} ===", flush=True)
         all_rows.extend(
-            run_ordered_rank_edit(
+            run_no_feedback(
                 model,
                 start_ds,
                 order,
@@ -526,7 +538,7 @@ def main() -> int:
                 goal_state,
                 cell_states,
                 state_embs,
-                output_root / "ordered_rank_edit" / tag,
+                output_root / rt.NO_FEEDBACK / tag,
                 layer_to_quant=layer_to_quant,
                 pad_token_id=pad_token_id,
                 model_input_size=model_input_size,
@@ -559,12 +571,12 @@ def main() -> int:
     summary_path = output_root / "phase0_summary.csv"
     summary.to_csv(summary_path, index=False)
 
-    # Go/no-go: final-step median oracle_mid vs ordered_rank_edit
+    # Go/no-go: final-step median oracle_mid vs no_feedback
     gate_rows = []
     for order in orders:
         tag = order_label(order)
         base = summary[
-            (summary["condition"] == "ordered_rank_edit")
+            (summary["condition"] == rt.NO_FEEDBACK)
             & (summary["order"] == tag)
             & (summary["event"].astype(str).str.startswith("oe_"))
         ]
@@ -581,7 +593,7 @@ def main() -> int:
         gate_rows.append(
             {
                 "order": tag,
-                "ordered_rank_edit_final_median": base_final,
+                "no_feedback_final_median": base_final,
                 "oracle_mid_final_median": ora_final,
                 "delta_oracle_minus_ordered": delta,
                 "oracle_improves": bool(delta > 0),
@@ -608,7 +620,7 @@ def main() -> int:
         "oracle_endpoint_median": ep_med,
         "gate": gate_rows,
         "hard_gate": (
-            "GO if any order has oracle_mid final median > ordered_rank_edit; "
+            "GO if any order has oracle_mid final median > no_feedback; "
             "also inspect oracle_endpoint ceiling. STOP Phase 1–2 if no improvement."
         ),
     }

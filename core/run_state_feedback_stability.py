@@ -9,14 +9,16 @@ For each decoder seed (decoder retrained; the train/val gene split stays fixed):
 | Chain | What it measures |
 |-------|------------------|
 | configured, multi-step + ``idle_events`` | per-event change (S1); extra reranks with no new perturbation must converge, not drift (S2) |
-| ``n_random_chains`` random chains, multi-step | endpoint gain over Ordered rank-edit must be larger for the configured chain than for every random chain (S3); a decoder trained on the endpoint teacher could pull any chain toward the goal |
+| ``n_random_chains`` random chains, multi-step | endpoint gain over the no-feedback baseline must be larger for the configured chain than for every random chain (S3); a decoder trained on the endpoint teacher could pull any chain toward the goal |
 
 Every chain gets feedback after every step (``state_feedback.multistep``). Random chains
 are drawn by ``state_feedback.random_chains`` (structure- and position-matched; the
 draw is written to ``random_chains.json``). The configured gain beyond the mean
 random-chain gain (specific gain) is reported per seed with a cell-bootstrap CI.
 
-Ordered rank-edit runs once per chain (no decoder) and is the reference path.
+The no-feedback baseline (same steps, no rerank) runs once per chain and is the reference
+path. Runs written before the rename keep it under ``ordered_rank_edit/``; ``aggregate``
+reads both.
 Across seeds, the final configured encodings and endpoint shifts must agree (S4).
 
 With ``state_feedback.placebo_contrast.enabled`` the decoder is trained on, and every
@@ -56,14 +58,14 @@ from geneformer.species_context import (
     log_species_banner,
     species_from_config,
 )
-from ordered_rank_edit import config_block, parse_steps
-import run_ordered_rank_edit_isp as ore
+from rank_edit import PERTURB_OVEREXPRESS, legacy_steps_block, normalize_step_type, parse_steps
 import run_state_feedback_isp as rsf
 
 from state_feedback import feedback as fb
 from state_feedback import gene_states as gs
 from state_feedback import placebo_contrast as pc
 from state_feedback import random_chains
+from state_feedback import runtime as rt
 from state_feedback.multistep import check_feedback_config
 from state_feedback.stability import (
     DEFAULT_TOPK,
@@ -77,12 +79,13 @@ from state_feedback.stability import (
 from state_feedback.teacher import observed_delta_rank, split_tokens
 
 CONFIGURED = "configured"
+LEGACY_REFERENCE_DIR = "ordered_rank_edit"
 
 
 def _final_overexpressed(steps, token_by_step) -> frozenset[int]:
     pinned: set[int] = set()
     for step, tokens in zip(steps, token_by_step):
-        if ore.normalize_step_type(str(step["type"])) == ore.PERTURB_OVEREXPRESS:
+        if normalize_step_type(str(step["type"])) == PERTURB_OVEREXPRESS:
             pinned.update(int(t) for t in tokens)
         else:
             pinned.difference_update(int(t) for t in tokens)
@@ -212,7 +215,7 @@ def main() -> int:
         raise ValueError("state_feedback.ctrl_reference must be 'start' or 'previous'")
 
     log_species_banner(species_from_config(cfg))
-    steps = parse_steps(sf_cfg) or parse_steps(config_block(cfg))
+    steps = parse_steps(sf_cfg) or parse_steps(legacy_steps_block(cfg))
     if not steps:
         raise ValueError("stability evaluation needs explicit state_feedback.steps")
     check_feedback_config(sf_cfg, len(steps))
@@ -227,18 +230,18 @@ def main() -> int:
     print(f"Loading dataset: {dataset_path}", flush=True)
     dataset = load_from_disk(str(dataset_path))
     if require_detected:
-        req_tokens = set(ore._resolve_gene_tokens(cfg, require_detected)[0])
-        start_ds = ore._select_start_cells(dataset, state_key, start_state, None)
+        req_tokens = set(rt.resolve_gene_tokens(cfg, require_detected)[0])
+        start_ds = rt.select_start_cells(dataset, state_key, start_state, None)
         start_ds = start_ds.filter(lambda x: req_tokens <= set(x["input_ids"]))
         if max_ncells is not None and len(start_ds) > int(max_ncells):
             start_ds = start_ds.select(range(int(max_ncells)))
         print(f"Start cells restricted to cells with {require_detected} detected", flush=True)
     else:
-        start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
+        start_ds = rt.select_start_cells(dataset, state_key, start_state, max_ncells)
     print(f"Start cells ({start_state}): n={len(start_ds)}", flush=True)
     obs_cap = int(sf_cfg.get("observed_max_ncells") or max_ncells or 3000)
-    obs_ds = ore._select_start_cells(dataset, state_key, observed_state, obs_cap)
-    teacher_ctrl_ds = ore._select_start_cells(dataset, state_key, start_state, obs_cap)
+    obs_ds = rt.select_start_cells(dataset, state_key, observed_state, obs_cap)
+    teacher_ctrl_ds = rt.select_start_cells(dataset, state_key, start_state, obs_cap)
     teacher = observed_delta_rank(
         teacher_ctrl_ds["input_ids"],
         obs_ds["input_ids"],
@@ -255,7 +258,7 @@ def main() -> int:
     with open(backend.token_dictionary, "rb") as fh:
         pad_token_id = pickle.load(fh).get("<pad>")
     fbs_raw = args.forward_batch_size or runtime.get("forward_batch_size", "auto")
-    forward_batch_size = ore.resolve_dual_forward_batch_size(
+    forward_batch_size = rt.resolve_dual_forward_batch_size(
         coerce_batch_size(fbs_raw, default=default_isp_forward_batch_size(backend.max_input_size)),
         model,
         start_ds,
@@ -265,7 +268,7 @@ def main() -> int:
     print(f"forward_batch_size={forward_batch_size}", flush=True)
 
     centroid_states = [start_state, goal_state, *list(pert.get("alt_states") or [])]
-    centroid_ds = ore._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
+    centroid_ds = rt.centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
     state_embs = isp.get_cell_state_avg_embs(
         model,
         centroid_ds,
@@ -278,13 +281,13 @@ def main() -> int:
         layer_to_quant,
         pad_token_id,
         forward_batch_size,
-        ore._gpu_resident_map_workers(nproc),
+        rt.gpu_resident_map_workers(nproc),
     )
-    ore._empty_cuda_cache()
+    rt.empty_cuda_cache()
 
     token_by_step: list[list[int]] = []
     for step in steps:
-        tokens, resolved = ore._resolve_gene_tokens(cfg, step["genes"])
+        tokens, resolved = rt.resolve_gene_tokens(cfg, step["genes"])
         token_by_step.append(list(tokens))
         print(f"Step {step['index']} {step['type']} {step['name']}: {', '.join(resolved)}",
               flush=True)
@@ -397,7 +400,7 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     n_steps = len(steps)
     start_ids = gs.raw_input_ids(start_ds, 0, len(start_ds), model_input_size)
-    workers = ore._gpu_resident_map_workers(nproc)
+    workers = rt.gpu_resident_map_workers(nproc)
     common = dict(
         layer_to_quant=layer_to_quant,
         pad_token_id=pad_token_id,
@@ -434,27 +437,27 @@ def main() -> int:
             row["shift_median"] = medians.get((row["kind"], row["step"]), float("nan"))
         return tracker, rows, captured
 
-    # Reference path: Ordered rank-edit, once per chain.
+    # Reference path: no-feedback baseline, once per chain.
     event_rows: list[dict[str, Any]] = []
     endpoint_rows: list[dict[str, Any]] = []
     references: dict[str, dict[int, list[list[int]]]] = {}
-    ore_endpoint: dict[str, float] = {}
+    ref_endpoint: dict[str, float] = {}
     t1 = time.time()
     for chain, (step_list, tbs) in chains.items():
-        print(f"=== ordered_rank_edit / {chain} ===", flush=True)
+        print(f"=== {rt.NO_FEEDBACK} / {chain} ===", flush=True)
         tracker, rows, captured = run_tracked(
-            f"ore_{chain}", step_list, tbs,
-            output_root / "ordered_rank_edit" / chain, None,
+            f"ref_{chain}", step_list, tbs,
+            output_root / rt.NO_FEEDBACK / chain, None,
         )
         references[chain] = captured["ref"]
-        ore_endpoint[chain] = _endpoint(rows)
+        ref_endpoint[chain] = _endpoint(rows)
         for row in tracker.rows:
-            event_rows.append({"seed": None, "mode": "ordered_rank_edit", **row})
+            event_rows.append({"seed": None, "mode": rt.NO_FEEDBACK, **row})
         endpoint_rows.append({
-            "seed": None, "chain": chain, "mode": "ordered_rank_edit",
-            "endpoint_median": ore_endpoint[chain],
+            "seed": None, "chain": chain, "mode": rt.NO_FEEDBACK,
+            "endpoint_median": ref_endpoint[chain],
         })
-    timings["ordered_rank_edit_s"] = time.time() - t1
+    timings[f"{rt.NO_FEEDBACK}_s"] = time.time() - t1
 
     def _flush() -> None:
         pd.DataFrame(event_rows).to_csv(output_root / "events.csv", index=False)
@@ -474,7 +477,7 @@ def main() -> int:
             contrast_subs=chain_subs.get(CONFIGURED),
         )
         decoders[seed] = info.get("selected", {})
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
         timings[f"seed{seed}_decoder_s"] = time.time() - ts
         fwd = {k: common[k] for k in (
             "layer_to_quant", "pad_token_id", "model_input_size", "forward_batch_size",
@@ -500,11 +503,11 @@ def main() -> int:
                 rerank_fn, reference=references[chain],
             )
             end = _endpoint(rows)
-            gains[chain] = end - ore_endpoint[chain]
+            gains[chain] = end - ref_endpoint[chain]
             endpoint_rows.append({
                 "seed": seed, "chain": chain, "mode": "multi_step",
-                "endpoint_median": end, "ordered_rank_edit_endpoint": ore_endpoint[chain],
-                "gain_over_ordered_rank_edit": gains[chain],
+                "endpoint_median": end, "no_feedback_endpoint": ref_endpoint[chain],
+                "gain_over_no_feedback": gains[chain],
             })
             if chain == CONFIGURED:
                 with open(seed_dir / "final_configured.pkl", "wb") as fh:
@@ -534,17 +537,17 @@ def main() -> int:
                         f"  [idle {k}] shift={shift:.6f} "
                         f"rho={row['event_spearman_median']:.4f} "
                         f"disp={row['event_disp_median_median']:.1f} "
-                        f"vs_ore_rho={row.get('vs_ref_spearman_median', float('nan')):.4f}",
+                        f"vs_ref_rho={row.get('vs_ref_spearman_median', float('nan')):.4f}",
                         flush=True,
                     )
-                    ore._empty_cuda_cache()
+                    rt.empty_cuda_cache()
             for row in tracker.rows:
                 event_rows.append({"seed": seed, "mode": "multi_step", **row})
             timings[f"seed{seed}_multi_{chain}_s"] = time.time() - tc
 
         _flush()
         del decoder
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
     timings["total_s"] = time.time() - t0
     _flush()
@@ -606,8 +609,9 @@ def aggregate(run_dirs: list[Path], out_dir: Path) -> dict[str, Any]:
         int(s): g.sort_values("event_index").to_dict("records") for s, g in fed.groupby("seed")
     }
     multi = endpoints[endpoints["mode"] == "multi_step"]
+    gain_col = "gain_over_no_feedback" if "gain_over_no_feedback" in multi else "gain_over_ordered_rank_edit"
     gain_by_seed = {
-        int(s): dict(zip(g["chain"], g["gain_over_ordered_rank_edit"]))
+        int(s): dict(zip(g["chain"], g[gain_col]))
         for s, g in multi.groupby("seed")
     }
     endpoint_by_seed = {
@@ -688,6 +692,11 @@ def _final_cells(chain_dir: Path) -> pd.Series | None:
     return df.set_index("cell_index")["Shift_to_goal_end"].sort_index()
 
 
+def _reference_root(run_dir: Path) -> Path:
+    new = run_dir / rt.NO_FEEDBACK
+    return new if new.is_dir() or not (run_dir / LEGACY_REFERENCE_DIR).is_dir() else run_dir / LEGACY_REFERENCE_DIR
+
+
 def _random_set(chain: str) -> tuple[str, int]:
     """``random_s1_7`` -> ("s1", 7); older ``random7`` -> ("all", 7)."""
     body = chain.removeprefix("random")
@@ -705,7 +714,8 @@ def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "m
     Chains with delete steps (``delete_cells.csv``) use ``specific_gain_conditional``.
     """
     conf = _final_cells(seed_dir / f"{prefix}{CONFIGURED}")
-    conf_ref = _final_cells(run_dir / "ordered_rank_edit" / CONFIGURED)
+    ref_root = _reference_root(run_dir)
+    conf_ref = _final_cells(ref_root / CONFIGURED)
     if conf is None or conf_ref is None:
         return None
     treated = None
@@ -720,7 +730,7 @@ def _specific_gain(run_dir: Path, seed_dir: Path, *, seed: int, prefix: str = "m
     for chain_dir in seed_dir.glob(f"{prefix}random*"):
         chain = chain_dir.name.removeprefix(prefix)
         r = _final_cells(chain_dir)
-        rr = _final_cells(run_dir / "ordered_rank_edit" / chain)
+        rr = _final_cells(ref_root / chain)
         if r is None or rr is None:
             continue
         name, idx = _random_set(chain)

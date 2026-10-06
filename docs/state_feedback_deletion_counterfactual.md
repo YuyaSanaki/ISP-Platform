@@ -4,10 +4,11 @@
 [state_feedback_decode_methods.md](state_feedback_decode_methods.md) の「逐次 KO の検証」に事前登録した。OE 版の潜在反応 + Δspec（`core/state_feedback/placebo_contrast.py`,
 commit `8749a29`）に KO の分岐を足す。親文書:
 [state_feedback_decode_methods.md](state_feedback_decode_methods.md) の「方針（2026-10-01 決定）」。
+ここでの "Ordered rank-edit" は feedback なしの基準経路（v1.0.1 以降の条件名 `no_feedback`）を指す。
 
 目的: 論文（BBRC iPS / 体細胞データのみ, `GSE147564_ft6k_qc_human_native_0`,
 `v2_ft_human_native/all_run1`）で、State-feedback ISP が **KO を含む逐次 chain** に対応することを示す。
-1 step の KO は feedback 後に次の摂動が無く、Ordered rank-edit（普通の ISP）に読み出しを 1 回足した
+1 step の KO は feedback 後に次の摂動が無く、feedback なしの基準経路（普通の ISP）に読み出しを 1 回足した
 ものにすぎない（2026-09-30 の決定と同じ理由）ので、すべて 2 step 以上にする。Asano データはこの論文
 では使わない。
 

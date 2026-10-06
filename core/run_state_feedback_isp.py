@@ -10,7 +10,7 @@ Conditions compared in one run:
 
 | Condition | What it does |
 |-----------|--------------|
-| ``ordered_rank_edit`` | paper baseline: OE/KD chain, no feedback |
+| ``no_feedback`` | baseline: the same OE/KD chain with no feedback between steps |
 | ``norm`` | Phase 1 null baseline: rerank by hidden-state norm change |
 | ``delta_mlm`` | Phase 1 comparator: pretrained MLM self-logit change + inertia |
 | ``linear_deltarank`` | Phase 2 primary: trained residual Delta-rank decoder |
@@ -19,13 +19,14 @@ Conditions compared in one run:
 
 All conditions are scored with the **cell-mean cosine** goal-state shift
 (``strip_leading=0``) so a permuted encoding stays comparable with an
-unpermuted one. That metric differs from the group-rank-aligned score used by
-``run_ordered_rank_edit_isp.py``; compare within this run, not against paper tables.
+unpermuted one. That metric differs from the group-rank-aligned score of
+multi-gene ISP; compare within this run, not against paper tables.
+``ordered_rank_edit`` is still accepted as the old name of ``no_feedback``.
 
 Usage:
   python3 core/run_state_feedback_isp.py --config core/config/state_feedback_isp.yaml
   python3 core/run_state_feedback_isp.py --config ... --max-ncells 50 \
-      --conditions ordered_rank_edit linear_deltarank oracle
+      --conditions no_feedback linear_deltarank oracle
 """
 from __future__ import annotations
 
@@ -53,10 +54,10 @@ from geneformer.species_context import (
     log_species_banner,
     species_from_config,
 )
-from ordered_rank_edit import config_block, parse_steps
-import run_ordered_rank_edit_isp as ore
+from rank_edit import PERTURB_OVEREXPRESS, legacy_steps_block, normalize_step_type, parse_steps
 
 from state_feedback import controls
+from state_feedback import runtime as rt
 from state_feedback import feedback as fb
 from state_feedback import gene_states as gs
 from state_feedback import placebo_contrast as pc
@@ -76,7 +77,7 @@ from state_feedback.samples import collect_eval_samples
 from state_feedback.teacher import observed_delta_rank, split_tokens
 
 ALL_CONDITIONS = (
-    "ordered_rank_edit",
+    rt.NO_FEEDBACK,
     "norm",
     "delta_mlm",
     "linear_deltarank",
@@ -117,7 +118,7 @@ def _score_cell_mean(
     batch_state: list[int],
 ) -> pd.DataFrame:
     """Goal-state shift that does not assume perturbed genes sit at the front."""
-    return ore.compute_cell_mean_goal_state_shifts(
+    return rt.compute_cell_mean_goal_state_shifts(
         model,
         start_ds,
         working,
@@ -143,11 +144,11 @@ def _apply_steps_at_once(
 ):
     """Apply the first ``n_steps`` perturbations cumulatively (default: all)."""
     working = dataset
-    workers = ore._gpu_resident_map_workers(nproc)
+    workers = rt.gpu_resident_map_workers(nproc)
     limit = len(steps) if n_steps is None else max(0, int(n_steps))
     for step, tokens in list(zip(steps, token_by_step))[:limit]:
         working = working.map(
-            ore._apply_typed_step,
+            rt.apply_typed_step,
             fn_kwargs={"tokens": list(tokens), "perturb_type": str(step["type"])},
             num_proc=workers,
         )
@@ -178,13 +179,13 @@ def run_condition(
 
     With ``rerank_fn`` the encoding is reranked after every step, including the last,
     so a chain of N steps has N feedback events and the endpoint is the post-feedback
-    encoding (see ``state_feedback.multistep``). Without it the chain is Ordered
-    rank-edit ISP. ``pin_overexpressed`` keeps the genes overexpressed so far at the
+    encoding (see ``state_feedback.multistep``). Without it the chain is the
+    no-feedback baseline. ``pin_overexpressed`` keeps the genes overexpressed so far at the
     front (in their pre-rerank order) and lets the rerank move only the other genes.
     ``on_encoding(kind, step, dataset)`` is called with ``kind`` ``"step"`` after each
     perturbation and ``"feedback"`` after each rerank.
     """
-    workers = ore._gpu_resident_map_workers(nproc)
+    workers = rt.gpu_resident_map_workers(nproc)
     batch_state = [int(forward_batch_size)]
     working = start_ds
     try:
@@ -198,13 +199,13 @@ def run_condition(
     for step_idx, (step, tokens) in enumerate(zip(steps, token_by_step), start=1):
         name = str(step["name"])
         ptype = str(step["type"])
-        if ore.normalize_step_type(ptype) == ore.PERTURB_OVEREXPRESS:
+        if normalize_step_type(ptype) == PERTURB_OVEREXPRESS:
             overexpressed.update(int(t) for t in tokens)
         else:
             overexpressed.difference_update(int(t) for t in tokens)
         pre_step = working
         working = working.map(
-            ore._apply_typed_step,
+            rt.apply_typed_step,
             fn_kwargs={"tokens": list(tokens), "perturb_type": ptype},
             num_proc=workers,
         )
@@ -242,7 +243,7 @@ def run_condition(
             f"median={stats['median']:.6f} n={int(stats['n'])}",
             flush=True,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
         if rerank_fn is None:
             continue
@@ -292,7 +293,7 @@ def run_condition(
             f"event={step_idx}/{n_steps}",
             flush=True,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
     return rows
 
@@ -326,7 +327,7 @@ def run_null_feedback(
         hysteresis=hysteresis,
     )
     working = fb.replace_input_ids(
-        start_ds, new_ids, num_proc=ore._gpu_resident_map_workers(nproc)
+        start_ds, new_ids, num_proc=rt.gpu_resident_map_workers(nproc)
     )
     df = _score_cell_mean(
         model,
@@ -666,7 +667,7 @@ def run_perturbation_specificity(
     for name, spec in (spec_cfg.get("sets") or {}).items():
         genes = [str(g) for g in spec["genes"]]
         ptype = str(spec.get("type", "overexpress"))
-        tokens, resolved = ore._resolve_gene_tokens(cfg, genes)
+        tokens, resolved = rt.resolve_gene_tokens(cfg, genes)
         if len(tokens) != len(genes):
             raise ValueError(f"specificity set {name!r}: resolved {resolved} for {genes}")
         named_tokens.update(tokens)
@@ -683,7 +684,7 @@ def run_perturbation_specificity(
     match_info: dict[str, Any] | None = None
     match_gene = spec_cfg.get("random_match_detection")
     if match_gene:
-        ref_token = ore._resolve_gene_tokens(cfg, [str(match_gene)])[0][0]
+        ref_token = rt.resolve_gene_tokens(cfg, [str(match_gene)])[0][0]
         detection = controls.detection_rate(start_ds["input_ids"])
         ref = detection.get(int(ref_token), 0.0)
         pool = controls.detection_matched_pool(pool, detection, ref)
@@ -717,7 +718,7 @@ def run_perturbation_specificity(
             model_input_size=model_input_size, forward_batch_size=forward_batch_size,
             mlm_model=None, keep_tokens=keep, max_genes_per_cell=max_genes, seed=seed,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
         rep = controls.base_rank_control(samples, decoder, n_boot=n_boot, seed=seed)
         lp = rep["linear_partial"]
         row = {
@@ -855,7 +856,8 @@ def main() -> int:
     observed_state = str(sf_cfg.get("observed_state") or goal_state)
 
     conditions = [
-        c for c in (args.conditions or sf_cfg.get("conditions") or ALL_CONDITIONS)
+        rt.canonical_condition(c)
+        for c in (args.conditions or sf_cfg.get("conditions") or ALL_CONDITIONS)
     ]
     unknown = [c for c in conditions if c not in ALL_CONDITIONS]
     if unknown:
@@ -874,8 +876,8 @@ def main() -> int:
 
     log_species_banner(species_from_config(cfg))
 
-    # Configs from before the rename list the steps under `sequential:`.
-    steps = parse_steps(sf_cfg) or parse_steps(config_block(cfg))
+    # Older configs list the steps under `ordered_rank_edit:` or `sequential:`.
+    steps = parse_steps(sf_cfg) or parse_steps(legacy_steps_block(cfg))
     if not steps:
         raise ValueError(
             "state-feedback ISP needs explicit state_feedback.steps (genes + type per step)"
@@ -887,13 +889,13 @@ def main() -> int:
 
     print(f"Loading dataset: {dataset_path}", flush=True)
     dataset = load_from_disk(str(dataset_path))
-    start_ds = ore._select_start_cells(dataset, state_key, start_state, max_ncells)
+    start_ds = rt.select_start_cells(dataset, state_key, start_state, max_ncells)
     print(f"Start cells ({start_state}): n={len(start_ds)}", flush=True)
 
     obs_cap = int(sf_cfg.get("observed_max_ncells") or max_ncells or 3000)
-    obs_ds = ore._select_start_cells(dataset, state_key, observed_state, obs_cap)
+    obs_ds = rt.select_start_cells(dataset, state_key, observed_state, obs_cap)
     print(f"Observed-state cells ({observed_state}): n={len(obs_ds)}", flush=True)
-    teacher_ctrl_ds = ore._select_start_cells(dataset, state_key, start_state, obs_cap)
+    teacher_ctrl_ds = rt.select_start_cells(dataset, state_key, start_state, obs_cap)
     teacher = observed_delta_rank(
         teacher_ctrl_ds["input_ids"],
         obs_ds["input_ids"],
@@ -919,7 +921,7 @@ def main() -> int:
 
     fbs_raw = args.forward_batch_size or runtime.get("forward_batch_size", "auto")
     species_default = default_isp_forward_batch_size(backend.max_input_size)
-    forward_batch_size = ore.resolve_dual_forward_batch_size(
+    forward_batch_size = rt.resolve_dual_forward_batch_size(
         coerce_batch_size(fbs_raw, default=species_default),
         model,
         start_ds,
@@ -935,7 +937,7 @@ def main() -> int:
         "alt_states": list(pert.get("alt_states") or []),
     }
     centroid_states = [start_state, goal_state, *list(pert.get("alt_states") or [])]
-    centroid_ds = ore._centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
+    centroid_ds = rt.centroid_dataset(dataset, state_key, centroid_states, max_ncells, nproc)
     state_embs = isp.get_cell_state_avg_embs(
         model,
         centroid_ds,
@@ -943,13 +945,13 @@ def main() -> int:
         layer_to_quant,
         pad_token_id,
         forward_batch_size,
-        ore._gpu_resident_map_workers(nproc),
+        rt.gpu_resident_map_workers(nproc),
     )
-    ore._empty_cuda_cache()
+    rt.empty_cuda_cache()
 
     token_by_step: list[list[int]] = []
     for step in steps:
-        tokens, resolved = ore._resolve_gene_tokens(cfg, step["genes"])
+        tokens, resolved = rt.resolve_gene_tokens(cfg, step["genes"])
         token_by_step.append(list(tokens))
         print(
             f"Step {step['index']} {step['type']} {step['name']}: "
@@ -1005,7 +1007,7 @@ def main() -> int:
                 nproc=nproc,
                 out_dir=output_root / "decoder",
             )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
     mlm_model = None
     if "delta_mlm" in conditions or run_eval:
@@ -1034,7 +1036,7 @@ def main() -> int:
             alpha=alpha,
             max_shift=baseline_max_shift,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
     spec_cfg = sf_cfg.get("specificity") or {}
     specificity: dict[str, Any] = {}
@@ -1060,7 +1062,7 @@ def main() -> int:
             forward_batch_size=forward_batch_size,
             nproc=nproc,
         )
-        ore._empty_cuda_cache()
+        rt.empty_cuda_cache()
 
     common = dict(
         layer_to_quant=layer_to_quant,
@@ -1169,22 +1171,22 @@ def main() -> int:
         fed = last[last["step_name"] == "feedback"]
         return float((fed if not fed.empty else last).iloc[-1]["median"])
 
-    baseline = _final_median("ordered_rank_edit")
+    baseline = _final_median(rt.NO_FEEDBACK)
     ceiling = _final_median("oracle")
     gate_rows: list[dict[str, Any]] = []
     for condition in conditions:
-        if condition in {"ordered_rank_edit", "oracle", "null_feedback"}:
+        if condition in {rt.NO_FEEDBACK, "oracle", "null_feedback"}:
             continue
         value = _final_median(condition)
         gate_rows.append(
             {
                 "condition": condition,
                 "shift_metric": SHIFT_METRIC,
-                "ordered_rank_edit_final_median": baseline,
+                "no_feedback_final_median": baseline,
                 "oracle_final_median": ceiling,
                 "method_final_median": value,
                 "gap_closed_fraction": gap_closed_fraction(baseline, value, ceiling),
-                "beats_ordered_rank_edit": bool(
+                "beats_no_feedback": bool(
                     value == value and baseline == baseline and value > baseline
                 ),
             }

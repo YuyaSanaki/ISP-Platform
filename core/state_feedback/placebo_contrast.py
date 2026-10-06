@@ -34,7 +34,7 @@ from typing import Any, Mapping, Sequence, Union
 
 import torch
 
-from ordered_rank_edit import PERTURB_DELETE, normalize_step_type
+from rank_edit import PERTURB_DELETE, normalize_step_type
 from state_feedback import gene_states as gs
 from state_feedback import random_chains
 from state_feedback.decoder import TrainingSet
