@@ -12,6 +12,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - ISP UMAP scatter fonts match the pred L2 mean bar scale (seaborn talk-sized title/labels/ticks/legend).
 - ISP analysis significant-gene figures (`significant_genes_lollipop.png`, `top_significant_genes_barplot.png`, `top_genes_barplot.png`) use larger gene fonts and a more compact canvas; the lollipop shows gene names and stems only (no per-point shift/N/FDR annotations).
 
+### Added
+
+- Example ortholog overlay `examples/ortholog_overlays/pou5f1_bridge/`: the POU5F1 ↔ Pou5f1 bridge (POU5F1B excluded) used for the paper's cross-species runs, byte-identical to the analysis overlay. Pass it as `species.ortholog_curated_overlay` to reproduce that conversion; the default tables are unchanged, so `one2one` still drops POU5F1 without it.
+
 ## [1.3.1] - 2026-09-22
 
 ### Added
