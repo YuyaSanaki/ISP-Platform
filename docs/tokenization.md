@@ -122,7 +122,7 @@ Optional **project curated overlays** (do not edit platform `*_curated.tsv`): se
 
 ![Default ortholog tables and project overlay](ortholog_tables_and_overlay.png)
 
-The default tables (Ensembl table → `ortholog_policy` → platform `*_curated.tsv`) are applied to every cross-species run. A project overlay is added on top only when it is selected; it can restore a pair that the policy drops but never edits the platform tables. Example: [`examples/ortholog_overlays/pou5f1_bridge/`](../examples/ortholog_overlays/pou5f1_bridge/) restores POU5F1 ↔ Pou5f1, which `one2one` drops because Ensembl labels it one-to-many. Details: [ortholog README](../core/geneformer/dicts/orthologs/README.md#default-tables-and-overlays).
+The default tables (Ensembl table → `ortholog_policy` → platform `*_curated.tsv`) are applied to every cross-species run. The platform curated table restores POU5F1, NANOG and GAPDH, which Ensembl labels one-to-many (human paralogues POU5F1B and NANOGP8, mouse predicted genes) and `one2one` would otherwise drop. A project overlay is added on top only when it is selected; it can restore further pairs but never edits the platform tables. Details: [ortholog README](../core/geneformer/dicts/orthologs/README.md#default-tables-and-overlays).
 
 Ortholog tables: `core/geneformer/dicts/orthologs/` (download via `scripts/download_mouse_human_orthologs.sh` and `scripts/download_drosophila_orthologs.sh`). Fly remapping typically keeps ~50% of protein-coding genes; mouse↔human is ~92%.
 

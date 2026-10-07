@@ -8,14 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Pred L2 mean bar charts use an L-frame (no top/right spines), outward axis ticks, light horizontal y-grid, and a Mouse→Mouse / Mouse→Human Geneformer panel label in the title.
-- ISP UMAP scatter fonts match the pred L2 mean bar scale (seaborn talk-sized title/labels/ticks/legend).
-- ISP analysis significant-gene figures (`significant_genes_lollipop.png`, `top_significant_genes_barplot.png`, `top_genes_barplot.png`) use larger gene fonts and a more compact canvas; the lollipop shows gene names and stems only (no per-point shift/N/FDR annotations).
+- **The platform curated ortholog tables now restore POU5F1 ↔ Pou5f1 and NANOG ↔ Nanog** (both directions). Ensembl labels both pairs one-to-many because of the human paralogues POU5F1B and NANOGP8, so `one2one` dropped these core pluripotency factors from every cross-species conversion. The paralogues stay unmapped. Cross-species runs therefore differ from earlier versions by these two genes; same-species runs are unchanged.
 
 ### Added
 
-- Example ortholog overlay `examples/ortholog_overlays/pou5f1_bridge/`: the POU5F1 ↔ Pou5f1 bridge (POU5F1B excluded) used for the paper's cross-species runs, byte-identical to the analysis overlay. Pass it as `species.ortholog_curated_overlay` to reproduce that conversion; the default tables are unchanged, so `one2one` still drops POU5F1 without it.
-- Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / GAPDH / NANOG as examples, in the ortholog README and `docs/tokenization.md`.
+- Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / NANOG / GAPDH as examples, in the ortholog README and `docs/tokenization.md`.
 
 ## [1.3.1] - 2026-09-22
 
