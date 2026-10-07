@@ -61,6 +61,7 @@ POU5F1 = "ENSG00000204531"
 POU5F1B = "ENSG00000212993"
 POU5F1_MOUSE = "ENSMUSG00000024406"
 ORTHOLOGS = ROOT / "core" / "geneformer" / "dicts" / "orthologs"
+EXAMPLE_POU5F1_BRIDGE = ROOT / "examples" / "ortholog_overlays" / "pou5f1_bridge"
 
 
 @unittest.skipUnless(
@@ -128,6 +129,25 @@ class TestCuratedOverlay(unittest.TestCase):
             )
             self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
             self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
+
+    def test_example_pou5f1_bridge_maps_both_directions_only(self):
+        h2m_base = gc.load_ortholog_table(gc.ConversionPair.HUMAN_TO_MOUSE, policy="one2one")
+        m2h_base = gc.load_ortholog_table(gc.ConversionPair.MOUSE_TO_HUMAN, policy="one2one")
+        h2m = gc.load_ortholog_table(
+            gc.ConversionPair.HUMAN_TO_MOUSE,
+            policy="one2one",
+            curated_overlay=EXAMPLE_POU5F1_BRIDGE,
+        )
+        m2h = gc.load_ortholog_table(
+            gc.ConversionPair.MOUSE_TO_HUMAN,
+            policy="one2one",
+            curated_overlay=EXAMPLE_POU5F1_BRIDGE,
+        )
+        self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
+        self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
+        self.assertNotIn(POU5F1B, h2m)
+        self.assertEqual(set(h2m) - set(h2m_base), {POU5F1})
+        self.assertEqual(set(m2h) - set(m2h_base), {POU5F1_MOUSE})
 
     def test_env_overlay(self):
         with tempfile.TemporaryDirectory() as tmp:
