@@ -96,7 +96,7 @@ Steps 1–3 are the **default tables**: they ship with the platform and are the 
 | GAPDH | one2many (GAPDH → Gapdh + 2 other genes) | dropped | mapped | mapped |
 | NANOG | one2many (NANOG, NANOGP8 → Nanog) | dropped | dropped | dropped |
 
-These tables are used only when the input species differs from the model species. Same-species runs do not convert genes, so NANOG is lost only from converted data (cross-species only).
+These tables are used only when the input species differs from the model species. Same-species runs do not convert genes and keep NANOG; it is not mapped in cross-species runs.
 
 With the pinned Ensembl 116 tables, each direction has 25,788 rows → 17,146 one2one pairs → 17,147 after the platform curated table → 17,148 with `pou5f1_bridge`.
 
