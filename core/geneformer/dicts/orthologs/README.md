@@ -75,6 +75,8 @@ When `orthology_type` is present in the TSV, `one2one` prefers rows labeled `ort
 
 **Gapdh / GAPDH:** curated keeps `ENSMUSG00000057666` ↔ `ENSG00000111640`. Without it, one2one drops mouse Gapdh (collision with `Gm*` rows) and human→mouse can resolve to `Gm10358`.
 
+**POU5F1 / NANOG:** curated keeps `ENSG00000204531` ↔ `ENSMUSG00000024406` (POU5F1 ↔ Pou5f1) and `ENSG00000111704` ↔ `ENSMUSG00000012396` (NANOG ↔ Nanog), both directions. Ensembl labels both pairs `ortholog_one2many` because of the human paralogues POU5F1B (`ENSG00000212993`) and NANOGP8 (`ENSG00000255192`), so one2one would drop these core pluripotency factors. The paralogues are not curated and stay unmapped.
+
 **Curated Ensembl overrides:** only add an Ensembl→Ensembl row when BioMart is wrong for that gene. Symbol aliases (e.g. `Tp53` / `Trp53` / `Brca2` / `Gapdh`) are fine; they must point at the correct target IDs and must not remap unrelated genes (e.g. Lypla1 / Maoa / Gnai3).
 
 ## Default tables and overlays
@@ -85,20 +87,21 @@ When `orthology_type` is present in the TSV, `one2one` prefers rows labeled `ort
 
 1. **Ensembl table** (`human_to_mouse.tsv` / `mouse_to_human.tsv`): pinned, checked against `SHA256SUMS`; all homology types.
 2. **Ortholog policy** (`species.ortholog_policy`, default `one2one`): ambiguous one-to-many / many-to-one rows are dropped.
-3. **Platform curated table** (`*_curated.tsv`): always applied; restores or pins specific pairs (GAPDH, IGFBP2) and adds symbol aliases.
+3. **Platform curated table** (`*_curated.tsv`): always applied; restores POU5F1, NANOG and GAPDH, pins IGFBP2 and adds symbol aliases.
 4. **Project overlay** (optional): applied only when `species.ortholog_curated_overlay` (or env / CLI) is set.
 
 Steps 1–3 are the **default tables**: they ship with the platform and are the same for every run. Steps 3 and 4 run after the policy, so their rows survive `one2one`; when two sources claim the same target, the curated or overlay source is kept. An overlay never edits the platform files.
 
-| Gene (human → mouse) | Ensembl | After `one2one` | After platform curated | After `pou5f1_bridge` overlay |
-|------|---------|-----------------|------------------------|-------------------------------|
-| POU5F1 | one2many (POU5F1, POU5F1B → Pou5f1) | dropped | dropped | mapped |
-| GAPDH | one2many (GAPDH → Gapdh + 2 other genes) | dropped | mapped | mapped |
-| NANOG | one2many (NANOG, NANOGP8 → Nanog) | dropped | dropped | dropped |
+| Gene (human → mouse) | Ensembl | After `one2one` | After platform curated |
+|------|---------|-----------------|------------------------|
+| POU5F1 | one2many (POU5F1, POU5F1B → Pou5f1) | dropped | mapped |
+| NANOG | one2many (NANOG, NANOGP8 → Nanog) | dropped | mapped |
+| GAPDH | one2many (GAPDH → Gapdh + 2 predicted genes) | dropped | mapped |
+| POU5F1B, NANOGP8 | one2many (paralogues) | dropped | dropped |
 
-These tables are used only when the input species differs from the model species. Same-species runs do not convert genes and keep NANOG; it is not mapped in cross-species runs.
+These tables are used only when the input species differs from the model species; same-species runs do not convert genes.
 
-With the pinned Ensembl 116 tables, each direction has 25,788 rows → 17,146 one2one pairs → 17,147 after the platform curated table → 17,148 with `pou5f1_bridge`.
+With the pinned Ensembl 116 tables, each direction has 25,788 rows → 17,146 one2one pairs → 17,149 after the platform curated table. The ISP Platform paper uses these default tables without an overlay.
 
 ## Project curated overlays (analysis-scoped)
 
@@ -112,10 +115,8 @@ Platform `*_curated.tsv` files stay global. Analysis projects may add an **expli
 
 If the path is a **directory**, the loader picks `curated_bridge_{pair}.tsv` (e.g. `curated_bridge_human_to_mouse.tsv`). Overlay rows are merged **after** the platform curated TSV. Prefer Ensembl ID→ID rows for reproducibility.
 
-**Example overlay:** `examples/ortholog_overlays/pou5f1_bridge/` is the POU5F1 ↔ Pou5f1 bridge (`ENSG00000204531` ↔ `ENSMUSG00000024406`, both directions; paralog POU5F1B `ENSG00000212993` excluded) used for the cross-species runs of the ISP Platform paper. Ensembl labels the pair `ortholog_one2many`, so `one2one` drops POU5F1 without it. To reproduce that conversion, set `species.ortholog_curated_overlay: /app/examples/ortholog_overlays/pou5f1_bridge` (Docker) or the repository path.
-
 ## Ortholog loss gate
 
-Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (e.g. POU5F1 one2many under one2one). Absent-from-input criticals are **Warn** only. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
+Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (a one2many gene that the platform curated table does not restore). Absent-from-input criticals are **Warn** only. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
 
 Operator docs: [docs/tokenization.md](../../../../docs/tokenization.md#ortholog-loss-gate).

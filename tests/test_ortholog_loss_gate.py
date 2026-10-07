@@ -90,6 +90,26 @@ KLF4 = "ENSG00000136826"
 MYC = "ENSG00000136997"
 POU5F1_MOUSE = "ENSMUSG00000024406"
 ORTHOLOGS = ROOT / "core" / "geneformer" / "dicts" / "orthologs"
+# The platform curated tables restore POU5F1 and NANOG; the gate tests need a lost critical gene.
+CURATED_PLURIPOTENCY_SOURCES = {
+    POU5F1, "POU5F1", "ENSG00000111704", "NANOG",
+    POU5F1_MOUSE, "Pou5f1", "ENSMUSG00000012396", "Nanog",
+}
+
+
+def orthologs_without_curated_pluripotency(dest: Path) -> Path:
+    """Platform ortholog dir with the POU5F1 / NANOG rows removed from ``*_curated.tsv``."""
+    for src in ORTHOLOGS.iterdir():
+        if not src.is_file():
+            continue
+        out = dest / src.name
+        if src.name.endswith("_curated.tsv"):
+            lines = src.read_text(encoding="utf-8").splitlines(keepends=True)
+            kept = [ln for ln in lines if ln.split("\t", 1)[0] not in CURATED_PLURIPOTENCY_SOURCES]
+            out.write_text("".join(kept), encoding="utf-8")
+        else:
+            out.symlink_to(src)
+    return dest
 PROJECT_OVERLAY = ROOT / "analysis" / "ortholog_policy" / "v1"
 
 AUDIT = {
@@ -158,8 +178,14 @@ class TestOrthologLossGate(unittest.TestCase):
     def setUp(self):
         gc._TABLE_CACHE.clear()
         self._prev_env = os.environ.pop("GENEFORMER_ORTHOLOG_CURATED_OVERLAY", None)
+        self._orthologs_tmp = tempfile.TemporaryDirectory()
+        orthologs = orthologs_without_curated_pluripotency(Path(self._orthologs_tmp.name))
+        self._prev_dirs = (gc.ORTHOLOGS_DIR, gate.ORTHOLOGS_DIR)
+        gc.ORTHOLOGS_DIR = gate.ORTHOLOGS_DIR = orthologs
 
     def tearDown(self):
+        gc.ORTHOLOGS_DIR, gate.ORTHOLOGS_DIR = self._prev_dirs
+        self._orthologs_tmp.cleanup()
         gc._TABLE_CACHE.clear()
         if self._prev_env is None:
             os.environ.pop("GENEFORMER_ORTHOLOG_CURATED_OVERLAY", None)
