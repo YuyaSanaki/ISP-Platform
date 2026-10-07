@@ -112,12 +112,12 @@ There is **no free-form gene-ID field** in the UI. Project bridges use a curated
 2. Keep **one2one**. Expect lower gene retention than mouse↔human; use the conversion report before interpreting ISP.
 3. Fly input is **Beta**: smoke / pipeline paths exist, but results are **not** biologically validated — do not treat as production-ready.
 
-**D — OSKM / POU5F1 Block → approve curated bridge**
+**D — Critical gene Block → approve curated bridge**
 
 Requires an analysis contract that enables the gate (e.g. `analysis/analysis_manifest.yaml` → `ortholog_audit`). Typical path:
 
 1. Cross-species run as in **B** (or human→mouse / mouse→human as your study needs), with audit wired so `ortholog_loss_gate` runs.
-2. If a critical gene is **present in the matrix** but dropped by `one2one` (classic: human **POU5F1**), tokenize **exits non-zero** and writes `ortholog_approval_request.yaml` (`status: pending`).
+2. If a critical gene is **present in the matrix** but dropped by `one2one` (a one-to-many gene that the platform curated table does not restore; POU5F1 and NANOG are restored by default), tokenize **exits non-zero** and writes `ortholog_approval_request.yaml` (`status: pending`).
 3. Scroll to **Outputs** → card **Ortholog mapping — approval required** (see next section).
 4. Fill **Approved by** / **Reason**, choose **Approve curated bridge**, **Record decision**.
 5. UI writes `approval_record.yaml` and starts a **new** Pipeline with approval + overlay (default overlay dir `analysis/ortholog_policy/v1` when present).

@@ -60,8 +60,30 @@ gc = _load_gene_converter()
 POU5F1 = "ENSG00000204531"
 POU5F1B = "ENSG00000212993"
 POU5F1_MOUSE = "ENSMUSG00000024406"
+NANOG = "ENSG00000111704"
+NANOGP8 = "ENSG00000255192"
+NANOG_MOUSE = "ENSMUSG00000012396"
 ORTHOLOGS = ROOT / "core" / "geneformer" / "dicts" / "orthologs"
-EXAMPLE_POU5F1_BRIDGE = ROOT / "examples" / "ortholog_overlays" / "pou5f1_bridge"
+# The platform curated tables restore POU5F1 and NANOG; the overlay tests need a gene they drop.
+CURATED_PLURIPOTENCY_SOURCES = {
+    POU5F1, "POU5F1", NANOG, "NANOG",
+    POU5F1_MOUSE, "Pou5f1", NANOG_MOUSE, "Nanog",
+}
+
+
+def orthologs_without_curated_pluripotency(dest: Path) -> Path:
+    """Platform ortholog dir with the POU5F1 / NANOG rows removed from ``*_curated.tsv``."""
+    for src in ORTHOLOGS.iterdir():
+        if not src.is_file():
+            continue
+        out = dest / src.name
+        if src.name.endswith("_curated.tsv"):
+            lines = src.read_text(encoding="utf-8").splitlines(keepends=True)
+            kept = [ln for ln in lines if ln.split("\t", 1)[0] not in CURATED_PLURIPOTENCY_SOURCES]
+            out.write_text("".join(kept), encoding="utf-8")
+        else:
+            out.symlink_to(src)
+    return dest
 
 
 @unittest.skipUnless(
@@ -72,8 +94,13 @@ class TestCuratedOverlay(unittest.TestCase):
     def setUp(self):
         gc._TABLE_CACHE.clear()
         self._prev_env = os.environ.pop("GENEFORMER_ORTHOLOG_CURATED_OVERLAY", None)
+        self._orthologs_tmp = tempfile.TemporaryDirectory()
+        self._prev_dir = gc.ORTHOLOGS_DIR
+        gc.ORTHOLOGS_DIR = orthologs_without_curated_pluripotency(Path(self._orthologs_tmp.name))
 
     def tearDown(self):
+        gc.ORTHOLOGS_DIR = self._prev_dir
+        self._orthologs_tmp.cleanup()
         gc._TABLE_CACHE.clear()
         if self._prev_env is None:
             os.environ.pop("GENEFORMER_ORTHOLOG_CURATED_OVERLAY", None)
@@ -130,25 +157,6 @@ class TestCuratedOverlay(unittest.TestCase):
             self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
             self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
 
-    def test_example_pou5f1_bridge_maps_both_directions_only(self):
-        h2m_base = gc.load_ortholog_table(gc.ConversionPair.HUMAN_TO_MOUSE, policy="one2one")
-        m2h_base = gc.load_ortholog_table(gc.ConversionPair.MOUSE_TO_HUMAN, policy="one2one")
-        h2m = gc.load_ortholog_table(
-            gc.ConversionPair.HUMAN_TO_MOUSE,
-            policy="one2one",
-            curated_overlay=EXAMPLE_POU5F1_BRIDGE,
-        )
-        m2h = gc.load_ortholog_table(
-            gc.ConversionPair.MOUSE_TO_HUMAN,
-            policy="one2one",
-            curated_overlay=EXAMPLE_POU5F1_BRIDGE,
-        )
-        self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
-        self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
-        self.assertNotIn(POU5F1B, h2m)
-        self.assertEqual(set(h2m) - set(h2m_base), {POU5F1})
-        self.assertEqual(set(m2h) - set(m2h_base), {POU5F1_MOUSE})
-
     def test_env_overlay(self):
         with tempfile.TemporaryDirectory() as tmp:
             overlay = Path(tmp) / "curated_bridge_human_to_mouse.tsv"
@@ -174,6 +182,56 @@ class TestCuratedOverlay(unittest.TestCase):
             }
         )
         self.assertEqual(parsed["ortholog_curated_overlay"], "/tmp/policy_v1")
+
+
+@unittest.skipUnless(
+    (ORTHOLOGS / "human_to_mouse.tsv").is_file(),
+    "production ortholog TSV missing",
+)
+class TestDefaultCuratedPluripotency(unittest.TestCase):
+    """POU5F1 and NANOG are one2many in Ensembl; the platform curated tables pair them 1:1."""
+
+    def setUp(self):
+        gc._TABLE_CACHE.clear()
+        self._prev_env = os.environ.pop("GENEFORMER_ORTHOLOG_CURATED_OVERLAY", None)
+
+    def tearDown(self):
+        gc._TABLE_CACHE.clear()
+        if self._prev_env is not None:
+            os.environ["GENEFORMER_ORTHOLOG_CURATED_OVERLAY"] = self._prev_env
+
+    def test_one2one_maps_pou5f1_and_nanog_both_directions(self):
+        h2m = gc.load_ortholog_table(gc.ConversionPair.HUMAN_TO_MOUSE, policy="one2one")
+        m2h = gc.load_ortholog_table(gc.ConversionPair.MOUSE_TO_HUMAN, policy="one2one")
+        self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
+        self.assertEqual(h2m[NANOG], NANOG_MOUSE)
+        self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
+        self.assertEqual(m2h[NANOG_MOUSE], NANOG)
+
+    def test_paralogues_stay_unmapped(self):
+        h2m = gc.load_ortholog_table(gc.ConversionPair.HUMAN_TO_MOUSE, policy="one2one")
+        self.assertNotIn(POU5F1B, h2m)
+        self.assertNotIn(NANOGP8, h2m)
+
+    def test_curated_rows_add_only_these_genes(self):
+        h2m = gc.load_ortholog_table(gc.ConversionPair.HUMAN_TO_MOUSE, policy="one2one")
+        m2h = gc.load_ortholog_table(gc.ConversionPair.MOUSE_TO_HUMAN, policy="one2one")
+        with tempfile.TemporaryDirectory() as tmp:
+            gc._TABLE_CACHE.clear()
+            stripped = orthologs_without_curated_pluripotency(Path(tmp))
+            h2m_base = gc.load_ortholog_table(
+                gc.ConversionPair.HUMAN_TO_MOUSE, policy="one2one", orthologs_dir=stripped
+            )
+            m2h_base = gc.load_ortholog_table(
+                gc.ConversionPair.MOUSE_TO_HUMAN, policy="one2one", orthologs_dir=stripped
+            )
+        self.assertEqual(
+            {k for k in set(h2m) - set(h2m_base) if k.startswith("ENS")}, {POU5F1, NANOG}
+        )
+        self.assertEqual(
+            {k for k in set(m2h) - set(m2h_base) if k.startswith("ENS")},
+            {POU5F1_MOUSE, NANOG_MOUSE},
+        )
 
 
 if __name__ == "__main__":
