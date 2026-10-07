@@ -15,6 +15,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Example ortholog overlay `examples/ortholog_overlays/pou5f1_bridge/`: the POU5F1 ↔ Pou5f1 bridge (POU5F1B excluded) used for the paper's cross-species runs, byte-identical to the analysis overlay. Pass it as `species.ortholog_curated_overlay` to reproduce that conversion; the default tables are unchanged, so `one2one` still drops POU5F1 without it.
+- Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / GAPDH / NANOG as examples, in the ortholog README and `docs/tokenization.md`.
 
 ## [1.3.1] - 2026-09-22
 
