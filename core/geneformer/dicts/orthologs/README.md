@@ -77,6 +77,27 @@ When `orthology_type` is present in the TSV, `one2one` prefers rows labeled `ort
 
 **Curated Ensembl overrides:** only add an Ensembl→Ensembl row when BioMart is wrong for that gene. Symbol aliases (e.g. `Tp53` / `Trp53` / `Brca2` / `Gapdh`) are fine; they must point at the correct target IDs and must not remap unrelated genes (e.g. Lypla1 / Maoa / Gnai3).
 
+## Default tables and overlays
+
+![Default ortholog tables and project overlay](../../../../docs/ortholog_tables_and_overlay.png)
+
+`load_ortholog_table` builds the mapping for a cross-species run in this order:
+
+1. **Ensembl table** (`human_to_mouse.tsv` / `mouse_to_human.tsv`): pinned, checked against `SHA256SUMS`; all homology types.
+2. **Ortholog policy** (`species.ortholog_policy`, default `one2one`): ambiguous one-to-many / many-to-one rows are dropped.
+3. **Platform curated table** (`*_curated.tsv`): always applied; restores or pins specific pairs (GAPDH, IGFBP2) and adds symbol aliases.
+4. **Project overlay** (optional): applied only when `species.ortholog_curated_overlay` (or env / CLI) is set.
+
+Steps 1–3 are the **default tables**: they ship with the platform and are the same for every run. Steps 3 and 4 run after the policy, so their rows survive `one2one`; when two sources claim the same target, the curated or overlay source is kept. An overlay never edits the platform files.
+
+| Gene (human → mouse) | Ensembl | After `one2one` | After platform curated | After `pou5f1_bridge` overlay |
+|------|---------|-----------------|------------------------|-------------------------------|
+| POU5F1 | one2many (POU5F1, POU5F1B → Pou5f1) | dropped | dropped | mapped |
+| GAPDH | one2many (GAPDH → Gapdh + 2 other genes) | dropped | mapped | mapped |
+| NANOG | one2many (NANOG, NANOGP8 → Nanog) | dropped | dropped | dropped |
+
+With the pinned Ensembl 116 tables, each direction has 25,788 rows → 17,146 one2one pairs → 17,147 after the platform curated table → 17,148 with `pou5f1_bridge`.
+
 ## Project curated overlays (analysis-scoped)
 
 Platform `*_curated.tsv` files stay global. Analysis projects may add an **explicit overlay** without editing them:

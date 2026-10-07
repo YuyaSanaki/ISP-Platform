@@ -120,6 +120,10 @@ Unmapped / ambiguous genes are dropped under the default `one2one` policy. `best
 
 Optional **project curated overlays** (do not edit platform `*_curated.tsv`): set `species.ortholog_curated_overlay` to a directory containing `curated_bridge_{pair}.tsv`, or use env `GENEFORMER_ORTHOLOG_CURATED_OVERLAY` / CLI `--ortholog-curated-overlay`. Overlay rows merge after the platform curated table.
 
+![Default ortholog tables and project overlay](ortholog_tables_and_overlay.png)
+
+The default tables (pinned Ensembl table → `ortholog_policy` → platform `*_curated.tsv`) are applied to every cross-species run. A project overlay is added on top only when it is selected; it can restore a pair that the policy drops but never edits the platform tables. Example: [`examples/ortholog_overlays/pou5f1_bridge/`](../examples/ortholog_overlays/pou5f1_bridge/) restores POU5F1 ↔ Pou5f1, which `one2one` drops because Ensembl labels it one-to-many. Details: [ortholog README](../core/geneformer/dicts/orthologs/README.md#default-tables-and-overlays).
+
 Ortholog tables: `core/geneformer/dicts/orthologs/` (download via `scripts/download_mouse_human_orthologs.sh` and `scripts/download_drosophila_orthologs.sh`). Fly remapping typically keeps ~50% of protein-coding genes; mouse↔human is ~92%.
 
 ### Ortholog loss gate
