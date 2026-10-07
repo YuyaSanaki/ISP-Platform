@@ -76,6 +76,8 @@ Steps 1–3 are the **default tables**: they are applied to every cross-species 
 | GAPDH | one2many (GAPDH → Gapdh + 2 other genes) | dropped | mapped | mapped |
 | NANOG | one2many (NANOG, NANOGP8 → Nanog) | dropped | dropped | dropped |
 
+These tables are used only when the input species differs from the model species. Same-species runs do not convert genes, so NANOG is lost only from converted data (cross-species only).
+
 The counts in the diagram are for the Ensembl 116 tables pinned in v1.0.1 (each direction: 25,788 rows → 17,146 one2one pairs → 17,147 after the platform curated table → 17,148 with `pou5f1_bridge`); other releases give different counts.
 
 ## Project curated overlays (analysis-scoped)
