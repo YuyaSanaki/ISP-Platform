@@ -89,6 +89,8 @@ Platform `*_curated.tsv` files stay global. Analysis projects may add an **expli
 
 If the path is a **directory**, the loader picks `curated_bridge_{pair}.tsv` (e.g. `curated_bridge_human_to_mouse.tsv`). Overlay rows are merged **after** the platform curated TSV. Prefer Ensembl ID→ID rows for reproducibility.
 
+**Example overlay:** `examples/ortholog_overlays/pou5f1_bridge/` is the POU5F1 ↔ Pou5f1 bridge (`ENSG00000204531` ↔ `ENSMUSG00000024406`, both directions; paralog POU5F1B `ENSG00000212993` excluded) used for the cross-species runs of the ISP Platform paper. Ensembl labels the pair `ortholog_one2many`, so `one2one` drops POU5F1 without it. To reproduce that conversion, set `species.ortholog_curated_overlay: /app/examples/ortholog_overlays/pou5f1_bridge` (Docker) or the repository path.
+
 ## Ortholog loss gate
 
 Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (e.g. POU5F1 one2many under one2one). Absent-from-input criticals are **Warn** only. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
