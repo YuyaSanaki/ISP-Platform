@@ -4,7 +4,7 @@
 
 State-feedback ISP applies several perturbation steps in order. After each step it **turns the fine-tuned model's response back into a gene order** and uses that order as the input to the next step. A Δrank decoder is trained per run (or reused) for this translation.
 
-This document explains **what the method does and what it does not do**. It is a readout in the representation space of a fine-tuned model. **It does not simulate how a cell changes over time.**
+This document explains **what the method does and what it does not do**. It is a readout in the representation space of a fine-tuned model. **It is a sequential simulation, not a time course:** each step acts on the cell state the model inferred after the previous steps, so the order of the steps is taken into account, but a step is not a unit of time and the method does not simulate how a cell changes over time.
 
 Design and measured results are in [state_feedback_decode_methods.md](state_feedback_decode_methods.md).
 
@@ -299,10 +299,11 @@ The defaults (all six conditions, feedback after every step, max_ncells 300, tra
 
 - A decoder trained on perturbation-induced hidden-state changes predicts the direction of observed rank change beyond what the original rank explains (held-out genes; BBRC and Asano PIPseq).
 - The readout when the encoding reordered by that prediction is used for the next perturbation, and its gain over matched placebo chains.
+- That the simulation is sequential: each perturbation acts on the cell state the model inferred after the previous ones, so the result can depend on the order of the steps beyond the final encoding.
 
 **Cannot be claimed**
 
-- That the method simulates a cell's time course or stepwise state change.
+- That the method simulates a cell's time course. A step is a position in the order of perturbations, not a unit of time.
 - That differences between step orders reflect the biological order of factor delivery.
 - That hidden-state norm or MLM logits represent expression, or that the decoder recovers expression.
 - That the `oracle` value is a result or a target of the method.
