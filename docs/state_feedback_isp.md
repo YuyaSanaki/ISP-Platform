@@ -83,7 +83,7 @@ This is **a difference between the start and observed-state groups**, not a meas
 
 **Training samples**
 
-1. Pass the encoding with **all configured steps applied at once**, and the original encoding, through the fine-tuned model (up to `train_max_ncells` cells, default 200).
+1. Pass the encoding with **all configured steps applied at once**, and the original encoding, through the fine-tuned model (up to `train_max_ncells` cells, default 300).
 2. For each gene present in both, take Δh (genes are matched by token, not position) and pair it with its teacher value `Δr_obs` (up to 256 genes per cell). The gene's original normalized position `base_rank` is kept for the base-rank control but is not a decoder input.
 3. Split the **genes** (not the cells) 80:20. The 20% are never used for training and are kept for evaluation. Because the teacher is one value per gene, splitting by cell would leak the answers.
 
@@ -257,8 +257,8 @@ These can be changed by editing the **Config YAML** in the Web UI. The defaults 
 | `observed_max_ncells`, `min_detection_count` | 3000, 5 | Maximum cells used to build the teacher, and minimum number of cells a gene must be detected in to be used |
 | `decoder.*` | See 2.2 | Training cells, genes per cell, epochs, loss weights, `max_shift_grid`, held-out gene fraction |
 | `eval.*` | | Direction-fidelity settings (top-K, bootstrap and permutation counts) |
-| `stability.*` | | Random-chain control and stability evaluation (`core/run_state_feedback_stability.py`): decoder seeds, `n_random_chains`, `random_seeds` (one independent draw each), `min_stratum` |
-| `placebo_contrast.*` | off | Train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell |
+| `stability.*` | seeds 0/1/2, 30 chains, `random_seeds: [0]` | Random-chain control and stability evaluation (`core/run_state_feedback_stability.py`): decoder seeds, `n_random_chains`, `random_seeds` (one independent draw each), `min_stratum` |
+| `placebo_contrast.*` | on, 10 placebos | Train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell |
 
 `feedback_every_step`, `feedback_after_step`, `feedback_after_last_step` and `multi_step` were removed. A config that still sets them to anything other than feedback after every step stops with an error.
 

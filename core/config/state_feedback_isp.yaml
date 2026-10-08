@@ -133,14 +133,15 @@ state_feedback:
   # uniformly from the model vocabulary among genes with the same start-cell position:
   # absent from every start cell if the configured gene is absent, otherwise detection
   # 0.5-2x and median position within 0.1 (widened until `min_stratum` genes qualify).
-  # Each entry of `random_seeds` is an independent draw of `n_random_chains` chains;
-  # two draws must agree before the random mean is trusted. The draw, gene symbols
-  # and balance are written to random_chains.json.
+  # Each entry of `random_seeds` is an independent draw of `n_random_chains` chains
+  # (the comparison placebos for Delta-spec); the default is the paper's single draw of
+  # 30. Add a second seed to check that two draws agree. The draw, gene symbols and
+  # balance are written to random_chains.json.
   stability:
     seeds: [0, 1, 2]
     idle_events: 5
-    n_random_chains: 20
-    random_seeds: [0, 1]
+    n_random_chains: 30
+    random_seeds: [0]
     min_stratum: 50
     topk: [100, 500, 1000]
 
@@ -151,13 +152,15 @@ state_feedback:
   # sharing a gene with a chain is left out of that chain's contrast. Delete steps
   # restore the factor next to its start-encoding neighbour and delete the placebo
   # gene (docs/state_feedback_deletion_counterfactual.md); they need ctrl_reference: start.
+  # On by default (the paper's method); without it most of the feedback gain is
+  # shared with placebo genes.
   placebo_contrast:
-    enabled: false
+    enabled: true
     n_estimation: 10
     estimation_draw_seed: 1
 
   decoder:
-    train_max_ncells: 200
+    train_max_ncells: 300   # the paper's decoders were trained on all 300 start cells
     max_genes_per_cell: 256
     val_fraction: 0.2
     epochs: 20
