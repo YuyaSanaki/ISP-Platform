@@ -1328,7 +1328,8 @@ def _render_state_feedback_isp_controls() -> None:
         "Outputs go under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`."
     )
     st.caption(
-        "Model-space readout only — not a simulated time course. The decoder's "
+        "Model-space readout only — sequential (each step acts on the state inferred "
+        "after the previous steps), not a simulated time course. The decoder's "
         "direction fidelity is checked on held-out genes against a base-rank-only "
         "predictor (partial ρ given base rank must exclude 0)."
     )
