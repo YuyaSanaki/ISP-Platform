@@ -113,6 +113,8 @@ Platform `*_curated.tsv` files stay global. Analysis projects may add an **expli
 | Env | `GENEFORMER_ORTHOLOG_CURATED_OVERLAY=...` |
 | CLI | `--ortholog-curated-overlay ...` (tokenize / pipeline) |
 
+Template: [`examples/ortholog_overlays/`](../../../../examples/ortholog_overlays/README.md) (`curated_bridge_{pair}.tsv.example`; copy, drop `.example`, replace the rows).
+
 If the path is a **directory**, the loader picks `curated_bridge_{pair}.tsv` (e.g. `curated_bridge_human_to_mouse.tsv`). Overlay rows are merged **after** the platform curated TSV. Prefer Ensembl ID→ID rows for reproducibility.
 
 ## Ortholog loss gate

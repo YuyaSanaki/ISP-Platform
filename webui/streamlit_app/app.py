@@ -2917,7 +2917,8 @@ def _render_ortholog_overlay_controls() -> None:
             "Extra ortholog pairs for this project, applied after the platform curated table "
             "(which already restores POU5F1, NANOG and GAPDH). A folder must contain "
             "curated_bridge_<pair>.tsv, e.g. curated_bridge_human_to_mouse.tsv, with columns "
-            "source_id and target_id. The repository is mounted at /app. "
+            "source_id and target_id; template in examples/ortholog_overlays/. "
+            "The repository is mounted at /app. "
             "Leave empty to use the platform tables only. "
             "Writes species.ortholog_curated_overlay."
         ),
