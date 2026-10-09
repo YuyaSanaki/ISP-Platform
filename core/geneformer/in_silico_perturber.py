@@ -680,6 +680,33 @@ def get_cell_state_avg_embs(model,
             torch.cuda.empty_cache()
     return state_embs_dict
 
+def resolve_legacy_padding_mean(value=None):
+    """``None`` falls back to the ``ISP_LEGACY_PADDING_MEAN`` environment variable (default off)."""
+    if value is None:
+        return os.environ.get("ISP_LEGACY_PADDING_MEAN", "").strip().lower() in ("1", "true", "yes")
+    return bool(value)
+
+
+def group_goal_state_mean_lengths(perturb_type, n_perturbed, original_lengths, perturbed_lengths,
+                                  legacy_padding_mean=False):
+    """Number of leading positions to mean-pool on each side of group goal-state scoring.
+
+    The original embedding has had ``n_perturbed`` positions removed, and for overexpression the
+    perturbed one has had its ``n_perturbed`` leading OE positions stripped, so their real genes
+    are the first L - k positions. Pooling over L includes up to k padding hidden states for
+    cells shorter than the longest cell of the forward minibatch. A deletion encoding is not
+    stripped, and its length is already its own. ``legacy_padding_mean`` keeps the earlier
+    pooling over L to reproduce scores of earlier releases.
+    """
+    if legacy_padding_mean or perturb_type not in ("overexpress", "delete"):
+        return original_lengths, perturbed_lengths
+    k = int(n_perturbed)
+    original_lengths = original_lengths - k
+    if perturb_type == "overexpress":
+        perturbed_lengths = perturbed_lengths - k
+    return original_lengths, perturbed_lengths
+
+
 # quantify cosine similarity of perturbed vs original or alternate states
 def quant_cos_sims(model, 
                    perturb_type,
@@ -696,7 +723,9 @@ def quant_cos_sims(model,
                    state_embs_dict,
                    pad_token_id,
                    model_input_size,
-                   nproc):
+                   nproc,
+                   legacy_padding_mean=None):
+    legacy_padding_mean = resolve_legacy_padding_mean(legacy_padding_mean)
     cos = torch.nn.CosineSimilarity(dim=2)
     total_batch_length = len(perturbation_batch)
 
@@ -890,6 +919,10 @@ def quant_cos_sims(model,
                 minibatch_lengths = torch.as_tensor(
                     perturbation_minibatch["length"], dtype=torch.long
                 ).to(ISP_device, non_blocking=True)
+                original_minibatch_lengths, minibatch_lengths = group_goal_state_mean_lengths(
+                    perturb_type, len(tokens_to_perturb), original_minibatch_lengths,
+                    minibatch_lengths, legacy_padding_mean,
+                )
             for state in possible_states:
                 if perturb_group == False:
                     cos_sims_vs_alt_dict[state] += cos_sim_shift(original_emb, 
@@ -1094,6 +1127,7 @@ class InSilicoPerturber:
         nproc=4,
         token_dictionary_file=TOKEN_DICTIONARY_FILE,
         model_input_size=2048,
+        legacy_padding_mean=None,
     ):
         """
         Initialize in silico perturber.
@@ -1174,6 +1208,11 @@ class InSilicoPerturber:
             Number of CPU processes to use.
         token_dictionary_file : Path
             Path to pickle file containing token dictionary (Ensembl ID:token).
+        legacy_padding_mean : None, bool
+            Group delete / overexpress goal-state scoring mean-pools the first L - k positions of
+            both embeddings (padding-free). True restores the earlier pooling over L, which
+            includes up to k padding positions for cells shorter than the longest cell of their
+            forward minibatch. None reads the ISP_LEGACY_PADDING_MEAN environment variable.
         """
 
         self.perturb_type = perturb_type
@@ -1206,6 +1245,7 @@ class InSilicoPerturber:
         self.forward_batch_size = forward_batch_size
         self.nproc = nproc
         self.model_input_size = int(model_input_size)
+        self.legacy_padding_mean = resolve_legacy_padding_mean(legacy_padding_mean)
 
         self.validate_options()
 
@@ -1613,7 +1653,8 @@ class InSilicoPerturber:
                                            state_embs_dict,
                                            self.pad_token_id,
                                            model_input_size,
-                                           self.nproc)
+                                           self.nproc,
+                                           legacy_padding_mean=self.legacy_padding_mean)
 
             perturbed_genes = tuple(self.tokens_to_perturb)
             original_lengths = filtered_input_data["length"]

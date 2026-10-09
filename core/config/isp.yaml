@@ -50,6 +50,9 @@ isp:
   perturb_rank_shift: null
   perturb_rank_direct_shift: null
   filter_data: null # if you want to ristrict cell tyep to perturb, specify like { "cell_type": ["cardiomyocyte"] }
+  # Group goal-state scoring mean-pools only real genes (L - k positions). true = earlier pooling
+  # over L, which includes padding; use only to reproduce scores of earlier releases.
+  legacy_padding_mean: false
 
 stats:
   mode: goal_state_shift # goal_state_shift | vs_null | mixture_model | aggregate_data

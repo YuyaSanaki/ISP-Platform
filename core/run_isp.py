@@ -192,6 +192,7 @@ def _write_run_provenance(
     cli_forward_batch_size: int | str | None,
     cli_nproc: int | None,
     input_fingerprints: dict[str, Any] | None = None,
+    legacy_padding_mean: bool = False,
 ) -> None:
     """Copy the ISP YAML and record metadata next to dated outputs (reproducibility)."""
     run_root.mkdir(parents=True, exist_ok=True)
@@ -204,6 +205,7 @@ def _write_run_provenance(
         "effective_runtime": {
             "forward_batch_size": forward_batch_size,
             "nproc": nproc,
+            "legacy_padding_mean": bool(legacy_padding_mean),
         },
         "cli_overrides": {
             k: v
@@ -447,6 +449,7 @@ def main() -> None:
     perturb_rank_shift = isp_cfg.get("perturb_rank_shift")
     perturb_rank_direct_shift = isp_cfg.get("perturb_rank_direct_shift")
     filter_data = isp_cfg.get("filter_data")
+    legacy_padding_mean = isp_cfg.get("legacy_padding_mean")
 
     st = cfg.get("stats") or {}
     stats_mode = st.get("mode", "goal_state_shift")
@@ -549,7 +552,11 @@ def main() -> None:
         nproc=nproc,
         token_dictionary_file=token_dict_path,
         model_input_size=int(backend.max_input_size),
+        legacy_padding_mean=legacy_padding_mean,
     )
+    if isp.legacy_padding_mean:
+        print("  NOTE: legacy_padding_mean on: group goal-state means include padding "
+              "(reproduces earlier releases)", flush=True)
 
     if output_root:
         if date_used:
@@ -568,6 +575,7 @@ def main() -> None:
             args.forward_batch_size,
             args.nproc,
             input_fingerprints=input_fps,
+            legacy_padding_mean=isp.legacy_padding_mean,
         )
         print(
             f"  → Provenance: {run_root / 'isp_config_used.yaml'} "
