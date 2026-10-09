@@ -4,7 +4,9 @@ All notable changes to **ISP³ Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.1] - 2026-10-09
+
+Peer-reviewed version (review response, *Genes to Cells*). Tag `v1.0.1` was moved on 2026-10-09 from `3b8616f` (first release, 2026-09-28, now tag `v1.0.1-initial`) to include the peer-review changes. Clones made before the move keep the old tag until `git fetch --tags --force`.
 
 ### Changed
 
@@ -31,7 +33,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **Group delete / overexpress goal-state scores no longer include padding.** Scoring removes k positions from the original embedding (and, for overexpression, the k leading OE positions from the perturbed one) but mean-pooled over the unremoved length L, so for cells shorter than the longest cell of their forward minibatch up to k padding hidden states entered the mean. Both sides are now pooled over their first L − k positions (a deletion encoding keeps its own length), which gives the same score at any `forward_batch_size`, i.e. the score of `forward_batch_size: 1`. On BBRC (Geneformer V2-104M, somatic → pluripotent, batch 8) the median goal-state shift of group OE was 1.0–2.1% too low (OSKM 0.01004 → 0.01025) and that of group delete too high (ACTB+B2M+GAPDH 0.00626 → 0.00563); the order of factor sets is unchanged. This applies to ISP (`run_isp.py`) and to State-feedback ISP scoring. Single-gene ISP is unchanged. Set `isp.legacy_padding_mean: true` (or `ISP_LEGACY_PADDING_MEAN=1`, which State-feedback ISP reads) to reproduce scores of earlier releases; the setting is recorded in `isp_run_metadata.yaml`. Test: `tests/test_group_goal_state_padding.py`.
+- **Group delete / overexpress goal-state scores no longer include padding.** Scoring removes k positions from the original embedding (and, for overexpression, the k leading OE positions from the perturbed one) but mean-pooled over the unremoved length L, so for cells shorter than the longest cell of their forward minibatch up to k padding hidden states entered the mean. Both sides are now pooled over their first L − k positions (a deletion encoding keeps its own length), which gives the same score at any `forward_batch_size`, i.e. the score of `forward_batch_size: 1`. On BBRC (Geneformer V2-104M, somatic → pluripotent, batch 8) the median goal-state shift of group OE was 1.0–2.1% too low (OSKM 0.01004 → 0.01025) and that of group delete too high (ACTB+B2M+GAPDH 0.00626 → 0.00563); the order of factor sets is unchanged. This applies to ISP (`run_isp.py`) and to the group-aligned scoring of the State-feedback oracle runner's no-feedback path (`run_state_feedback_oracle.py`). The State-feedback ISP runner is unchanged: its cell-mean scoring already pooled each cell over its own length (BBRC re-runs were bit-identical). Single-gene ISP is unchanged. Set `isp.legacy_padding_mean: true` (or `ISP_LEGACY_PADDING_MEAN=1`, which the oracle runner reads) to reproduce scores of earlier releases; the setting is recorded in `isp_run_metadata.yaml`. Test: `tests/test_group_goal_state_padding.py`.
 - Group-OE scoring that assumes the overexpressed genes sit at the sequence front (`state_feedback.runtime.compute_goal_state_shifts`, used by the oracle runner's no-feedback path) counted a gene overexpressed in two steps twice. Scoring strips one leading position per token, so it also dropped the genes right after the factor block from both embeddings. Repeats are now dropped before scoring. Steps that repeat no gene (all OSKM orders) are unchanged, and the State-feedback ISP runner's cell-mean scoring was never affected.
 - State-feedback ISP endpoint gate now reads the feedback row at the last step when there is one, instead of relying on how step names sort against `feedback`.
 
@@ -40,7 +42,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Ordered rank-edit ISP as a run type.** Multi-step ISP is State-feedback ISP; the same steps without feedback remain as its `no_feedback` baseline. Removed: `core/run_ordered_rank_edit_isp.py`, `core/ordered_rank_edit.py`, the aliases `core/run_sequential_isp.py` and `core/sequential_oe.py`, `core/run_oskm4_then_7factor_isp.py`, `core/config/ordered_rank_edit_isp.yaml`, the Compose services `ordered_rank_edit_isp` and `sequential_isp`, the Web UI run type **Ordered rank-edit ISP**, `docs/ordered_rank_edit_isp.md`, and `tests/test_ordered_rank_edit.py` (operator tests kept in `tests/test_rank_edit.py`). The guide `docs/ordered_rank_edit_and_state_feedback_isp.md` is replaced by `docs/state_feedback_isp.md`, and the README diagram now compares conventional ISP with State-feedback ISP.
 - State-feedback ISP per-cell multi-step stops. The convergence stop treated small whole-encoding changes as convergence even when a few genes moved a lot (one gene moving bottom to top in a 2048-gene cell still gives Spearman 0.997) or when a new perturbation was still to come. The 2-cycle stop required an exact return to the order from two events ago, which practically never happens because a new perturbation enters between events. `feedback_guard.csv` is no longer written. A `state_feedback.multi_step` block, including `converge_*` and `halt_on_cycle`, is ignored with a warning, so older configs still load.
 
-## [1.0.1] - 2026-09-28
+## [1.0.1-initial] - 2026-09-28
+
+First release of v1.0.1 (tag `v1.0.1-initial`, `3b8616f`). Superseded by the peer-reviewed v1.0.1 above.
 
 ### Added
 
