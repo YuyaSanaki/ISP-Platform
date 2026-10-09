@@ -269,7 +269,7 @@ DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
 
 - 2 つの order の差には、order の違いとその order 用に学習した decoder の違いが混ざり、この設計では分離できない。State-feedback ISP での order 順位は純粋な order 効果ではない（論文では Discussion に限界として書く）
 - 例外: 全 step 一括適用後の encoding が同じ step リスト（M→K→S→O と同時 `[O,S,K,M]`、`[O,K]`→M→S と K→O→M→S）は学習データが同一なので decoder も同一になる。BBRC n=300（`46035be`）で bit 一致を確認（重み差の最大値 0、`max_shift` はすべて 0.5）。この組の差は feedback の経路だけに由来する
-- feedback 回数それ自体が結果を動かす（同じ編集で 4 回 vs 1 回: 終点 shift +0.059、BBRC n=300）。step リストは feedback 回数をそろえて比較する
+- feedback 回数それ自体が終点の生の値を動かす（同じ編集で 4 回 vs 1 回: 終点 shift +0.059、BBRC n=300、プラセボ対比なしの decoder）。既定の τ（潜在反応 + Δspec）ではプラセボ chain の gain も同じだけ上がるのでほぼ打ち消される（BBRC、`[O,K]`→M→S に 1 回追加: OSKM gain +0.011、プラセボ gain +0.012、τ +0.001）。step リストはできるだけ feedback 回数をそろえて比較する（同時 1 回と逐次 4 回の比較には回数をそろえた対照がない）
 
 The specificity stage (`state_feedback.specificity`, off by default) writes
 `<run>/perturbation_specificity/` (`perturbation_specificity.csv`, `vs_random.csv`,

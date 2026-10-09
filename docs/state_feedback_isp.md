@@ -123,7 +123,7 @@ Consequences for interpretation:
 
 - A difference between two step lists mixes the order of the perturbations with the decoder trained for that order. The design cannot separate the two, so a ranking of orders under State-feedback ISP is not a pure order effect.
 - Exception: step lists whose encodings with all steps applied are identical (for example M→K→S→O and simultaneous `[O, S, K, M]`) get identical training data, so their decoders are identical. On BBRC (n=300, `46035be`) the decoders of such pairs were bit-identical. For these pairs any difference comes from the feedback path alone.
-- The number of feedback events changes the result by itself: the same edits with 4 events instead of 1 raised the endpoint shift by 0.059 on BBRC (n=300). Compare step lists only at the same number of feedback events.
+- The number of feedback events raises the raw endpoint shift by itself: the same edits with 4 events instead of 1 raised it by 0.059 on BBRC (n=300, decoder without placebo contrast). The factor-specific effect τ (the default) largely cancels this, because an extra event raises the gain of the matched placebo chains by about the same amount (BBRC, one extra event on [O,K]→M→S: OSKM gain +0.011, placebo gain +0.012, τ +0.001). Compare step lists at the same number of feedback events where possible; a 1-event schedule (simultaneous) against a 4-event one has no event-matched control.
 
 ### 2.3 One feedback event, step by step
 
@@ -187,7 +187,7 @@ On the 20% of genes not used for training, it compares each method's predicted r
   1. `linear_deltarank` beats both `norm` and `delta_mlm`, and the 95% confidence interval of each difference (cell-level bootstrap) excludes 0.
   2. The correlation after removing what the original rank explains (partial ρ given base rank) has a 95% confidence interval above 0.
 - Condition 2 is needed because the teacher is a group-mean rank difference, so much of the correlation can be explained by position alone ("genes that start high tend to go down, genes that start low tend to go up"). The partial ρ is the information Δh adds beyond the original position.
-- Measured on BBRC (n=300, final Δh-only decoder, `46035be`, Pegasus 2026-09-29): pooled ρ **0.482**, partial ρ **0.324** [0.317, 0.330], PASS. Artifacts: `output/sf_pegasus_20260929_final/` (repo checkout) or Pegasus `runs_final_46035be/`.
+- Measured on BBRC (n=300, Δh-only decoder without placebo contrast, `46035be`, Pegasus 2026-09-29): pooled ρ **0.482**, partial ρ **0.324** [0.317, 0.330], PASS. With the placebo contrast (the default) the selected decoder fits the held-out genes better: held-out Spearman 0.65–0.67 against 0.50–0.52 without it (the selection metric of 2.2, BBRC n=300, decoder seeds 0/1/2, same cells). Artifacts: `output/sf_pegasus_20260929_final/` (repo checkout) or Pegasus `runs_final_46035be/`.
 
 **Secondary: endpoint gate (`phase12_gate.csv`)**
 
