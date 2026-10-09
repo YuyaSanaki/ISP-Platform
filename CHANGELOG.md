@@ -14,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / NANOG / GAPDH as examples, in the ortholog README and `docs/tokenization.md`.
 
+### Fixed
+
+- **Group delete / overexpress goal-state scores no longer include padding.** Scoring removes k positions from the original embedding (and, for overexpression, the k leading OE positions from the perturbed one) but mean-pooled over the unremoved length L, so for cells shorter than the longest cell of their forward minibatch up to k padding hidden states entered the mean. Both sides are now pooled over their first L − k positions (a deletion encoding keeps its own length), which gives the same score at any `forward_batch_size`, i.e. the score of `forward_batch_size: 1`. On BBRC (Geneformer V2-104M, somatic → pluripotent, batch 8) the median goal-state shift of group OE was 1.0–2.1% too low (OSKM 0.01004 → 0.01025) and that of group delete too high (ACTB+B2M+GAPDH 0.00626 → 0.00563); the order of factor sets is unchanged. This applies to ISP (`run_isp.py`) and to Sequential ISP scoring (`run_sequential_isp.py`). Single-gene ISP is unchanged. Set `isp.legacy_padding_mean: true` (or `ISP_LEGACY_PADDING_MEAN=1`, which Sequential ISP reads) to reproduce scores of earlier releases; the setting is recorded in `isp_run_metadata.yaml`. Test: `tests/test_group_goal_state_padding.py`.
+
 ## [1.3.1] - 2026-09-22
 
 ### Added
