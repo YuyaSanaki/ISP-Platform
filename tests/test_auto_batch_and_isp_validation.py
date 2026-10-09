@@ -574,6 +574,104 @@ class TestTailLogSeek(unittest.TestCase):
             _restore_modules(saved)
 
 
+class TestOrthologGateYamlControls(unittest.TestCase):
+    def _tokenizer_cfg(self, st):
+        cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"]) or {}
+        return ((cfg.get("stages") or {}).get("tokenize") or {}).get("tokenizer") or {}
+
+    def test_gate_genes_written_and_removed(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = "data:\n  input_dir: /app/data/x\n"
+            st.session_state["pipeline_model_organism"] = "human"
+            st.session_state["pipeline_model"] = "mouse_geneformer"
+            st.session_state["pipeline_ortholog_gate_enabled"] = True
+            st.session_state["pipeline_ortholog_critical_genes_text"] = "POU5F1, SOX2\nKLF4"
+            app._apply_ortholog_gate_to_yaml()
+            tok = self._tokenizer_cfg(st)
+            self.assertTrue(tok["ortholog_loss_gate"])
+            self.assertEqual(
+                tok["ortholog_audit_inline"],
+                {"critical_sets": {"web_ui": ["POU5F1", "SOX2", "KLF4"]}},
+            )
+
+            # Form state is restored from the YAML.
+            yaml_text = st.session_state["yaml_editor"]
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = yaml_text
+            app._sync_species_form_from_yaml()
+            self.assertTrue(st.session_state["pipeline_ortholog_gate_enabled"])
+            self.assertEqual(
+                st.session_state["pipeline_ortholog_critical_genes_text"],
+                "POU5F1\nSOX2\nKLF4",
+            )
+
+            # Same species → no conversion, so the UI audit is removed.
+            st.session_state["pipeline_model_organism"] = "mouse"
+            st.session_state["pipeline_model"] = "mouse_geneformer"
+            app._apply_species_to_yaml()
+            tok = self._tokenizer_cfg(st)
+            self.assertNotIn("ortholog_audit_inline", tok)
+            self.assertNotIn("ortholog_loss_gate", tok)
+        finally:
+            _restore_modules(saved)
+
+    def test_overlay_path_written_resolved_and_removed(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "curated_bridge_human_to_mouse.tsv").write_text(
+                    "source_id\ttarget_id\nFOO\tENSMUSG00000000001\n", encoding="utf-8"
+                )
+                st.session_state.clear()
+                st.session_state["yaml_editor"] = "data:\n  input_dir: /app/data/x\n"
+                st.session_state["pipeline_model_organism"] = "human"
+                st.session_state["pipeline_model"] = "mouse_geneformer"
+                st.session_state["pipeline_ortholog_overlay_text"] = f"  {tmp}  "
+                app._apply_ortholog_overlay_to_yaml()
+                cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+                self.assertEqual(cfg["species"]["ortholog_curated_overlay"], tmp)
+                self.assertEqual(st.session_state["pipeline_ortholog_curated_overlay"], tmp)
+                self.assertEqual(
+                    app._ortholog_overlay_tsv_for_session(tmp),
+                    Path(tmp) / "curated_bridge_human_to_mouse.tsv",
+                )
+                # No table for mouse → human in this folder.
+                st.session_state["pipeline_model_organism"] = "mouse"
+                st.session_state["pipeline_model"] = "human_geneformer"
+                self.assertIsNone(app._ortholog_overlay_tsv_for_session(tmp))
+
+                st.session_state["pipeline_ortholog_overlay_text"] = ""
+                app._apply_ortholog_overlay_to_yaml()
+                cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+                self.assertNotIn("ortholog_curated_overlay", cfg.get("species") or {})
+        finally:
+            _restore_modules(saved)
+
+    def test_gate_off_keeps_file_audit(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = (
+                "stages:\n  tokenize:\n    tokenizer:\n"
+                "      ortholog_audit: /app/analysis/analysis_manifest.yaml\n"
+                "      ortholog_loss_gate: true\n"
+                "      ortholog_audit_inline:\n"
+                "        critical_sets:\n          web_ui: [SOX2]\n"
+            )
+            st.session_state["pipeline_model_organism"] = "human"
+            st.session_state["pipeline_model"] = "mouse_geneformer"
+            st.session_state["pipeline_ortholog_gate_enabled"] = False
+            app._apply_ortholog_gate_to_yaml()
+            tok = self._tokenizer_cfg(st)
+            self.assertNotIn("ortholog_audit_inline", tok)
+            self.assertEqual(tok["ortholog_audit"], "/app/analysis/analysis_manifest.yaml")
+            self.assertTrue(tok["ortholog_loss_gate"])
+        finally:
+            _restore_modules(saved)
+
+
 class TestBatchSizeYamlControls(unittest.TestCase):
     def test_auto_and_manual_patch_forward_batch_size(self):
         app, st, saved = _load_streamlit_app_helpers()

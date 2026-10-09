@@ -79,6 +79,8 @@ On **Analysis → Pipeline (E2E)** (also FT calibrate), the **Species / model** 
 | **Pretrained Geneformer**                         | `species.model`                           | Checkpoint for FT/ISP (`mouse_geneformer` / `human_geneformer`)                                                                                                      |
 | **Mouse / Human variant**                         | `species.mouse_variant` / `human_variant` | YAML ids stay `base` / `12l_e20`, `v2_104m` / `v2_316m`; Web UI shows **Base** / **Large** (e.g. Base (6L / ~10M), Large (12L-E20), Base (V2-104M), Large (V2-316M)) |
 | **How to map genes when several orthologs exist** | `species.ortholog_policy`                 | Shown **only** when input species ≠ model native species                                                                                                             |
+| **Project curated overlay (optional)** | `species.ortholog_curated_overlay` | Cross-species only. Container path to a TSV or to a folder with `curated_bridge_<pair>.tsv` (repository = `/app`). Empty = platform tables only. The run does not start if no table is found for the current pair |
+| **Ortholog loss gate (optional)** + **Critical genes** | `stages.tokenize.tokenizer.ortholog_audit_inline` (`critical_sets.web_ui`), `ortholog_loss_gate: true` | Cross-species only. Blocks tokenize if a listed gene is in the input but not mapped; warns if it is absent from the input. At least one gene is required |
 
 
 **Same-species** (e.g. mouse data + mouse Geneformer): caption says no ortholog conversion; policy control is hidden.
@@ -89,7 +91,7 @@ Conversion runs automatically at **tokenize** and **ISP**. After tokenize you ge
 
 **Dropped-gene table (Web UI):** **Output** (and Analysis → Outputs after a Pipeline run) shows whether ortholog conversion dropped genes, which IDs/symbols, why (e.g. one-to-many), and a **brief function** one-liner (curated note when we have one, otherwise NCBI official full name from `gene_brief_function.tsv.gz`). Same-species runs have no conversion report.
 
-There is **no free-form gene-ID field** in the UI. Project bridges use a curated overlay path on disk (default: `analysis/ortholog_policy/v1` when present), not hand-typed Ensembl IDs.
+There is **no free-form gene-ID field** for ortholog pairs in the UI. Project bridges use a curated overlay file on disk, entered in **Project curated overlay** (the approval card falls back to `analysis/ortholog_policy/v1` when present), not hand-typed Ensembl IDs. The **Critical genes** field of the loss gate lists genes to check, not ortholog pairs.
 
 ### Worked examples (species selectors)
 

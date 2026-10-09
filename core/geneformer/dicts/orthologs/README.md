@@ -117,6 +117,6 @@ If the path is a **directory**, the loader picks `curated_bridge_{pair}.tsv` (e.
 
 ## Ortholog loss gate
 
-Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (a one2many gene that the platform curated table does not restore). Absent-from-input criticals are **Warn** only. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
+Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (a one2many gene that the platform curated table does not restore). Absent-from-input criticals are **Warn** only. The audit must list at least one critical gene. The mapped percentage is reported but does not change the verdict unless `block_mapped_pct_min` / `warn_mapped_pct_min` are set. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
 
 Operator docs: [docs/tokenization.md](../../../../docs/tokenization.md#ortholog-loss-gate).

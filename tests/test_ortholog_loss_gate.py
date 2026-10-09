@@ -123,10 +123,9 @@ AUDIT = {
         "MYC": [MYC],
     },
     "warn_on": ["ortholog_one2many", "ortholog_many2many", "no_ortholog"],
-    "pass_mapped_pct_min": 0,
-    "warn_mapped_pct_min": 0,
-    "block_mapped_pct_min": 0,
 }
+# Human IDs with no Ensembl entry: unmapped, so they lower the mapped percentage.
+UNMAPPED_FILLER = [f"ENSG0000099{i:04d}" for i in range(97)]
 
 SPECIES = {
     "model_organism": "human",
@@ -216,15 +215,52 @@ class TestOrthologLossGate(unittest.TestCase):
 
     def test_03_non_critical_pou5f1_one2many_warn(self):
         audit = {
-            "critical_sets": {},
+            "critical_sets": {"oskm": ["SOX2"]},
+            "symbol_aliases": {"SOX2": [SOX2]},
             "warn_on": ["ortholog_one2many"],
-            "pass_mapped_pct_min": 0,
-            "warn_mapped_pct_min": 0,
-            "block_mapped_pct_min": 0,
         }
         result = gate.evaluate_ortholog_loss_gate([POU5F1, SOX2], SPECIES, audit)
         self.assertEqual(result.verdict, "warn")
         self.assertTrue(result.continue_tokenize)
+
+    def test_03b_no_critical_genes_rejected(self):
+        audit = {"critical_sets": {}, "warn_on": ["ortholog_one2many"]}
+        with self.assertRaises(ValueError) as ctx:
+            gate.evaluate_ortholog_loss_gate([POU5F1, SOX2], SPECIES, audit)
+        self.assertIn("critical_sets", str(ctx.exception))
+
+    def test_03c_low_mapped_pct_does_not_decide_by_default(self):
+        """3 of 100 features mapped, all critical genes mapped → Pass."""
+        audit = {k: v for k, v in AUDIT.items() if k != "warn_on"}
+        audit["critical_sets"] = {"oskm": ["SOX2", "KLF4", "MYC"]}
+        result = gate.evaluate_ortholog_loss_gate(
+            [SOX2, KLF4, MYC, *UNMAPPED_FILLER], SPECIES, audit
+        )
+        self.assertEqual(result.mapped_pct, 3.0)
+        self.assertEqual(result.verdict, "pass")
+        self.assertTrue(result.continue_tokenize)
+        self.assertEqual(
+            result.summary["thresholds"],
+            {
+                "pass_mapped_pct_min": None,
+                "warn_mapped_pct_min": None,
+                "block_mapped_pct_min": None,
+            },
+        )
+
+    def test_03d_mapped_pct_thresholds_opt_in(self):
+        audit = {k: v for k, v in AUDIT.items() if k != "warn_on"}
+        audit["critical_sets"] = {"oskm": ["SOX2", "KLF4", "MYC"]}
+        genes = [SOX2, KLF4, MYC, *UNMAPPED_FILLER]
+        warned = gate.evaluate_ortholog_loss_gate(
+            genes, SPECIES, {**audit, "warn_mapped_pct_min": 90}
+        )
+        self.assertEqual(warned.verdict, "warn")
+        blocked = gate.evaluate_ortholog_loss_gate(
+            genes, SPECIES, {**audit, "block_mapped_pct_min": 50}
+        )
+        self.assertEqual(blocked.verdict, "block")
+        self.assertFalse(blocked.continue_tokenize)
 
     def test_04_pou5f1_critical_present_block_writes_pending_request(self):
         genes = [POU5F1, SOX2, KLF4, MYC]
@@ -353,6 +389,21 @@ class TestOrthologLossGate(unittest.TestCase):
         )
         self.assertEqual(result.verdict, "not_applicable")
         self.assertTrue(result.continue_tokenize)
+
+    def test_inline_audit_from_web_ui(self):
+        """Web UI writes tokenizer.ortholog_audit_inline; it enables the gate as a file would."""
+        tok_cfg = {
+            "ortholog_loss_gate": True,
+            "ortholog_audit_inline": {"critical_sets": {"web_ui": ["POU5F1", "SOX2"]}},
+        }
+        audit = gate.resolve_ortholog_audit_config(tok_cfg)
+        self.assertEqual(audit, tok_cfg["ortholog_audit_inline"])
+        self.assertTrue(
+            gate.resolve_enable_ortholog_loss_gate(SPECIES, tok_cfg, audit_cfg=audit)
+        )
+        audit = {**audit, "symbol_aliases": {"POU5F1": [POU5F1], "SOX2": [SOX2]}}
+        result = gate.evaluate_ortholog_loss_gate([POU5F1, SOX2], SPECIES, audit)
+        self.assertEqual(result.verdict, "block")
 
     def test_resolve_enable_with_audit_even_same_species(self):
         species = {

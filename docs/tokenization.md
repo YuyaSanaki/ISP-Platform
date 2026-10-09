@@ -132,7 +132,10 @@ After the conversion report and **before** tokenization, an optional quality gat
 
 **Block rule (strict):** a gene in `critical_sets` is **present in the raw input** (Ensembl / symbol / alias) but **dropped by the mapping policy** (e.g. `ortholog_one2many` under `one2one`).  
 **Not Block:** the same critical gene is simply **absent from the input matrix** → `absent_from_input` (**Warn**).  
-**Same-species:** verdict **`not_applicable`**; tokenize continues.
+**Same-species:** verdict **`not_applicable`**; tokenize continues.  
+**Critical genes required:** `critical_sets` must list at least one gene; an audit without critical genes stops with an error.
+
+**Mapped percentage is reported, not judged.** The conversion report and the gate record the percentage of input features mapped, but by default it does not change the verdict. Its denominator is every annotated input feature, most of them non-coding or rarely detected, so it depends on the annotation of the input rather than on what reaches the model (the human data of the ISP Platform paper map 48.9% to Mouse-Geneformer, yet a median 86% of the genes detected in each cell are kept). To judge it anyway, set `block_mapped_pct_min` and/or `warn_mapped_pct_min` in the audit.
 
 The gate **never** auto-adds one-to-many genes to curated overlays. Approving a bridge (`decision: curated_bridge` / **B**) only accepts an already-configured overlay path.
 

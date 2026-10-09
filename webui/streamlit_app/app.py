@@ -45,6 +45,8 @@ _ORTHOLOG_POLICY_LABELS = {
     "best_of_n": "best_of_n — keep highest-expressing gene only",
     "legacy_sum": "legacy_sum — old behavior (sum counts; can distort ranks)",
 }
+# Critical-set name written to stages.tokenize.tokenizer.ortholog_audit_inline.
+_ORTHOLOG_GATE_SET_NAME = "web_ui"
 _STATS_MODE_LABELS = {
     "goal_state_shift": "goal_state_shift — start→goal shift (recommended)",
     "vs_null": "vs_null — compare to a null distribution dataset",
@@ -110,6 +112,10 @@ from ortholog_approval_ui import (  # noqa: E402
 )
 from dropped_genes_ui import (  # noqa: E402
     load_dropped_gene_table as _load_dropped_gene_table,
+)
+from geneformer.gene_converter import (  # noqa: E402
+    conversion_pair as _ortholog_conversion_pair,
+    resolve_curated_overlay_path as _resolve_curated_overlay_tsv,
 )
 
 
@@ -2084,6 +2090,7 @@ def _build_patched_pipeline_yaml(
     ortholog_curated_overlay: str | None = None,
     ortholog_approval_record: str | None = None,
     ortholog_audit: str | None = None,
+    ortholog_gate_genes: list[str] | None = None,
     forward_batch_size: int | str | None = None,
     train_batch_size: int | str | None = None,
     ft_epochs: int | None = None,
@@ -2159,6 +2166,18 @@ def _build_patched_pipeline_yaml(
             tok_cfg.setdefault("ortholog_loss_gate", True)
         if ortholog_approval_record is not None and str(ortholog_approval_record).strip():
             tok_cfg["ortholog_approval_record"] = str(ortholog_approval_record).strip()
+    if ortholog_gate_genes is not None:
+        stages = cfg.setdefault("stages", {})
+        tok_cfg = stages.setdefault("tokenize", {}).setdefault("tokenizer", {})
+        if ortholog_gate_genes:
+            tok_cfg["ortholog_audit_inline"] = {
+                "critical_sets": {_ORTHOLOG_GATE_SET_NAME: list(ortholog_gate_genes)}
+            }
+            tok_cfg["ortholog_loss_gate"] = True
+        else:
+            tok_cfg.pop("ortholog_audit_inline", None)
+            if not tok_cfg.get("ortholog_audit"):
+                tok_cfg.pop("ortholog_loss_gate", None)
     if (
         forward_batch_size is not None
         or train_batch_size is not None
@@ -2229,6 +2248,7 @@ def _patch_pipeline_yaml(
     ortholog_curated_overlay: str | None = None,
     ortholog_approval_record: str | None = None,
     ortholog_audit: str | None = None,
+    ortholog_gate_genes: list[str] | None = None,
     forward_batch_size: int | str | None = None,
     train_batch_size: int | str | None = None,
     ft_epochs: int | None = None,
@@ -2258,6 +2278,7 @@ def _patch_pipeline_yaml(
         ortholog_curated_overlay=ortholog_curated_overlay,
         ortholog_approval_record=ortholog_approval_record,
         ortholog_audit=ortholog_audit,
+        ortholog_gate_genes=ortholog_gate_genes,
         forward_batch_size=forward_batch_size,
         train_batch_size=train_batch_size,
         ft_epochs=ft_epochs,
@@ -2340,6 +2361,26 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
             "Pick those in the **ISP start_state / end_state** dropdowns."
         )
 
+    overlay_raw = str(st.session_state.get("pipeline_ortholog_curated_overlay") or "").strip()
+    model_id = st.session_state.get("pipeline_model", "mouse_geneformer")
+    cross_species = st.session_state.get(
+        "pipeline_model_organism", "mouse"
+    ) != _native_model_organism(model_id)
+    if overlay_raw and cross_species and _ortholog_overlay_tsv_for_session(overlay_raw) is None:
+        return None, (
+            f"**Project curated overlay** `{overlay_raw}` has no table for this conversion.\n\n"
+            "Give a TSV file, or a folder containing `curated_bridge_<pair>.tsv` "
+            "(e.g. `curated_bridge_human_to_mouse.tsv`), as a path inside the container "
+            "(the repository is `/app`). Leave the field empty to use the platform tables only."
+        )
+
+    gate_genes = _ortholog_gate_genes_from_session()
+    if _ortholog_gate_requested() and not gate_genes:
+        return None, (
+            "**Ortholog loss gate** is on but lists no critical genes.\n\n"
+            "Enter at least one gene (e.g. the genes you perturb) or turn the gate off."
+        )
+
     _sync_ft_isp_advanced_from_yaml()
     yaml_text = _build_patched_pipeline_yaml(
         input_dir=tokenize_dir,
@@ -2354,6 +2395,7 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
         ortholog_curated_overlay=st.session_state.get("pipeline_ortholog_curated_overlay"),
         ortholog_approval_record=st.session_state.get("pipeline_ortholog_approval_record"),
         ortholog_audit=st.session_state.get("pipeline_ortholog_audit"),
+        ortholog_gate_genes=gate_genes,
         forward_batch_size=_selected_forward_batch_size(),
         train_batch_size=_selected_ft_train_batch_size(),
         **_ft_isp_advanced_kwargs_from_session(),
@@ -2398,7 +2440,50 @@ def _apply_species_to_yaml() -> None:
         human_variant=st.session_state.get("pipeline_human_variant"),
         mouse_variant=st.session_state.get("pipeline_mouse_variant"),
         ortholog_policy=st.session_state.get("pipeline_ortholog_policy"),
+        ortholog_gate_genes=_ortholog_gate_genes_from_session(),
     )
+
+
+def _ortholog_gate_requested() -> bool:
+    """Gate checkbox is on and the run converts genes (input species ≠ model species)."""
+    model_id = st.session_state.get("pipeline_model", "mouse_geneformer")
+    organism = st.session_state.get("pipeline_model_organism", "mouse")
+    return bool(st.session_state.get("pipeline_ortholog_gate_enabled")) and (
+        organism != _native_model_organism(model_id)
+    )
+
+
+def _ortholog_gate_genes_from_session() -> list[str]:
+    """Critical genes for ``ortholog_audit_inline``; [] removes the UI audit from the YAML."""
+    if not _ortholog_gate_requested():
+        return []
+    return _parse_genes_to_perturb_text(
+        st.session_state.get("pipeline_ortholog_critical_genes_text")
+    )
+
+
+def _apply_ortholog_gate_to_yaml() -> None:
+    _patch_pipeline_yaml(ortholog_gate_genes=_ortholog_gate_genes_from_session())
+
+
+def _apply_ortholog_overlay_to_yaml() -> None:
+    text = str(st.session_state.get("pipeline_ortholog_overlay_text") or "").strip()
+    st.session_state["pipeline_ortholog_curated_overlay"] = text
+    _patch_pipeline_yaml(ortholog_curated_overlay=text)
+
+
+def _ortholog_overlay_tsv_for_session(raw: str | None) -> Path | None:
+    """Overlay TSV used for the current species pair, or None (no pair / not found)."""
+    raw = str(raw or "").strip()
+    if not raw:
+        return None
+    pair = _ortholog_conversion_pair(
+        st.session_state.get("pipeline_model_organism", "mouse"),
+        st.session_state.get("pipeline_model", "mouse_geneformer"),
+    )
+    if pair is None:
+        return None
+    return _resolve_curated_overlay_tsv(pair, curated_overlay=raw)
 
 
 def _ft_isp_advanced_kwargs_from_session() -> dict:
@@ -2703,6 +2788,25 @@ def _sync_species_form_from_yaml() -> None:
     st.session_state.setdefault(
         "pipeline_ortholog_policy", species.get("ortholog_policy", "one2one")
     )
+    tok_cfg = ((cfg.get("stages") or {}).get("tokenize") or {}).get("tokenizer") or {}
+    inline = tok_cfg.get("ortholog_audit_inline") or {}
+    critical_sets = inline.get("critical_sets") if isinstance(inline, dict) else None
+    yaml_genes: list[str] = []
+    if isinstance(critical_sets, dict):
+        for genes in critical_sets.values():
+            yaml_genes.extend(str(g).strip() for g in (genes or []) if str(g).strip())
+    st.session_state.setdefault(
+        "pipeline_ortholog_curated_overlay",
+        str(species.get("ortholog_curated_overlay") or "").strip(),
+    )
+    st.session_state.setdefault(
+        "pipeline_ortholog_overlay_text",
+        st.session_state.get("pipeline_ortholog_curated_overlay") or "",
+    )
+    st.session_state.setdefault("pipeline_ortholog_gate_enabled", bool(yaml_genes))
+    st.session_state.setdefault(
+        "pipeline_ortholog_critical_genes_text", _genes_to_perturb_as_text(yaml_genes)
+    )
 
 
 def _native_model_organism(model_id: str) -> str:
@@ -2788,10 +2892,83 @@ Writes to YAML as `species.ortholog_policy`.
             f"Cross-species run: ortholog conversion **{organism} → {native}** "
             "runs automatically at tokenize and ISP."
         )
+        _render_ortholog_overlay_controls()
+        _render_ortholog_gate_controls()
     else:
         st.caption(
             f"Same species as the model vocabulary ({native}) — no ortholog conversion "
             "(ortholog policy is unused)."
+        )
+
+
+def _render_ortholog_overlay_controls() -> None:
+    """Optional project curated overlay (added on top of the platform curated tables)."""
+    # Set by the approval card; applied here because a widget's key cannot change after it renders.
+    pending = st.session_state.pop("pipeline_ortholog_overlay_text_pending", None)
+    if pending is not None:
+        st.session_state["pipeline_ortholog_overlay_text"] = pending
+    st.markdown("**Project curated overlay (optional)**")
+    st.text_input(
+        "Overlay path (TSV file or folder, inside the container)",
+        key="pipeline_ortholog_overlay_text",
+        on_change=_apply_ortholog_overlay_to_yaml,
+        placeholder="/app/analysis/ortholog_policy/v1",
+        help=(
+            "Extra ortholog pairs for this project, applied after the platform curated table "
+            "(which already restores POU5F1, NANOG and GAPDH). A folder must contain "
+            "curated_bridge_<pair>.tsv, e.g. curated_bridge_human_to_mouse.tsv, with columns "
+            "source_id and target_id. The repository is mounted at /app. "
+            "Leave empty to use the platform tables only. "
+            "Writes species.ortholog_curated_overlay."
+        ),
+    )
+    raw = str(st.session_state.get("pipeline_ortholog_overlay_text") or "").strip()
+    if not raw:
+        return
+    tsv = _ortholog_overlay_tsv_for_session(raw)
+    if tsv is None:
+        st.warning(f"No overlay table found for this conversion at `{raw}`; the run will not start.")
+        return
+    try:
+        n_rows = max(0, len(tsv.read_text(encoding="utf-8").splitlines()) - 1)
+    except OSError:
+        n_rows = None
+    rows = f"{n_rows} row(s)" if n_rows is not None else "unreadable"
+    st.caption(f"Overlay table: `{tsv}` ({rows}).")
+
+
+def _render_ortholog_gate_controls() -> None:
+    """Ortholog loss gate: stop tokenize if a listed gene is in the input but not mapped."""
+    st.markdown("**Ortholog loss gate (optional)**")
+    st.checkbox(
+        "Stop if a critical gene is lost in conversion",
+        key="pipeline_ortholog_gate_enabled",
+        on_change=_apply_ortholog_gate_to_yaml,
+        help=(
+            "Before tokenize, checks that each gene listed below survives ortholog "
+            "conversion. Blocks the run if a listed gene is in your data but has no "
+            "ortholog under the chosen policy; warns if it is not in your data at all. "
+            "The percentage of genes mapped is reported but does not block."
+        ),
+    )
+    if not st.session_state.get("pipeline_ortholog_gate_enabled"):
+        return
+    st.text_area(
+        "Critical genes (symbols of the input species, comma or newline separated)",
+        key="pipeline_ortholog_critical_genes_text",
+        on_change=_apply_ortholog_gate_to_yaml,
+        height=90,
+        placeholder="e.g. POU5F1, SOX2, KLF4, MYC",
+        help=(
+            "Usually the genes you perturb plus any marker genes your analysis relies on. "
+            "Writes stages.tokenize.tokenizer.ortholog_audit_inline in the pipeline YAML."
+        ),
+    )
+    if not _ortholog_gate_genes_from_session():
+        st.warning("List at least one gene, or turn the gate off; the run will not start otherwise.")
+    else:
+        st.caption(
+            "If the gate blocks, an approval card appears under Outputs after the run."
         )
 
 
@@ -2936,9 +3113,12 @@ def _render_ortholog_approval_card(upload_dir: Path) -> None:
         st.info("No re-run started (stop / reject). Tokenize remains blocked until a curated_bridge approval is used.")
         return
 
-    audit = _resolve_ortholog_audit_path()
+    # The approval matches the audit hash of the blocked run; a file audit would
+    # replace the UI's inline audit and change that hash.
+    audit = None if _ortholog_gate_requested() else _resolve_ortholog_audit_path()
     st.session_state["pipeline_ortholog_approval_record"] = str(written)
     st.session_state["pipeline_ortholog_curated_overlay"] = str(overlay)
+    st.session_state["pipeline_ortholog_overlay_text_pending"] = str(overlay)
     if audit is not None:
         st.session_state["pipeline_ortholog_audit"] = str(audit)
     st.session_state["ortholog_auto_rerun"] = True
