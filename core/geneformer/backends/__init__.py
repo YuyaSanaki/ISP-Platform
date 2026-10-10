@@ -1,4 +1,4 @@
-"""Species and model backend registry for ISP³ Platform."""
+"""Species and model backend registry for ISP Platform."""
 
 from .registry import (
     BackendSpec,
