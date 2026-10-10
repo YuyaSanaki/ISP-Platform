@@ -1,6 +1,6 @@
-# Group overexpression: ISP³ vs official Geneformer
+# Group overexpression: ISP Platform vs official Geneformer
 
-ISP³ overexpresses a group of genes with a **length-preserving** rule
+ISP Platform overexpresses a group of genes with a **length-preserving** rule
 (`overexpress_tokens` in `core/geneformer/in_silico_perturber.py`). This note records how that rule
 differs from the official Geneformer implementation, and the one input range where the official
 implementation misaligns the cells it compares.
@@ -52,19 +52,19 @@ The band is narrow. In the GSE147564 dataset used in the paper (Human-Geneformer
 tokenization), 0 of 3,000 somatic cells (median length 790) and 1 of 3,000 pluripotent cells have a
 length of 4,089–4,095.
 
-## How ISP³ differs
+## How ISP Platform differs
 
-| | Official Geneformer (`1f7fbae`) | ISP³ |
+| | Official Geneformer (`1f7fbae`) | ISP Platform |
 | --- | --- | --- |
 | Length of the perturbed cell | grows by the inserted genes, then is cut to `max_len` | equals the cell's own length before OE; net insertions drop the lowest-ranked genes |
 | Alignment for comparison | cut the original by `n_overflow` | remove exactly as many unique positions from the original as genes were overexpressed (`oe_indices_to_remove_for_alignment`) |
 | Depends on the cell length | yes (band above) | no |
 
-The ISP³ perturber was derived from the Mouse-Geneformer code, which inserted OE genes without
+The ISP Platform perturber was derived from the Mouse-Geneformer code, which inserted OE genes without
 cutting and aligned absent genes by removing the last positions of the batch. When a present OE
 gene already sat in those last positions, fewer positions were removed for that cell and stacking
 the batch failed with a shape mismatch (e.g. [2044, 256] vs [2045, 256]). The length-preserving rule
 and the unique-position alignment replace that path.
 
 Tests: `tests/test_overexpress_length_preserve.py` (`TestUpstreamOverflowBand` runs the case 2 input
-and the whole band through the ISP³ operators).
+and the whole band through the ISP Platform operators).

@@ -1,4 +1,4 @@
-# ISP³ Platform Web UI
+# ISP Platform Web UI
 
 Streamlit control panel for this repository (CLI-equivalent jobs via subprocess + YAML).
 

@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes to **ISP³ Platform** are documented here.
+All notable changes to **ISP Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Changed
+
+- Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names.
 
 ## [1.0.1] - 2026-10-09
 
@@ -27,7 +33,7 @@ Peer-reviewed version (review response, *Genes to Cells*). Tag `v1.0.1` was move
 - State-feedback ISP placebo contrast (`core/state_feedback/placebo_contrast.py`, `state_feedback.placebo_contrast`). Most of the feedback gain is not specific to the perturbed genes: matched placebo genes get most of it too. With the contrast, the decoder is trained on, and every feedback event uses, Δh minus the mean Δh after swapping the chain's genes for each of `n_estimation` matched estimation placebos in the same cell. The stability runner reports the gain of the configured chain minus the mean gain of separately drawn comparison placebo chains (`specific_gain`). Delete steps use the counterfactual in `docs/state_feedback_deletion_counterfactual.md`.
 - Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / NANOG / GAPDH as examples, in the ortholog README and `docs/tokenization.md`.
 - State-feedback ISP `pin_overexpressed` (default `true`): after each reorder, the genes overexpressed so far stay at the front in their pre-reorder order, and only the other genes are reordered. This applies to every rerank condition, including `oracle`. Rerank diagnostics are computed on the pinned order.
-- `docs/upstream_overexpression.md` (review response, R2-Major2): how ISP³ length-preserving group OE differs from official Geneformer (`ctheodoris/Geneformer` `1f7fbae`, the tip of `main` on 2026-09-30). Official Geneformer cuts the perturbed cell to the model input size and cuts the original by an overflow count taken from the cut length. With k OE genes absent from a cell, that count is wrong for lengths `max_len` − 2k < L < `max_len`; on Geneformer V2-104M with OSKM, a cell of length 4,094 stops with a 4,092 vs 4,090 size mismatch, and all other tested lengths run. The `overexpress_tokens` docstring no longer says that upstream Geneformer often fails; it names this range and the Mouse-Geneformer path that ISP³ replaced. New tests in `tests/test_overexpress_length_preserve.py` run the failing input and the whole range through the ISP³ operators.
+- `docs/upstream_overexpression.md` (review response, R2-Major2): how the length-preserving group OE of ISP Platform differs from official Geneformer (`ctheodoris/Geneformer` `1f7fbae`, the tip of `main` on 2026-09-30). Official Geneformer cuts the perturbed cell to the model input size and cuts the original by an overflow count taken from the cut length. With k OE genes absent from a cell, that count is wrong for lengths `max_len` − 2k < L < `max_len`; on Geneformer V2-104M with OSKM, a cell of length 4,094 stops with a 4,092 vs 4,090 size mismatch, and all other tested lengths run. The `overexpress_tokens` docstring no longer says that upstream Geneformer often fails; it names this range and the Mouse-Geneformer path that ISP Platform replaced. New tests in `tests/test_overexpress_length_preserve.py` run the failing input and the whole range through the ISP³ operators.
 - State-feedback ISP guide, design doc and Web UI help: numbers on reusing a Δrank decoder for other steps. On BBRC OSKM (n=3000, 24 orders), a decoder trained on simultaneous OSKM and reused for every order scored lower direction fidelity than one trained per order (pooled Spearman 0.38 vs 0.46), except for the 6 orders ending in POU5F1, and gave an uncorrelated order ranking. Train a new decoder (the default) for reported results.
 - `docs/in-silico pertabation.md`: column glossary for the ISP stats table (review response, R2-Minor1). `N_Detections` is the number of perturbed start-state cells whose encoding contains the gene, i.e. the number of per-cell shifts averaged into `Shift_to_goal_end`; the `N_Detections` ≥ 20 cut-off (`min_n_detections`) applies to the lollipop figure only.
 
@@ -85,5 +91,5 @@ First release of v1.0.1 (tag `v1.0.1-initial`, `3b8616f`). Superseded by the pee
 
 ### Notes
 
-- Private paper-specific workflows live in **ISP³ Platform Analysis** (separate repo).
+- Private paper-specific workflows live in **ISP Platform Analysis** (separate repo).
 - Analysis repos should pin runtime to Docker image `isp-platform:v1.0.0`.

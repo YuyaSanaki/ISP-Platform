@@ -1,5 +1,5 @@
 """
-Mouse Geneformer — Streamlit control panel (ISP³ Platform Web UI; same image as CLI).
+Mouse Geneformer — Streamlit control panel (ISP Platform Web UI; same image as CLI).
 
 Monorepo: webui/ talks to core/ only through subprocess + YAML (see docs/architecture.md).
 
@@ -3635,8 +3635,8 @@ def _render_output_browser() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="ISP³ Platform", layout="wide")
-    st.title("ISP³ Platform")
+    st.set_page_config(page_title="ISP Platform", layout="wide")
+    st.title("ISP Platform")
     st.caption(
         "Tokenize → fine-tune → ISP for Mouse or Human Geneformer. "
         "Choose the **input data species** and the **model for FT/ISP** separately."

@@ -1,9 +1,9 @@
 <!-- Keep this logo. Source: docs/logo.png. Do not remove when editing README.md. -->
 <p align="center">
-  <img src="docs/logo.png" alt="ISP³ Platform" width="280">
+  <img src="docs/logo.png" alt="ISP Platform" width="280">
 </p>
 
-# ISP³ Platform
+# ISP Platform
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
@@ -188,7 +188,7 @@ After [Install](#install), run the full **Tokenize → Fine-tune → ISP** pipel
 docker compose up -d platform_webui
 ```
 
-Open **[http://localhost:8502](http://localhost:8502)** (**ISP³ Platform Web UI**).
+Open **[http://localhost:8502](http://localhost:8502)** (**ISP Platform Web UI**).
 
 On a **remote GPU server**, `localhost` in your laptop browser does not reach the container. Use **SSH port forwarding** (keep the session open):
 
@@ -209,7 +209,7 @@ Then open **[http://localhost:8502](http://localhost:8502)** locally. Or use the
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md).
 
 <p align="center">
-  <img src="docs/WebUI.png" alt="ISP³ Platform Web UI" width="900">
+  <img src="docs/WebUI.png" alt="ISP Platform Web UI" width="900">
 </p>
 
 ### Fine-tune batch size (keep fixed)
