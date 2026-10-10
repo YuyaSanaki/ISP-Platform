@@ -4,6 +4,11 @@ Deterministic Pass / Warn / Block gate for cross-species ortholog conversion.
 Block applies only when a critical gene is present in the raw input feature set
 but is dropped by the mapping policy (e.g. one2one filtering of ortholog_one2many).
 Critical genes absent from the input are recorded as absent_from_input (Warn), never Block.
+The audit must list at least one critical gene.
+
+The mapped percentage depends on the feature annotation of the input (all annotated
+features, most of them non-coding or rarely detected), not on what reaches the model, so
+it is reported but does not decide the verdict unless ``*_mapped_pct_min`` is set.
 
 One-to-many genes are never auto-added to curated overlays. Approval is fail-closed:
 Block writes ``ortholog_approval_request.yaml`` with ``status: pending`` (not reusable);
@@ -43,9 +48,11 @@ from .gene_converter import (
 )
 from .species_context import load_input_symbol_table
 
-DEFAULT_PASS_MAPPED_PCT_MIN = 80.0
-DEFAULT_WARN_MAPPED_PCT_MIN = 90.0
-DEFAULT_BLOCK_MAPPED_PCT_MIN = 50.0
+MAPPED_PCT_THRESHOLD_KEYS = (
+    "pass_mapped_pct_min",
+    "warn_mapped_pct_min",
+    "block_mapped_pct_min",
+)
 
 # Human POU5F1B paralog — must never appear in curated overlays.
 POU5F1B_ENSEMBL = "ENSG00000212993"
@@ -784,6 +791,15 @@ def _flatten_critical_sets(
     return out
 
 
+def _mapped_pct_thresholds(audit_cfg: Mapping[str, Any]) -> dict[str, float | None]:
+    """Opt-in mapped-% thresholds; ``None`` (the default) means not used."""
+    out: dict[str, float | None] = {}
+    for key in MAPPED_PCT_THRESHOLD_KEYS:
+        raw = audit_cfg.get(key)
+        out[key] = None if raw is None else float(raw)
+    return out
+
+
 def _build_input_index(
     gene_ids: Sequence[str],
     symbol_table: Mapping[str, str] | None,
@@ -953,6 +969,12 @@ def evaluate_ortholog_loss_gate(
     symbol_aliases: Mapping[str, Sequence[str]] | None = None,
     audit_path: str | Path | None = None,
 ) -> GateResult:
+    if not _flatten_critical_sets(audit_cfg):
+        raise ValueError(
+            "ortholog_audit.critical_sets lists no genes. The ortholog loss gate checks "
+            "that these genes survive conversion; list at least one, or disable the gate "
+            "(--no-ortholog-loss-gate)."
+        )
     parsed = parse_species_config(species)
     pair = conversion_pair(parsed["model_organism"], parsed["model"])
     policy = parse_ortholog_policy(parsed)
@@ -1091,9 +1113,10 @@ def evaluate_ortholog_loss_gate(
             )
         )
 
-    pass_min = float(audit_cfg.get("pass_mapped_pct_min", DEFAULT_PASS_MAPPED_PCT_MIN))
-    warn_min = float(audit_cfg.get("warn_mapped_pct_min", DEFAULT_WARN_MAPPED_PCT_MIN))
-    block_min = float(audit_cfg.get("block_mapped_pct_min", DEFAULT_BLOCK_MAPPED_PCT_MIN))
+    thresholds = _mapped_pct_thresholds(audit_cfg)
+    pass_min = thresholds["pass_mapped_pct_min"]
+    warn_min = thresholds["warn_mapped_pct_min"]
+    block_min = thresholds["block_mapped_pct_min"]
     warn_on = {
         str(x).strip().lower()
         for x in (audit_cfg.get("warn_on") or [])
@@ -1148,7 +1171,8 @@ def evaluate_ortholog_loss_gate(
         )
 
     if verdict != "stopped":
-        if present_dropped or mapped_pct < block_min or provenance_missing:
+        below_block = block_min is not None and mapped_pct < block_min
+        if present_dropped or below_block or provenance_missing:
             verdict = "block"
             continue_tokenize = False
             if present_dropped:
@@ -1156,7 +1180,7 @@ def evaluate_ortholog_loss_gate(
                     "Critical gene(s) present in input but dropped by mapping policy: "
                     + ", ".join(sorted({r.gene for r in present_dropped}))
                 )
-            if mapped_pct < block_min:
+            if below_block:
                 messages.append(
                     f"mapped_pct {mapped_pct}% below block_mapped_pct_min {block_min}%"
                 )
@@ -1169,7 +1193,7 @@ def evaluate_ortholog_loss_gate(
                     "critical gene(s) absent from raw input: "
                     + ", ".join(sorted({r.gene for r in absent}))
                 )
-            if mapped_pct < warn_min:
+            if warn_min is not None and mapped_pct < warn_min:
                 warn_reasons.append(
                     f"mapped_pct {mapped_pct}% below warn_mapped_pct_min {warn_min}%"
                 )
@@ -1182,7 +1206,7 @@ def evaluate_ortholog_loss_gate(
                                 f"non-critical/policy drop status seen: {insp.status}"
                             )
                             break
-            if mapped_pct < pass_min:
+            if pass_min is not None and mapped_pct < pass_min:
                 warn_reasons.append(
                     f"mapped_pct {mapped_pct}% below pass_mapped_pct_min {pass_min}%"
                 )
@@ -1208,11 +1232,7 @@ def evaluate_ortholog_loss_gate(
             if r.input_presence == "present_in_input" and r.reaches_token
         ),
         "approval_decision": decision,
-        "thresholds": {
-            "pass_mapped_pct_min": pass_min,
-            "warn_mapped_pct_min": warn_min,
-            "block_mapped_pct_min": block_min,
-        },
+        "thresholds": thresholds,
     }
 
     approval_request: dict[str, Any] = {}

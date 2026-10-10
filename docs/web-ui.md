@@ -79,6 +79,8 @@ On **Analysis → Pipeline (E2E)** (also FT calibrate), the **Species / model** 
 | **Pretrained Geneformer**                         | `species.model`                           | Checkpoint for FT/ISP (`mouse_geneformer` / `human_geneformer`)                                                                                                      |
 | **Mouse / Human variant**                         | `species.mouse_variant` / `human_variant` | YAML ids stay `base` / `12l_e20`, `v2_104m` / `v2_316m`; Web UI shows **Base** / **Large** (e.g. Base (6L / ~10M), Large (12L-E20), Base (V2-104M), Large (V2-316M)) |
 | **How to map genes when several orthologs exist** | `species.ortholog_policy`                 | Shown **only** when input species ≠ model native species                                                                                                             |
+| **Project curated overlay (optional)** | `species.ortholog_curated_overlay` | Cross-species only. Container path to a TSV or to a folder with `curated_bridge_<pair>.tsv` (repository = `/app`). Empty = platform tables only. The run does not start if no table is found for the current pair |
+| **Ortholog loss gate (optional)** + **Critical genes** | `stages.tokenize.tokenizer.ortholog_audit_inline` (`critical_sets.web_ui`), `ortholog_loss_gate: true` | Cross-species only. Blocks tokenize if a listed gene is in the input but not mapped; warns if it is absent from the input. At least one gene is required |
 
 
 **Same-species** (e.g. mouse data + mouse Geneformer): caption says no ortholog conversion; policy control is hidden.
@@ -89,7 +91,7 @@ Conversion runs automatically at **tokenize** and **ISP**. After tokenize you ge
 
 **Dropped-gene table (Web UI):** **Output** (and Analysis → Outputs after a Pipeline run) shows whether ortholog conversion dropped genes, which IDs/symbols, why (e.g. one-to-many), and a **brief function** one-liner (curated note when we have one, otherwise NCBI official full name from `gene_brief_function.tsv.gz`). Same-species runs have no conversion report.
 
-There is **no free-form gene-ID field** in the UI. Project bridges use a curated overlay path on disk (default: `analysis/ortholog_policy/v1` when present), not hand-typed Ensembl IDs.
+There is **no free-form gene-ID field** for ortholog pairs in the UI. Project bridges use a curated overlay file on disk, entered in **Project curated overlay** (the approval card falls back to `analysis/ortholog_policy/v1` when present), not hand-typed Ensembl IDs. The **Critical genes** field of the loss gate lists genes to check, not ortholog pairs.
 
 ### Worked examples (species selectors)
 
@@ -192,10 +194,12 @@ Under the page title:
 | FT batch size (calibrate) | Measures GPU; recommends Pipeline `runtime.train_batch_size` ([fine-tuning.md](fine-tuning.md) § batch size) |
 | Pipeline (E2E)            | [pipeline.md](pipeline.md)                                                                                   |
 | ISP UMAP                  | [isp_umap.md](isp_umap.md) — pick a **past Pipeline ISP run** + gene (not Data input zip)                    |
-| Sequential ISP            | [sequential_isp.md](sequential_isp.md) — pick a **past Pipeline ISP run** + ordered OE/KD steps              |
+| State-feedback ISP        | [state_feedback_isp.md](state_feedback_isp.md) — pick a **past Pipeline ISP run** + ordered OE/KD steps, plus decoder / conditions |
+
+What State-feedback ISP does, and every setting (conditions, feedback, specificity), is explained in [state_feedback_isp.md](state_feedback_isp.md) (v1.0.1).
 
 
-**Study Data input** stays loaded when switching between **FT batch size (calibrate)** and **Pipeline (E2E)**. **ISP UMAP** and **Sequential ISP** hide Data input and instead list completed `pipeline_*/stage_configs/isp.yaml` runs under `/app/output`.
+**Study Data input** stays loaded when switching between **FT batch size (calibrate)** and **Pipeline (E2E)**. **ISP UMAP** and **State-feedback ISP** hide Data input and instead list completed `pipeline_*/stage_configs/isp.yaml` runs under `/app/output`.
 
 ### Fine-tune `train_batch_size`
 
@@ -225,7 +229,7 @@ Under **Advanced options** (collapsed by default):
 
 **Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. Optional expander **Cluster / cell-type analysis** enables `cluster_coexpr_analysis/` after the UMAP (`n_clusters` can be a fixed K or `auto`). The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
 
-**Sequential ISP** (OE then KD, or any ordered list of OE/KD steps): use Run type **Sequential ISP**. Choose the same past pipeline folder, add steps (`overexpress` / `delete` + gene lists). Each step edits the previous step’s gene ranks and is scored against the original start state; predictions are not fed back into the next step. Writes under `{pipeline_run}/sequential_isp/`. See [sequential_isp.md](sequential_isp.md).
+**State-feedback ISP** (OE then KD, or any ordered list of steps): use Run type **State-feedback ISP**. Choose the same past pipeline folder and add steps (`overexpress` / `delete` + gene lists); after each step, a Δrank decoder reorders each cell's genes from the model output before the next step. Writes under `{pipeline_run}/state_feedback_isp/`. Read [state_feedback_isp.md](state_feedback_isp.md) before choosing conditions; design and results are in [state_feedback_decode_methods.md](state_feedback_decode_methods.md).
 
 Pipeline (E2E) additionally runs **TOP1 significant ISP UMAP** automatically once (same output directory; gene = top FDR-significant by shift toward goal). Full trajectory UMAP remains available via Run type **ISP UMAP**.
 

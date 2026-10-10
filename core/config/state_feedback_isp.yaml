@@ -1,0 +1,181 @@
+# State-feedback ISP — Phase 1-2 (baselines + linear Delta-rank decoder)
+#
+# GENERIC BY DESIGN. Nothing below is specific to reprogramming factors:
+#   - `state_feedback.steps` is any list of steps, each with `type: overexpress|knockdown`
+#     and any gene symbols / Ensembl IDs present in your token dictionary.
+#   - `perturbation.state_key / start_state / end_state` are whatever labels your
+#     fine-tuned classifier was trained on.
+#   - `state_feedback.observed_state` names the state whose *observed* ranks supply
+#     the decoder's teacher signal (and the oracle ceiling). It defaults to `end_state`.
+# The values here are the paper's OSKM -> pluripotency case only as a worked example.
+# To reuse: swap dataset / model / states / steps. No code changes needed.
+
+paths:
+  dataset: data/bbrcv3/tokenize_human_native/tokenized_dataset/GSE147564_ft6k_qc_human_native_0.dataset
+  geneformer_model: data/bbrcv3/v2_ft_human_native/all_run1
+  output_root: data/bbrcv3/runs/state_feedback_phase12
+  output_date_subdir: true
+  output_time_subdir: true
+
+species:
+  model_organism: human
+  model: human_geneformer
+  human_variant: v2_104m
+  ortholog_policy: one2one
+
+perturbation:
+  state_key: disease
+  start_state: somatic
+  end_state: pluripotent
+  alt_states: []
+
+model:
+  type: CellClassifier
+  num_classes: 2
+
+isp:
+  max_ncells: 300
+  emb_layer: 0
+
+state_feedback:
+  # Any number of steps, any genes, overexpress or knockdown
+  # (a legacy top-level `sequential.steps` block is still read).
+  steps:
+    - name: KLF4
+      type: overexpress
+      genes: [KLF4]
+    - name: MYC
+      type: overexpress
+      genes: [MYC]
+    - name: SOX2
+      type: overexpress
+      genes: [SOX2]
+    - name: POU5F1
+      type: overexpress
+      genes: [POU5F1]
+
+  # Conditions compared in one run. `no_feedback` applies the same steps with no feedback
+  # (the baseline; `ordered_rank_edit` is read as its old name), `oracle` is a ceiling
+  # (observed ranks pasted in), `null_feedback` is the zero-perturbation guardrail.
+  conditions:
+    - no_feedback
+    - norm
+    - delta_mlm
+    - linear_deltarank
+    - oracle
+    - null_feedback
+
+  # Teacher / ceiling source.
+  observed_state: pluripotent
+  observed_max_ncells: 3000
+  min_detection_count: 5
+
+  # Feedback runs after every step, including the last: step 1 -> feedback -> step 2
+  # -> feedback -> ... -> step N -> feedback. The number of feedback events always
+  # equals the number of steps; there is no cap and no other schedule.
+  # CAUTION: the error grows with the number of steps. Each feedback event adds a
+  # displacement that is not undone, and part of the gain is non-specific (random
+  # genes also move toward the goal). Keep chains short, compare only chains with the
+  # same number of steps, and subtract matched random chains
+  # (core/run_state_feedback_stability.py; docs/state_feedback_decode_methods.md).
+  # The removed keys feedback_every_step / feedback_after_step /
+  # feedback_after_last_step / multi_step raise an error if they ask for anything else.
+  # Keep the genes overexpressed so far at the front; the rerank moves only the rest.
+  pin_overexpressed: true
+  ctrl_reference: start      # start | previous
+
+  # Guardrails. `hysteresis` quantizes priorities onto an epsilon grid before a
+  # stable sort, so near-ties keep their original order (no jitter swaps).
+  hysteresis: 0.0
+  # Phase 1 parameter-free baselines only (the decoder uses decoder.max_shift_grid).
+  alpha: 1.0
+  baseline_max_shift: 0.1
+
+  # Direction-fidelity evaluation: scores every method against the observed Delta-rank
+  # on the held-out gene split. This is the PRIMARY Phase 2 axis. The endpoint shift
+  # cannot separate "permuted in the right direction" from "encoding was disturbed",
+  # and the oracle carries endpoint leakage, so neither settles the gate alone.
+  eval:
+    # full_chain = features from all steps applied (matches decoder training)
+    perturbation: full_chain
+    max_genes_per_cell: 512
+    topk: [50, 100, 500]
+    n_boot: 1000       # cell-level bootstrap for the CI on rho_linear - rho_baseline
+    n_perm: 10000      # paired sign-flip permutation test on per-cell rho differences
+    seed: 0
+
+  # Perturbation-specificity control (off by default; `--specificity` forces it on).
+  # The same decoder is fed Delta-h from other perturbations. If its signal beyond
+  # base rank (partial Spearman given base rank) came from the scored genes alone,
+  # every perturbation would score alike. Conditions: `configured` (the steps above,
+  # cumulative), each named set (applied at once), and `n_random` draws of
+  # `random_size` teacher genes. For `random_type: delete`, set
+  # `random_match_detection` to a gene so random targets are detected in 0.5-2x as
+  # many start cells (deleting an undetected gene changes nothing).
+  specificity:
+    enabled: false
+    sets:
+      OSKM: {type: overexpress, genes: [POU5F1, SOX2, KLF4, MYC]}
+      3F_OSN: {type: overexpress, genes: [POU5F1, SOX2, NANOG]}
+      7F: {type: overexpress, genes: [NANOG, POU5F1, SOX2, ESRRB, LIN28A, DPPA4, TERT]}
+    n_random: 30
+    random_size: 4
+    random_type: overexpress   # overexpress | delete | knockdown
+    random_match_detection: null
+    n_boot: 1000
+
+  # Multi-step stability evaluation (core/run_state_feedback_stability.py).
+  # Criteria S1-S4 are pre-registered in docs/state_feedback_decode_methods.md.
+  # Each seed retrains the decoder; the train/val gene split keeps decoder.seed.
+  # `idle_events` reranks the final encoding again with no new perturbation.
+  # Random chains (core/state_feedback/random_chains.py) keep the configured structure
+  # (steps, genes per step, types). Each configured gene is replaced by a gene drawn
+  # uniformly from the model vocabulary among genes with the same start-cell position:
+  # absent from every start cell if the configured gene is absent, otherwise detection
+  # 0.5-2x and median position within 0.1 (widened until `min_stratum` genes qualify).
+  # Each entry of `random_seeds` is an independent draw of `n_random_chains` chains
+  # (the comparison placebos for Delta-spec); the default is the paper's single draw of
+  # 30. Add a second seed to check that two draws agree. The draw, gene symbols and
+  # balance are written to random_chains.json.
+  stability:
+    seeds: [0, 1, 2]
+    idle_events: 5
+    n_random_chains: 30
+    random_seeds: [0]
+    min_stratum: 50
+    topk: [100, 500, 1000]
+
+  # Potential-outcome contrast (core/state_feedback/placebo_contrast.py): the decoder
+  # reads delta_h minus the mean delta_h after swapping the chain's genes for each
+  # estimation placebo, in training and in every rerank. Estimation placebos are a
+  # separate draw (estimation_draw_seed, not in stability.random_seeds); a placebo
+  # sharing a gene with a chain is left out of that chain's contrast. Delete steps
+  # restore the factor next to its start-encoding neighbour and delete the placebo
+  # gene (docs/state_feedback_deletion_counterfactual.md); they need ctrl_reference: start.
+  # On by default (the paper's method); without it most of the feedback gain is
+  # shared with placebo genes.
+  placebo_contrast:
+    enabled: true
+    n_estimation: 10
+    estimation_draw_seed: 1
+
+  decoder:
+    train_max_ncells: 300   # the paper's decoders were trained on all 300 start cells
+    max_genes_per_cell: 256
+    val_fraction: 0.2
+    epochs: 20
+    lr: 0.001
+    batch_size: 4096
+    lam_huber: 1.0
+    lam_pair: 0.5
+    lam_smooth: 0.01
+    # Selected by held-out-gene val Spearman. Widened past 0.2 because val
+    # Spearman was still rising at the old upper bound; large values let the
+    # decoder move a gene most of the way across the encoding, so watch the
+    # null-drift and displacement columns when a big shift wins.
+    max_shift_grid: [0.05, 0.1, 0.2, 0.3, 0.5]
+    seed: 0
+
+runtime:
+  nproc: 1
+  forward_batch_size: auto

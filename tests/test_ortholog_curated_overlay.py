@@ -157,6 +157,22 @@ class TestCuratedOverlay(unittest.TestCase):
             self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
             self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
 
+    def test_example_overlay_copied_without_suffix(self):
+        examples = ROOT / "examples" / "ortholog_overlays"
+        pair = gc.ConversionPair.HUMAN_TO_MOUSE
+        self.assertIsNone(gc.resolve_curated_overlay_path(pair, curated_overlay=examples))
+        with tempfile.TemporaryDirectory() as tmp:
+            for src in examples.glob("*.tsv.example"):
+                (Path(tmp) / src.name.removesuffix(".example")).write_text(
+                    src.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+            h2m = gc.load_ortholog_table(pair, policy="one2one", curated_overlay=tmp)
+            m2h = gc.load_ortholog_table(
+                gc.ConversionPair.MOUSE_TO_HUMAN, policy="one2one", curated_overlay=tmp
+            )
+            self.assertEqual(h2m[POU5F1], POU5F1_MOUSE)
+            self.assertEqual(m2h[POU5F1_MOUSE], POU5F1)
+
     def test_env_overlay(self):
         with tempfile.TemporaryDirectory() as tmp:
             overlay = Path(tmp) / "curated_bridge_human_to_mouse.tsv"

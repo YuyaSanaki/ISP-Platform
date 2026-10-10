@@ -15,7 +15,7 @@
 # GPU policy (resource-aware):
 #   - tokenize: CPU only (no idle GPU claim)
 #   - platform_webui: 1 GPU (Streamlit itself is CPU; Run job = in-container subprocess needing CUDA)
-#   - pipeline / finetune / isp / isp_umap / sequential_isp: all GPUs (one-shot jobs)
+#   - pipeline / finetune / isp / isp_umap: all GPUs (one-shot jobs)
 # No Jupyter service — use CLI / Web UI (same as Mouse-Geneformer-WebUI).
 #
 # Models / volumes:
@@ -33,7 +33,7 @@ x-geneformer-env: &geneformer-env
   GENEFORMER_IMAGE_ASSETS: ${GENEFORMER_IMAGE_ASSETS:-/opt/geneformer-assets}
 
 x-geneformer-base: &geneformer-base
-  image: ${ISP_PLATFORM_IMAGE:-isp-platform:v1.3.1}
+  image: ${ISP_PLATFORM_IMAGE:-isp-platform:v1.3.2}
   user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
   volumes:
     - .:/app
@@ -176,16 +176,3 @@ services:
       - /app/core/run_isp_umap.py
       - --config
       - /app/core/config/isp_umap.yaml
-
-  # Sequential ISP (OE and/or KD chain): docker compose run --rm sequential_isp
-  sequential_isp:
-    <<: *geneformer-gpu
-    container_name: isp_platform_sequential_isp
-    environment:
-      <<: *geneformer-env
-      SEQUENTIAL_ISP_CONFIG: /app/core/config/sequential_isp.yaml
-    command:
-      - python3
-      - /app/core/run_sequential_isp.py
-      - --config
-      - /app/core/config/sequential_isp.yaml

@@ -44,7 +44,8 @@ RUN chmod +x /app/scripts/container-entrypoint.sh \
 #
 # DOWNLOAD_MODELS=default|minimal|all|none
 # Optional build-arg HF_TOKEN if Hugging Face rate-limits anonymous access
-# (not persisted as an image ENV). Build needs network: Google Drive, HF, BioMart.
+# (not persisted as an image ENV). Build needs network: Google Drive, HF
+# (BioMart only for DOWNLOAD_MODELS=all; mouse↔human orthologs are pinned in the repo).
 ARG DOWNLOAD_MODELS=default
 ARG HF_TOKEN=
 ARG SKIP_ORTHOLOGS=0

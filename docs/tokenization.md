@@ -122,7 +122,7 @@ Optional **project curated overlays** (do not edit platform `*_curated.tsv`): se
 
 ![Default ortholog tables and project overlay](ortholog_tables_and_overlay.png)
 
-The default tables (Ensembl table → `ortholog_policy` → platform `*_curated.tsv`) are applied to every cross-species run. The platform curated table restores POU5F1, NANOG and GAPDH, which Ensembl labels one-to-many (human paralogues POU5F1B and NANOGP8, mouse predicted genes) and `one2one` would otherwise drop. A project overlay is added on top only when it is selected; it can restore further pairs but never edits the platform tables. Details: [ortholog README](../core/geneformer/dicts/orthologs/README.md#default-tables-and-overlays).
+The default tables (pinned Ensembl table → `ortholog_policy` → platform `*_curated.tsv`) are applied to every cross-species run. The platform curated table restores POU5F1, NANOG and GAPDH, which Ensembl labels one-to-many (human paralogues POU5F1B and NANOGP8, mouse predicted genes) and `one2one` would otherwise drop. A project overlay is added on top only when it is selected; it can restore further pairs but never edits the platform tables. Details: [ortholog README](../core/geneformer/dicts/orthologs/README.md#default-tables-and-overlays).
 
 Ortholog tables: `core/geneformer/dicts/orthologs/` (download via `scripts/download_mouse_human_orthologs.sh` and `scripts/download_drosophila_orthologs.sh`). Fly remapping typically keeps ~50% of protein-coding genes; mouse↔human is ~92%.
 
@@ -132,7 +132,10 @@ After the conversion report and **before** tokenization, an optional quality gat
 
 **Block rule (strict):** a gene in `critical_sets` is **present in the raw input** (Ensembl / symbol / alias) but **dropped by the mapping policy** (e.g. `ortholog_one2many` under `one2one`).  
 **Not Block:** the same critical gene is simply **absent from the input matrix** → `absent_from_input` (**Warn**).  
-**Same-species:** verdict **`not_applicable`**; tokenize continues.
+**Same-species:** verdict **`not_applicable`**; tokenize continues.  
+**Critical genes required:** `critical_sets` must list at least one gene; an audit without critical genes stops with an error.
+
+**Mapped percentage is reported, not judged.** The conversion report and the gate record the percentage of input features mapped, but by default it does not change the verdict. Its denominator is every annotated input feature, most of them non-coding or rarely detected, so it depends on the annotation of the input rather than on what reaches the model (the human data of the ISP Platform paper map 48.9% to Mouse-Geneformer, yet a median 86% of the genes detected in each cell are kept). To judge it anyway, set `block_mapped_pct_min` and/or `warn_mapped_pct_min` in the audit.
 
 The gate **never** auto-adds one-to-many genes to curated overlays. Approving a bridge (`decision: curated_bridge` / **B**) only accepts an already-configured overlay path.
 

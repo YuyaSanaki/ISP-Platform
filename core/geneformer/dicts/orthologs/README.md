@@ -5,13 +5,33 @@ Optional third column `orthology_type` (from BioMart) is used when present.
 
 | File | Use |
 |------|-----|
-| `mouse_to_human.tsv` | Full Ensembl mouse→human map (`scripts/download_mouse_human_orthologs.sh`; includes `orthology_type`) |
+| `mouse_to_human.tsv` | Full Ensembl mouse→human map, **pinned in git** (Ensembl 116; includes `orthology_type`) |
 | `mouse_to_human_curated.tsv` | Symbol aliases + corrected Ensembl pairs (merged **after** main table; overrides BioMart) |
-| `human_to_mouse.tsv` | Human→mouse Ensembl pairs (same download; includes `orthology_type`) |
+| `human_to_mouse.tsv` | Human→mouse Ensembl pairs, **pinned in git** (column swap of `mouse_to_human.tsv`) |
+| `SHA256SUMS` / `ensembl_release.json` | Checksums and provenance of the two pinned tables |
 | `human_to_mouse_curated.tsv` | Human symbol aliases → mouse Ensembl |
 | `drosophila_to_*.tsv` | Full fly→human / fly→mouse maps (`scripts/download_drosophila_orthologs.sh`; includes `orthology_type`) |
 | `core/geneformer/dicts/drosophila/fly_symbol_to_fbgn.tsv` | Fly symbol → `FBgn` for ISP (`p53`/`Tp53`→`FBgn0039044`, `Brca2`→`FBgn0050169`) |
 | `*_curated.tsv` | Same merge rule for every conversion pair |
+
+## Pinned mouse↔human tables
+
+The two mouse↔human tables are distributed with the repository so that conversions are
+reproducible. They were retrieved from Ensembl BioMart on 2026-08-07 (release 116; 25,788 rows
+each) and are the tables used for the ISP Platform v1.0.0 paper runs.
+
+| File | SHA-256 |
+|------|---------|
+| `human_to_mouse.tsv` | `28bbe8231c01af5189c126cddd4a852ed14ab7957e3da8ae60f20af667eb101a` |
+| `mouse_to_human.tsv` | `eb7e74b2be9d8965a787422e5046cab6f53c05e7c9c14666d9f73952a72a24dd` |
+
+Verify: `cd core/geneformer/dicts/orthologs && sha256sum -c SHA256SUMS`.
+
+`scripts/download_mouse_human_orthologs.sh` (and the Docker build) verifies these tables and
+does not contact BioMart. `ORTHOLOG_REFRESH=1` replaces them with a live BioMart query; the live
+release changes over time, so the result will not match `SHA256SUMS` and conversions will
+differ. To adopt a new release, commit the new tables together with updated `SHA256SUMS` and
+`ensembl_release.json`. Fly tables (`drosophila_to_*.tsv`) are still fetched from live BioMart.
 
 **Fly aliases:** do not invent mammal gene names (`Igfbp2`) for fly IDs. `FBgn0283477` is SF2, not IGFBP2; `FBgn0004644` is hedgehog (`hh`), not p53. True fly p53 (`FBgn0039044`) is BioMart `ortholog_one2many` to the p53 family → dropped under default `one2one`.
 
@@ -65,12 +85,12 @@ When `orthology_type` is present in the TSV, `one2one` prefers rows labeled `ort
 
 `load_ortholog_table` builds the mapping for a cross-species run in this order:
 
-1. **Ensembl table** (`human_to_mouse.tsv` / `mouse_to_human.tsv`): downloaded from the current Ensembl BioMart release; all homology types.
+1. **Ensembl table** (`human_to_mouse.tsv` / `mouse_to_human.tsv`): pinned, checked against `SHA256SUMS`; all homology types.
 2. **Ortholog policy** (`species.ortholog_policy`, default `one2one`): ambiguous one-to-many / many-to-one rows are dropped.
 3. **Platform curated table** (`*_curated.tsv`): always applied; restores POU5F1, NANOG and GAPDH, pins IGFBP2 and adds symbol aliases.
 4. **Project overlay** (optional): applied only when `species.ortholog_curated_overlay` (or env / CLI) is set.
 
-Steps 1–3 are the **default tables**: they are applied to every cross-species run. Steps 3 and 4 run after the policy, so their rows survive `one2one`; when two sources claim the same target, the curated or overlay source is kept. An overlay never edits the platform files.
+Steps 1–3 are the **default tables**: they ship with the platform and are the same for every run. Steps 3 and 4 run after the policy, so their rows survive `one2one`; when two sources claim the same target, the curated or overlay source is kept. An overlay never edits the platform files.
 
 | Gene (human → mouse) | Ensembl | After `one2one` | After platform curated |
 |------|---------|-----------------|------------------------|
@@ -81,7 +101,7 @@ Steps 1–3 are the **default tables**: they are applied to every cross-species 
 
 These tables are used only when the input species differs from the model species; same-species runs do not convert genes.
 
-The counts in the diagram are for the Ensembl 116 tables pinned in v1.0.1 (each direction: 25,788 rows → 17,146 one2one pairs → 17,149 after the platform curated table); other releases give different counts. The ISP Platform paper uses these default tables without an overlay.
+With the pinned Ensembl 116 tables, each direction has 25,788 rows → 17,146 one2one pairs → 17,149 after the platform curated table. The ISP Platform paper uses these default tables without an overlay.
 
 ## Project curated overlays (analysis-scoped)
 
@@ -93,10 +113,12 @@ Platform `*_curated.tsv` files stay global. Analysis projects may add an **expli
 | Env | `GENEFORMER_ORTHOLOG_CURATED_OVERLAY=...` |
 | CLI | `--ortholog-curated-overlay ...` (tokenize / pipeline) |
 
+Template: [`examples/ortholog_overlays/`](../../../../examples/ortholog_overlays/README.md) (`curated_bridge_{pair}.tsv.example`; copy, drop `.example`, replace the rows).
+
 If the path is a **directory**, the loader picks `curated_bridge_{pair}.tsv` (e.g. `curated_bridge_human_to_mouse.tsv`). Overlay rows are merged **after** the platform curated TSV. Prefer Ensembl ID→ID rows for reproducibility.
 
 ## Ortholog loss gate
 
-Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (a one2many gene that the platform curated table does not restore). Absent-from-input criticals are **Warn** only. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
+Tokenize can run `ortholog_loss_gate` when `tokenizer.ortholog_audit` is set. **Block** = critical gene **present in input** but dropped by policy (a one2many gene that the platform curated table does not restore). Absent-from-input criticals are **Warn** only. The audit must list at least one critical gene. The mapped percentage is reported but does not change the verdict unless `block_mapped_pct_min` / `warn_mapped_pct_min` are set. The gate does **not** auto-write overlay / curated rows — use an explicit overlay + approval choice **B**.
 
 Operator docs: [docs/tokenization.md](../../../../docs/tokenization.md#ortholog-loss-gate).

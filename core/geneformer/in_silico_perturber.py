@@ -194,7 +194,7 @@ def resolve_forward_batch_size(
     """Turn forward_batch_size="auto" into a number measured on this GPU.
 
     ``n_forwards`` sizes the probe to the peak of the real scoring loop.
-    Group / sequential ISP holds a perturbed forward and an original forward;
+    Group and State-feedback ISP hold a perturbed forward and an original forward;
     pass ``n_forwards=2`` and a distinct ``task`` so that cache is not reused
     from a single-forward genome-wide ISP calibration (that mismatch OOMs).
     """
@@ -358,9 +358,20 @@ def overexpress_tokens(example):
     Genes already present are deleted then re-inserted at position 0 (move-to-front).
     Genes absent from the encoding are newly inserted. Any *net* length growth is
     offset by dropping the lowest-ranked (tail) tokens so the sequence length stays
-    equal to the pre-OE length. This length-preserving rule fixes group OE of
-    absent genes (e.g. somatic OSKM4), where upstream Geneformer insert-without-
-    truncate + post-hoc emb surgery often yields Embedding shape mismatch.
+    equal to the pre-OE length, whatever that length is. The original cell is then
+    aligned by removing exactly ``len(tokens_to_perturb)`` unique positions
+    (``oe_indices_to_remove_for_alignment``), so no overflow count is needed.
+
+    Official Geneformer (Hugging Face ``ctheodoris/Geneformer`` ``1f7fbae``) instead
+    clamps the perturbed cell to the model input size and truncates the original by
+    ``calc_n_overflow``, which is computed from the clamped length. With k OE genes
+    absent from a cell of length L, that count is wrong for
+    ``max_len - 2k < L < max_len`` (the rest runs): gene-level comparison raises a
+    size mismatch (V2-104M, L = 4094, OSKM absent: 4092 vs 4090), and goal-state
+    runs compare against an over-truncated original. The code this perturber was
+    derived from (Mouse-Geneformer) inserted without truncation and padded absent
+    genes with trailing indices; that path is what failed with shape mismatches.
+    See ``docs/upstream_overexpression.md``.
     """
     # -100 indicates tokens to overexpress are not present in rank value encoding
     ids = example["input_ids"]
@@ -784,7 +795,7 @@ def quant_cos_sims(model,
         outputs, mini_max_len = compute_batch_embeddings(perturbation_minibatch)
 
         # Clone the layer we keep so the full hidden-state stack can be freed
-        # before the original-encoding forward (group / sequential scoring).
+        # before the original-encoding forward (group / rank-edit scoring).
         minibatch_emb = batched_layer_embs(outputs, layer_to_quant).clone()
         del outputs
 

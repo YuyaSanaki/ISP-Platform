@@ -35,7 +35,7 @@ Allowed entrypoints (Compose services use the same scripts):
 |----------|------------|------------------|
 | Pipeline (E2E) | `python3 core/run_pipeline.py --config …` | `core/config/pipeline.yaml` |
 | ISP UMAP | `python3 core/run_isp_umap.py --config …` | `core/config/isp_umap.yaml` |
-| Sequential ISP | `python3 core/run_sequential_isp.py --config …` | `core/config/sequential_isp.yaml` |
+| State-feedback ISP | `python3 core/run_state_feedback_isp.py --config …` | `core/config/state_feedback_isp.yaml` |
 | Tokenize (CLI) | `python3 core/execute_tokenizer_pipeline.py` | `TOKENIZE_CONFIG` → `core/config/tokenize.yaml` |
 | Fine-tune (CLI) | `python3 core/run_finetune.py --config …` | `core/config/finetune.yaml` |
 | ISP (CLI) | `accelerate launch … core/run_isp.py --config …` | `core/config/isp.yaml` |

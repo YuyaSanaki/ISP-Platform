@@ -7,16 +7,16 @@
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.3.1 · Docker image `isp-platform:v1.3.1`
+**Release:** v1.3.2 (includes the peer-reviewed v1.0.1) · Docker image `isp-platform:v1.3.2`
 
 
-Run tokenize, fine-tune, ISP, UMAP, and sequential multi-gene ISP (ordered rank-edit: OE/KD steps applied one after another to the gene-rank encoding, scored after each step) from the **CLI** or **Web UI**, both on Docker Compose and Streamlit.
+Run tokenize, fine-tune, ISP, UMAP, and multi-step multi-gene ISP from the **CLI** or **Web UI**, both on Docker Compose and Streamlit. Multi-step ISP is **State-feedback ISP**: OE/KD steps are applied in order on the gene-rank tokens, and after each step the model output reorders the genes before the next step.
 
 AI tools (Cursor and Antigravity) assisted with code and documentation. The authors reviewed, tested, and modified the generated code and manually verified results.
 
 ## Platform scheme
 
-Two Geneformer backends plus **ortholog-based gene-name conversion**, **sequential multi-gene ISP**, and **End-to-End Pipeline** are integrated in a **CLI/WebUI**. Cross-species / sequential experiments can be run from one interface.
+Two Geneformer backends plus **ortholog-based gene-name conversion**, **length-preserving multi-gene ISP** and **State-feedback multi-step ISP**, and **End-to-End Pipeline** are integrated in a **CLI/WebUI**. Cross-species / multi-step experiments can be run from one interface.
 
 | Backend              | Source                                                                                         | Role                                                                                                                                                                                             |
 | -------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -64,7 +64,7 @@ flowchart TD
   class J junction
 ```
 
-### Conventional vs sequential multi-gene ISP
+### Conventional vs State-feedback multi-step ISP
 
 ```mermaid
 flowchart LR
@@ -77,22 +77,20 @@ flowchart LR
     C1 --> C2 --> C3 --> C4
   end
 
-  subgraph SEQ["New: Sequential Multi-Gene ISP (ordered rank-edit)<br/>Token Length-Preserving, Flexible Combination of Overexpression/Knockdown"]
+  subgraph SF["New: State-feedback Multi-Step ISP<br/>Token Length-Preserving OE/KD, Model Response Fed Back Between Steps"]
     direction LR
     S1["scRNAseq<br/>Original gene rank"]
-    S2["Step 1 OE or KD<br/>edit original ranks"]
-    S5["Step 2 OE or KD<br/>edit step-1 ranks"]
-    S7["Final gene rank<br/>(set by step order)"]
-    S3["Geneformer<br/>Pass 1 (scoring)"]
-    S4["Step 1 shift<br/>vs original start"]
-    S6["Geneformer<br/>Pass 2 (scoring)"]
+    S2["1st ISP OE or KD<br/>Gene Rank promotion or demotion"]
+    S3["Geneformer<br/>Δh per gene"]
+    S4["Δrank decoder<br/>Reorder genes"]
+    S5["2nd ISP OE or KD<br/>on the reordered ranks"]
+    S6["Geneformer<br/>Δh per gene"]
+    S7["Δrank decoder<br/>Reorder genes"]
     S8["Final state shift prediction"]
-    TRAJ["Per-step shift trajectory<br/>no feedback of predictions"]
-    S1 --> S2 --> S5 --> S7
-    S2 -.-> S3 --> S4
-    S7 -.-> S6 --> S8
-    S4 -.-> TRAJ
-    S8 -.-> TRAJ
+    SPEC["Specific gain<br/>minus matched placebo chains"]
+    S1 --> S2 --> S3 --> S4
+    S4 --> S5 --> S6 --> S7 --> S8
+    S8 -.-> SPEC
   end
 
   classDef grey fill:#f7fafc,stroke:#a0aec0,stroke-width:2px,color:#222
@@ -108,13 +106,13 @@ flowchart LR
   class C2,S2 blueLite
   class C3,S3,S4 blueBox
   class C4 blueSolid
-  class S5,S7 redLite
-  class S6 redBox
+  class S5 redLite
+  class S6,S7 redBox
   class S8 redSolid
-  class TRAJ green
+  class SPEC green
 ```
 
-Only the edited gene ranks carry over from one step to the next; each Geneformer pass scores the shift against the original start state and its prediction is not fed back. Each OE step moves its genes to the front, so later OE genes end up with higher ranks and the step order sets the final rank layout. Two schedules with the same final layout give identical predictions; for example, sequential M→K→S→O gives the same encoding as simultaneous `[O, S, K, M]`. Details: [docs/sequential_isp.md](docs/sequential_isp.md).
+Each step is one group perturbation (OE moves genes to the front and keeps the encoding length; KD removes them). After every step, including the last, the change in Geneformer hidden states (Δh) is decoded into a per-gene rank displacement and the genes are reordered before the next step. The same steps without reordering are the `no_feedback` baseline. Part of the feedback gain is not specific to the chosen genes, so results are reported as the gain beyond matched placebo chains ([docs/state_feedback_isp.md](docs/state_feedback_isp.md)).
 
 ## Status
 
@@ -312,7 +310,7 @@ docker compose run --rm pipeline
 | Fine-tune                     | `docker compose run --rm finetune`                                                               | [fine-tuning.md](docs/fine-tuning.md)                                           |
 | ISP                           | `docker compose run --rm isp`                                                                    | [in-silico pertabation.md](docs/in-silico%20pertabation.md)                     |
 | ISP UMAP                      | `docker compose run --rm isp_umap`                                                               | [isp_umap.md](docs/isp_umap.md)                                                 |
-| Sequential ISP                | `docker compose run --rm sequential_isp`                                                         | [sequential_isp.md](docs/sequential_isp.md)                                     |
+| State-feedback ISP            | `python3 core/run_state_feedback_isp.py --config core/config/state_feedback_isp.yaml`            | [state_feedback_isp.md](docs/state_feedback_isp.md)                             |
 | E2E pipeline                  | `docker compose run --rm pipeline`                                                               | [pipeline.md](docs/pipeline.md)                                                 |
 | Ad-hoc script (rare)          | `docker compose --profile build run --rm --no-deps isp-platform python3 /app/scripts/...` | —                                                                               |
 
@@ -326,7 +324,7 @@ docker compose run --rm pipeline
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `platform_webui`                                                | Streamlit control panel (port **8502**; distinct from Mouse-Geneformer-WebUI’s `webui` on 8501) |
 | `pipeline`                                                      | Tokenize → Fine-tune → ISP                                                                      |
-| `tokenize` / `finetune` / `isp` / `isp_umap` / `sequential_isp` | Stage-only jobs                                                                                 |
+| `tokenize` / `finetune` / `isp` / `isp_umap`                    | Stage-only jobs                                                                                 |
 | `isp-platform` (`profiles: [build]`)                     | Image build + rare ad-hoc CLI; **not** started by `compose up`                                  |
 
 
@@ -357,7 +355,7 @@ See [docs/architecture.md](docs/architecture.md).
 | **ISP**                        | [docs/in-silico pertabation.md](docs/in-silico%20pertabation.md)                                             |
 | **E2E pipeline**               | [docs/pipeline.md](docs/pipeline.md)                                                                         |
 | **ISP UMAP**                   | [docs/isp_umap.md](docs/isp_umap.md)                                                                         |
-| **Sequential ISP**             | [docs/sequential_isp.md](docs/sequential_isp.md)                                                             |
+| **State-feedback ISP** (v1.0.1) | [docs/state_feedback_isp.md](docs/state_feedback_isp.md) — how it works, conditions and Web UI settings · design and validation: [docs/state_feedback_decode_methods.md](docs/state_feedback_decode_methods.md) |
 | **Web UI (details)**           | [docs/web-ui.md](docs/web-ui.md)                                                                             |
 
 

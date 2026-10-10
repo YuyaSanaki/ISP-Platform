@@ -4,19 +4,29 @@ All notable changes to **ISP³ Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.3.2] - 2026-10-10
+
+Includes the peer-reviewed v1.0.1 (tag `v1.0.1`, review response for *Genes to Cells*); the full list is under [1.0.1] below. All v1.1.0–v1.3.1 features are kept (500-step warmup default, ISP UMAP postprocess, pre-ISP cell-type annotation and panels).
 
 ### Changed
 
-- **The platform curated ortholog tables now restore POU5F1 ↔ Pou5f1 and NANOG ↔ Nanog** (both directions). Ensembl labels both pairs one-to-many because of the human paralogues POU5F1B and NANOGP8, so `one2one` dropped these core pluripotency factors from every cross-species conversion. The paralogues stay unmapped. Cross-species runs therefore differ from earlier versions by these two genes; same-species runs are unchanged.
+- **Multi-step ISP is State-feedback ISP.** The Sequential ISP run type (ordered rank-edit without feedback) is removed: runner, config, Compose service `sequential_isp`, Web UI run type and `docs/sequential_isp.md`. The same steps without feedback remain as the `no_feedback` baseline of State-feedback ISP. Guide: `docs/state_feedback_isp.md`.
+- State-feedback ISP defaults match the paper: placebo contrast on, 30 comparison placebos, decoder trained on up to 300 start cells.
+- Mouse↔human Ensembl ortholog tables are pinned in the repository (release 116, `SHA256SUMS`); the download script and the Docker build verify them offline. The ortholog loss gate decides on critical genes only.
 
 ### Added
 
-- Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / NANOG / GAPDH as examples, in the ortholog README and `docs/tokenization.md`.
+- State-feedback ISP (`core/run_state_feedback_isp.py`, `core/state_feedback/`, Web UI run type, stability runner `core/run_state_feedback_stability.py`) with the potential-outcome placebo contrast and sequential KO counterfactual.
+- Web UI project curated ortholog overlay and ortholog loss gate with a critical-gene list; overlay template in `examples/ortholog_overlays/`.
+- `docs/upstream_overexpression.md` and length-preserving OE tests; ISP stats column glossary in `docs/in-silico pertabation.md`.
 
 ### Fixed
 
-- **Group delete / overexpress goal-state scores no longer include padding.** Scoring removes k positions from the original embedding (and, for overexpression, the k leading OE positions from the perturbed one) but mean-pooled over the unremoved length L, so for cells shorter than the longest cell of their forward minibatch up to k padding hidden states entered the mean. Both sides are now pooled over their first L − k positions (a deletion encoding keeps its own length), which gives the same score at any `forward_batch_size`, i.e. the score of `forward_batch_size: 1`. On BBRC (Geneformer V2-104M, somatic → pluripotent, batch 8) the median goal-state shift of group OE was 1.0–2.1% too low (OSKM 0.01004 → 0.01025) and that of group delete too high (ACTB+B2M+GAPDH 0.00626 → 0.00563); the order of factor sets is unchanged. This applies to ISP (`run_isp.py`) and to Sequential ISP scoring (`run_sequential_isp.py`). Single-gene ISP is unchanged. Set `isp.legacy_padding_mean: true` (or `ISP_LEGACY_PADDING_MEAN=1`, which Sequential ISP reads) to reproduce scores of earlier releases; the setting is recorded in `isp_run_metadata.yaml`. Test: `tests/test_group_goal_state_padding.py`.
+- Group delete / overexpress goal-state scores no longer include padding (`isp.legacy_padding_mean: true` restores the earlier scores).
+
+### Notes
+
+- Docker image / Compose default tag is `isp-platform:v1.3.2`.
 
 ## [1.3.1] - 2026-09-22
 
@@ -72,6 +82,73 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Pin analysis repos that need the previous schedule to branch **`ver1.0.0`** / image `isp-platform:v1.0.0`.
 
+## [1.0.1] - 2026-10-09
+
+Peer-reviewed version (review response, *Genes to Cells*). Tag `v1.0.1` was moved on 2026-10-09 from `3b8616f` (first release, 2026-09-28, now tag `v1.0.1-initial`) to include the peer-review changes. Clones made before the move keep the old tag until `git fetch --tags --force`.
+
+### Changed
+
+- **State-feedback ISP defaults match the method in the paper** (`core/config/state_feedback_isp.yaml`): the placebo contrast is on (`placebo_contrast.enabled: true`, 10 estimation placebos), the stability runner draws one set of 30 comparison placebos (`stability.n_random_chains: 30`, `random_seeds: [0]`; previously 2 draws of 20), and the decoder is trained on up to 300 start cells (`decoder.train_max_ncells: 300`; previously 200). Runs with the default config therefore take longer and report smaller, placebo-corrected gains than before. Set `placebo_contrast.enabled: false` for the previous behaviour.
+- State-feedback ISP guide and Web UI help state that the method is a sequential simulation, not a time course: each step acts on the state inferred after the previous steps, so the order of the steps matters, but a step is not a unit of time.
+- **The ortholog loss gate decides on critical genes only.** It blocks when a critical gene present in the input is dropped by the mapping (or when the mapping provenance is incomplete) and warns when a critical gene is absent from the input. The percentage of input features mapped is still reported but no longer blocks below 50% or warns below 90% by default: its denominator is every annotated input feature, so it reflects the annotation of the input more than the genes that reach the model (the paper's human data map 48.9% to Mouse-Geneformer and were blocked). Set `block_mapped_pct_min` / `warn_mapped_pct_min` / `pass_mapped_pct_min` in the audit to restore the previous thresholds. An audit must now list at least one critical gene; one without critical genes stops with an error.
+- **The platform curated ortholog tables now restore POU5F1 ↔ Pou5f1 and NANOG ↔ Nanog** (both directions). Ensembl labels both pairs one-to-many because of the human paralogues POU5F1B and NANOGP8, so `one2one` dropped these core pluripotency factors from every cross-species conversion. The paralogues stay unmapped. Each direction now maps 17,149 pairs (17,147 before). Cross-species runs therefore differ from earlier versions by these two genes; same-species runs are unchanged.
+
+- **State-feedback ISP baseline condition renamed `ordered_rank_edit` → `no_feedback`.** It applies the same steps with no feedback between them. Its output folder is `no_feedback/` and the stability runner's endpoint columns are `no_feedback_endpoint` and `gain_over_no_feedback` (`phase12_gate.csv`: `no_feedback_final_median`, `beats_no_feedback`). `ordered_rank_edit` is still accepted in configs and `--conditions`, steps under a top-level `ordered_rank_edit:` or `sequential:` block are still read, and `aggregate` still reads runs written with the old folder and column names. The step operators moved to `core/rank_edit.py` and the runner helpers (start-cell selection, scoring, GPU batch sizing) to `core/state_feedback/runtime.py`.
+- **State-feedback ISP always feeds back after every step; the other schedules and the event cap are removed.** Feedback only after some steps, or only after the last step, makes the result depend on the final encoding alone, as without feedback, so these schedules were not sequential. `feedback_every_step`, `feedback_after_step`, `feedback_after_last_step`, `multi_step.max_feedback_events` and `eval.perturbation: feedback_point` are gone from the runner, the config and the Web UI; the number of feedback events now always equals the number of steps. A config that still sets these keys to anything other than feedback after every step stops with an error. The Web UI, the config and the guide now state that the error grows with the number of steps. The stability runner drops its single-event mode.
+- **Random control chains are matched to the configured genes' position in the start cells** (`core/state_feedback/random_chains.py`). Random genes used to be drawn from genes detected in both states, so on BBRC OSKM they were mostly genes already present near the top of the encoding, while OSKM are absent (SOX2, POU5F1) or rare near the bottom (KLF4, MYC). Overexpressing them was a different edit. Each configured gene is now replaced by a gene drawn uniformly from the whole vocabulary among genes with the same start-cell detection and position. Draws with several random seeds are independent, and the draw is written with gene symbols and balance to `random_chains.json`. The specific-gain CI now resamples random chains as well as cells, and the aggregate reports the gain per random draw, the running random mean and a leave-one-out null.
+- **State-feedback ISP Δrank decoder reads Δh only.** The linear layer no longer takes base rank or a bias, so zero perturbation gives exactly zero displacement for any trained weights, and the identity loss term (`decoder.lam_identity`) is gone. On BBRC n=300 the Δh-only prediction of the previous decoder already matched it beyond base rank (partial ρ 0.332 vs 0.329). Decoders saved before this change cannot be loaded; retrain instead of passing them to `--decoder-checkpoint`. The `delta_h_only` control is dropped because it is now the decoder itself; `delta_h_shuffled` stays. Reported direction-fidelity and specificity numbers are from Pegasus re-measurement at `46035be` (2026-09-29); see `docs/state_feedback_decode_methods.md`.
+
+### Added
+
+- Template for a project curated ortholog overlay (`examples/ortholog_overlays/`): `curated_bridge_{human_to_mouse,mouse_to_human}.tsv.example` with one format row (POU5F1 ↔ Pou5f1, already in the platform table, so it changes no mapping) and a README on copying, editing and selecting it. The `.example` suffix keeps the folder itself from being used as an overlay.
+- Web UI, cross-species runs: **Project curated overlay** (path to a TSV or a folder with `curated_bridge_<pair>.tsv`, written to `species.ortholog_curated_overlay`; the run does not start if no table is found for the current pair) and **Ortholog loss gate** with a **Critical genes** list (written to `stages.tokenize.tokenizer.ortholog_audit_inline`). Both could previously only be set in YAML or on the command line.
+- State-feedback ISP placebo contrast (`core/state_feedback/placebo_contrast.py`, `state_feedback.placebo_contrast`). Most of the feedback gain is not specific to the perturbed genes: matched placebo genes get most of it too. With the contrast, the decoder is trained on, and every feedback event uses, Δh minus the mean Δh after swapping the chain's genes for each of `n_estimation` matched estimation placebos in the same cell. The stability runner reports the gain of the configured chain minus the mean gain of separately drawn comparison placebo chains (`specific_gain`). Delete steps use the counterfactual in `docs/state_feedback_deletion_counterfactual.md`.
+- Diagram of how the default ortholog tables and a project overlay combine (`docs/ortholog_tables_and_overlay.png`), with the load order and POU5F1 / NANOG / GAPDH as examples, in the ortholog README and `docs/tokenization.md`.
+- State-feedback ISP `pin_overexpressed` (default `true`): after each reorder, the genes overexpressed so far stay at the front in their pre-reorder order, and only the other genes are reordered. This applies to every rerank condition, including `oracle`. Rerank diagnostics are computed on the pinned order.
+- `docs/upstream_overexpression.md` (review response, R2-Major2): how ISP³ length-preserving group OE differs from official Geneformer (`ctheodoris/Geneformer` `1f7fbae`, the tip of `main` on 2026-09-30). Official Geneformer cuts the perturbed cell to the model input size and cuts the original by an overflow count taken from the cut length. With k OE genes absent from a cell, that count is wrong for lengths `max_len` − 2k < L < `max_len`; on Geneformer V2-104M with OSKM, a cell of length 4,094 stops with a 4,092 vs 4,090 size mismatch, and all other tested lengths run. The `overexpress_tokens` docstring no longer says that upstream Geneformer often fails; it names this range and the Mouse-Geneformer path that ISP³ replaced. New tests in `tests/test_overexpress_length_preserve.py` run the failing input and the whole range through the ISP³ operators.
+- State-feedback ISP guide, design doc and Web UI help: numbers on reusing a Δrank decoder for other steps. On BBRC OSKM (n=3000, 24 orders), a decoder trained on simultaneous OSKM and reused for every order scored lower direction fidelity than one trained per order (pooled Spearman 0.38 vs 0.46), except for the 6 orders ending in POU5F1, and gave an uncorrelated order ranking. Train a new decoder (the default) for reported results.
+- `docs/in-silico pertabation.md`: column glossary for the ISP stats table (review response, R2-Minor1). `N_Detections` is the number of perturbed start-state cells whose encoding contains the gene, i.e. the number of per-cell shifts averaged into `Shift_to_goal_end`; the `N_Detections` ≥ 20 cut-off (`min_n_detections`) applies to the lollipop figure only.
+
+### Fixed
+
+- **Group delete / overexpress goal-state scores no longer include padding.** Scoring removes k positions from the original embedding (and, for overexpression, the k leading OE positions from the perturbed one) but mean-pooled over the unremoved length L, so for cells shorter than the longest cell of their forward minibatch up to k padding hidden states entered the mean. Both sides are now pooled over their first L − k positions (a deletion encoding keeps its own length), which gives the same score at any `forward_batch_size`, i.e. the score of `forward_batch_size: 1`. On BBRC (Geneformer V2-104M, somatic → pluripotent, batch 8) the median goal-state shift of group OE was 1.0–2.1% too low (OSKM 0.01004 → 0.01025) and that of group delete too high (ACTB+B2M+GAPDH 0.00626 → 0.00563); the order of factor sets is unchanged. This applies to ISP (`run_isp.py`) and to the group-aligned scoring of the State-feedback oracle runner's no-feedback path (`run_state_feedback_oracle.py`). The State-feedback ISP runner is unchanged: its cell-mean scoring already pooled each cell over its own length (BBRC re-runs were bit-identical). Single-gene ISP is unchanged. Set `isp.legacy_padding_mean: true` (or `ISP_LEGACY_PADDING_MEAN=1`, which the oracle runner reads) to reproduce scores of earlier releases; the setting is recorded in `isp_run_metadata.yaml`. Test: `tests/test_group_goal_state_padding.py`.
+- Group-OE scoring that assumes the overexpressed genes sit at the sequence front (`state_feedback.runtime.compute_goal_state_shifts`, used by the oracle runner's no-feedback path) counted a gene overexpressed in two steps twice. Scoring strips one leading position per token, so it also dropped the genes right after the factor block from both embeddings. Repeats are now dropped before scoring. Steps that repeat no gene (all OSKM orders) are unchanged, and the State-feedback ISP runner's cell-mean scoring was never affected.
+- State-feedback ISP endpoint gate now reads the feedback row at the last step when there is one, instead of relying on how step names sort against `feedback`.
+
+### Removed
+
+- **Ordered rank-edit ISP as a run type.** Multi-step ISP is State-feedback ISP; the same steps without feedback remain as its `no_feedback` baseline. Removed: `core/run_ordered_rank_edit_isp.py`, `core/ordered_rank_edit.py`, the aliases `core/run_sequential_isp.py` and `core/sequential_oe.py`, `core/run_oskm4_then_7factor_isp.py`, `core/config/ordered_rank_edit_isp.yaml`, the Compose services `ordered_rank_edit_isp` and `sequential_isp`, the Web UI run type **Ordered rank-edit ISP**, `docs/ordered_rank_edit_isp.md`, and `tests/test_ordered_rank_edit.py` (operator tests kept in `tests/test_rank_edit.py`). The guide `docs/ordered_rank_edit_and_state_feedback_isp.md` is replaced by `docs/state_feedback_isp.md`, and the README diagram now compares conventional ISP with State-feedback ISP.
+- State-feedback ISP per-cell multi-step stops. The convergence stop treated small whole-encoding changes as convergence even when a few genes moved a lot (one gene moving bottom to top in a 2048-gene cell still gives Spearman 0.997) or when a new perturbation was still to come. The 2-cycle stop required an exact return to the order from two events ago, which practically never happens because a new perturbation enters between events. `feedback_guard.csv` is no longer written. A `state_feedback.multi_step` block, including `converge_*` and `halt_on_cycle`, is ignored with a warning, so older configs still load.
+
+## [1.0.1-initial] - 2026-09-28
+
+First release of v1.0.1 (tag `v1.0.1-initial`, `3b8616f`). Superseded by the peer-reviewed v1.0.1 above.
+
+### Added
+
+- State-feedback ISP (`core/run_state_feedback_isp.py`, `core/state_feedback/`): a learned residual Δrank decoder that reorders each cell's genes from perturbation-induced hidden-state changes, compared against the Ordered rank-edit path, parameter-free baselines and an oracle ceiling. Direction fidelity is scored against the observed Δrank on held-out genes. It now includes a base-rank control: a cross-fitted base-rank-only predictor, and partial Spearman given base rank for every method. The verdict requires signal beyond base rank. An optional perturbation-specificity stage (`state_feedback.specificity`, `--specificity`) feeds the same decoder Δh from named gene sets and random draws (optionally detection-matched), with results in `perturbation_specificity/`. The model-space results are in `docs/state_feedback_decode_methods.md`: BBRC OSKM / 3F / 7F against random controls, n=50 and n=300, and external validity on Asano PIPseq. These are in-silico results only.
+- State-feedback ISP multi-step guardrails (`core/state_feedback/multistep.py`, `state_feedback.multi_step`). With `feedback_every_step: true`, each cell is halted on a 2-cycle (the proposed rerank is rejected) or stopped once its feedback changes stay small (Spearman > 0.995, or top-K Jaccard > 0.99 when the cell has more than K genes) for two events in a row. The chain is capped at `max_feedback_events` (default 5) feedback events. Per-cell halt reasons are written to `feedback_guard.csv` and per-condition counts to `run_manifest.json`. Whether multi-step feedback helps, or stays stable, has not been evaluated.
+- Guide `docs/ordered_rank_edit_and_state_feedback_isp.md`: how Ordered rank-edit ISP and State-feedback ISP work, what each State-feedback condition does, how results are judged, and every Web UI setting. It states that Ordered rank-edit does not pass the model's response to the next step, so the final shift depends only on the final encoding. Linked from the README, `docs/web-ui.md`, `docs/in-silico pertabation.md`, `docs/ordered_rank_edit_isp.md` and `docs/state_feedback_decode_methods.md`.
+- Web UI: **State-feedback ISP** run type. It reuses the Ordered rank-edit ISP source-run picker and step editor, can reuse a Δrank decoder trained in an earlier run on the same pipeline run (`--decoder-checkpoint`) or run direction fidelity only (`--eval-only`), and exposes the conditions, feedback step and perturbation-specificity options. The Outputs section shows the verdict, per-method direction fidelity, specificity tables and the Phase 1-2 gate.
+
+### Changed
+
+- **Sequential ISP is renamed Ordered rank-edit ISP**, to separate it from State-feedback ISP. The algorithm and its outputs are unchanged. What changed:
+  - Web UI run type: **Ordered rank-edit ISP**.
+  - Runner: `core/run_ordered_rank_edit_isp.py`.
+  - Operators: `core/ordered_rank_edit.py`.
+  - Template: `core/config/ordered_rank_edit_isp.yaml`, with an `ordered_rank_edit:` block.
+  - Compose service: `ordered_rank_edit_isp`.
+  - Output folders: `ordered_rank_edit_isp/` and `ordered_rank_edit_isp_<UTC>/`.
+  - Doc: `docs/ordered_rank_edit_isp.md`.
+  - Manifest `mode` values: `ordered_rank_edit_steps` and `ordered_rank_edit_oskm_orders`.
+  - Auto-batch cache task: `ordered_rank_edit_isp_group` (the first run re-probes the GPU).
+
+  The old names still work: `core/run_sequential_isp.py` and `core/sequential_oe.py` are aliases, the `sequential_isp` Compose service is kept, and a `sequential:` config block is read when `ordered_rank_edit:` is absent. State-feedback ISP configs now list their steps under `state_feedback.steps`; a top-level `sequential.steps` is still read.
+- Renamed from **Geneformer Platform** to **ISP³ Platform**. GitHub repo is now `ISP-Platform`; Docker image / Compose service is `isp-platform` (env `ISP_PLATFORM_IMAGE`).
+- Compose default image is `isp-platform:v1.0.1`. The image is rebuilt because the build now requires `typing-extensions>=4.13` and verifies the pinned ortholog tables.
+- Mouse↔human Ensembl ortholog tables (`human_to_mouse.tsv`, `mouse_to_human.tsv`; release 116, retrieved 2026-08-07) are now distributed in the repository with `SHA256SUMS` and `ensembl_release.json`. `scripts/download_mouse_human_orthologs.sh` and the Docker build verify these pinned tables offline instead of querying the live BioMart; `ORTHOLOG_REFRESH=1` restores the live query.
+
 ## [1.0.0] - 2026-09-02
 
 ### Added
@@ -80,7 +157,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - End-to-end pipeline: tokenize → fine-tune → ISP (+ optional UMAP).
 - Mouse and Human Geneformer backends with cross-species ortholog conversion.
 - Web UI (Streamlit) and Docker Compose CLI.
-- Sequential multi-gene ISP.
+- Sequential multi-gene ISP (renamed Ordered rank-edit ISP after 1.0.0).
 - Ortholog loss gate, conversion reports, and smoke-matrix test harness.
 
 ### Notes
