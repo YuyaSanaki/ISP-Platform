@@ -4,11 +4,15 @@ All notable changes to **ISP Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.3.3] - 2026-10-10
 
 ### Changed
 
-- Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names.
+- Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names. No code or result changes from v1.3.2.
+
+### Notes
+
+- Docker image / Compose default tag is `isp-platform:v1.3.3`.
 
 ## [1.3.2] - 2026-10-10
 
