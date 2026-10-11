@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names.
 
+### Fixed
+
+- The State-feedback ISP guide and config said that with `placebo_contrast.enabled` every feedback event uses the placebo contrast. Only the stability runner (`core/run_state_feedback_stability.py`) reads `state_feedback.placebo_contrast`; the State-feedback ISP runner (`core/run_state_feedback_isp.py`, Web UI run type) trains its decoder and reranks with Δh itself. The guide and config comment now say so, and the runner prints a note when the key is on. No results change: the paper's placebo-corrected results (τ, z) come from the stability runner, which applies the contrast.
+
 ## [1.0.1] - 2026-10-09
 
 Peer-reviewed version (review response, *Genes to Cells*). Tag `v1.0.1` was moved on 2026-10-09 from `3b8616f` (first release, 2026-09-28, now tag `v1.0.1-initial`) to include the peer-review changes. Clones made before the move keep the old tag until `git fetch --tags --force`.
