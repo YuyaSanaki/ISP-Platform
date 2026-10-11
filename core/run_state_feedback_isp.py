@@ -884,6 +884,13 @@ def main() -> int:
         )
     check_feedback_config(sf_cfg, len(steps))
     print(f"Feedback after every step: {len(steps)} events per chain", flush=True)
+    if (sf_cfg.get("placebo_contrast") or {}).get("enabled"):
+        print(
+            "Note: state_feedback.placebo_contrast is applied only by "
+            "core/run_state_feedback_stability.py; this runner trains and reranks "
+            "with delta_h itself.",
+            flush=True,
+        )
 
     from datasets import load_from_disk
 

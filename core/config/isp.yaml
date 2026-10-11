@@ -22,18 +22,21 @@ species:
   ortholog_policy: one2one
 
 perturbation:
-  type: delete # delete | overexpress | inhibit | activate
+  type: delete # delete | overexpress
     # "delete": delete gene from rank value encoding
     # "overexpress": move gene to front of rank value encoding
     #   (absent genes: insert at front + drop lowest-ranked tokens to preserve length)
-    # "inhibit": move gene to lower quartile of rank value encoding
-    # "activate": move gene to higher quartile of rank value encoding
+    # "inhibit" / "activate" (quartile shifts) are not implemented and stop with an error.
   organ_data: AD # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease
   start_state: AD
   end_state: WT
-  alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
+  # Extra state labels (values of state_key) scored besides start and end. With two or more,
+  # stats write alt columns per state (Shift_to_alt_end_<state>, ...).
+  alt_states: []
+  # Empty list = perturb each gene of each cell separately (genome-wide). Otherwise a list of
+  # gene symbols or Ensembl IDs perturbed together in every cell (group mode).
   genes_to_perturb: []
 
 model:

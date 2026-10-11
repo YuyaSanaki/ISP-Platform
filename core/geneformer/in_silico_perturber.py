@@ -188,15 +188,18 @@ def resolve_forward_batch_size(
     model_directory,
     *,
     n_forwards: int = 1,
+    keep_layer: int | None = None,
     task: str = "isp_forward",
     label: str | None = None,
 ):
     """Turn forward_batch_size="auto" into a number measured on this GPU.
 
     ``n_forwards`` sizes the probe to the peak of the real scoring loop.
-    Group and State-feedback ISP hold a perturbed forward and an original forward;
+    State-feedback ISP holds a perturbed forward and an original forward;
     pass ``n_forwards=2`` and a distinct ``task`` so that cache is not reused
     from a single-forward genome-wide ISP calibration (that mismatch OOMs).
+    Group ISP keeps only layer ``keep_layer`` of the perturbed forward while the
+    original forward runs; pass ``n_forwards=2, keep_layer=layer_to_quant``.
     """
     if not is_auto(value):
         return int(value)
@@ -220,20 +223,28 @@ def resolve_forward_batch_size(
         with torch.no_grad():
             held = []
             for _ in range(n_forwards):
-                held.append(model(input_ids=input_ids, attention_mask=attention_mask))
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                if keep_layer is None:
+                    held.append(outputs)
+                else:
+                    held.append(batched_layer_embs(outputs, keep_layer).clone())
+                del outputs
             del held
 
+    cache_fields = {
+        "task": str(task),
+        "n_forwards": n_forwards,
+        "model": str(model_directory),
+        "seq_len": max_len,
+        "dtype": str(next(model.parameters()).dtype),
+    }
+    if keep_layer is not None:
+        cache_fields["keep_layer"] = int(keep_layer)
     return resolve_batch_size(
         value,
         default=fallback,
         probe=probe,
-        cache_fields={
-            "task": str(task),
-            "n_forwards": n_forwards,
-            "model": str(model_directory),
-            "seq_len": max_len,
-            "dtype": str(next(model.parameters()).dtype),
-        },
+        cache_fields=cache_fields,
         label=probe_label,
     )
 
@@ -522,7 +533,7 @@ def make_perturbation_batch(example_cell,
             pass
         indices_to_perturb = [[i] for i in range(range_start, (example_cell["length"][0]-range_end))]
     elif combo_lvl>0 and (anchor_token is not None): 
-        example_input_ids = example_cell["input_ids "][0]
+        example_input_ids = example_cell["input_ids"][0]
         anchor_index = example_input_ids.index(anchor_token[0])
         indices_to_perturb = [sorted([anchor_index,i]) if i!=anchor_index else None for i in range(example_cell["length"][0])]  
         indices_to_perturb = [item for item in indices_to_perturb if item is not None]
@@ -1086,6 +1097,23 @@ def mean_nonpadding_embs(embs, original_lens):
     mean_embs = masked_embs.sum(1) / original_lens.view(-1, 1).float()
     return mean_embs
 
+UNIMPLEMENTED_PERTURB_TYPES = ("inhibit", "activate")
+
+
+def check_perturb_type_implemented(perturb_type):
+    """Stop on perturbation types whose rank-shift code path was never finished.
+
+    ``inhibit`` / ``activate`` are accepted by the option table but their batch builders,
+    embedding alignment and scoring are incomplete (no shift is applied, or the run fails
+    later), so they cannot produce valid results.
+    """
+    if perturb_type in UNIMPLEMENTED_PERTURB_TYPES:
+        raise ValueError(
+            f"perturb_type '{perturb_type}' is not implemented in ISP Platform. "
+            "Use 'delete' or 'overexpress'."
+        )
+
+
 class InSilicoPerturber:
     valid_option_dict = {
         "perturb_type": {"delete","overexpress","inhibit","activate"},
@@ -1134,14 +1162,14 @@ class InSilicoPerturber:
 
         Parameters
         ----------
-        perturb_type : {"delete","overexpress","inhibit","activate"}
+        perturb_type : {"delete","overexpress"}
             Type of perturbation.
             "delete": delete gene from rank value encoding
             "overexpress": move gene to front of rank value encoding
                 (absent genes are inserted at front; net length growth is offset by
                 dropping the lowest-ranked / tail tokens so encoding length is preserved)
-            "inhibit": move gene to lower quartile of rank value encoding
-            "activate": move gene to higher quartile of rank value encoding
+            "inhibit" / "activate" (shift to a lower / higher quartile) are not implemented
+            and raise ValueError.
         perturb_rank_shift : None, {1,2,3}
             Number of quartiles by which to shift rank of gene.
             For example, if perturb_type="activate" and perturb_rank_shift=1:
@@ -1281,6 +1309,7 @@ class InSilicoPerturber:
             self.tokens_to_perturb = [self.gene_token_dict.get(gene) for gene in self.genes_to_perturb]
 
     def validate_options(self):
+        check_perturb_type_implemented(self.perturb_type)
         # confirm arguments are within valid options and compatible with each other
         for attr_name,valid_options in self.valid_option_dict.items():
             attr_value = self.__dict__[attr_name]
@@ -1330,28 +1359,6 @@ class InSilicoPerturber:
                             "of rank value encoding rather than shifted by quartile")
                     self.perturb_rank_direct_shift = None
 
-        
-        if self.perturb_type in ["inhibit", "activate"]:
-            if (self.perturb_rank_shift is None) and (self.perturb_rank_direct_shift is None) :
-                if self.perturb_type == "inhibit":
-                    logger.warning(
-                        "please set the perturb_rank_shift set into 1-4. " )
-                    logger.warning(
-                            f"please set the perturb_rank_direct_shift set into 1-{self.model_input_size}. " )
-                elif self.perturb_type == "active":
-                    logger.warning(
-                        "please set the perturb_rank_shift into 1-4. " )
-                    logger.warning(
-                            f"please set the perturb_rank_direct_shift into 1-{self.model_input_size}. " )
-                logger.warning(
-                    "You must set the perturb_rank_shift. But not setting!!")
-                logger.warning(
-                        "You must set the perturb_rank_direct_shift. But not setting!!")
-                raise
-            else :
-                pass
-                    
-        
         if (self.anchor_gene is not None) and (self.emb_mode == "cell_and_gene"):
             self.emb_mode = "cell"
             logger.warning(
@@ -1430,13 +1437,6 @@ class InSilicoPerturber:
                     "Currently, anchor gene not available " \
                     "when modeling multiple cell states.")
         
-        if self.perturb_type in ["inhibit","activate"]:
-            if self.perturb_rank_shift is None and self.perturb_rank_direct_shift is None:
-                logger.error(
-                    "If perturb_type is inhibit or activate then " \
-                    "quartile to shift by must be specified.")
-                raise
-        
         if self.filter_data is not None:
             for key,value in self.filter_data.items():
                 if type(value) != list:
@@ -1480,12 +1480,22 @@ class InSilicoPerturber:
         filtered_input_data = load_and_filter(self.filter_data, self.nproc, input_data_file)
         model = load_model(self.model_type, self.num_classes, model_directory)
         layer_to_quant = quant_layers(model)+self.emb_layer
+        if self.perturb_group:
+            group_probe = {
+                "n_forwards": 2,
+                "keep_layer": layer_to_quant,
+                "task": "isp_group_forward",
+                "label": "Group ISP forward_batch_size",
+            }
+        else:
+            group_probe = {}
         self.forward_batch_size = resolve_forward_batch_size(
             self.forward_batch_size,
             model,
             filtered_input_data,
             self.pad_token_id,
             model_directory,
+            **group_probe,
         )
 
         if self.cell_states_to_model is None:

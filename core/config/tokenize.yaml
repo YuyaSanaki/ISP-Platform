@@ -26,7 +26,7 @@ species:
 tokenizer:
   # Standalone tokenize defaults; E2E pipeline overrides via config/pipeline.yaml runtime.*
   nproc: 16
-  max_cells: 300000  # cap cells tokenized; large studies can need 32GB+ RAM at default
+  max_cells: 300000  # cells per output shard ({prefix}_0, _1, …); large studies can need 32GB+ RAM at default
   # Pre-tokenize ortholog summary (JSON + TSV). Defaults true whenever ortholog conversion applies.
   # report_conversion: false
   # Ortholog loss gate (Pass/Warn/Block). Defaults on when ortholog_audit is set and conversion applies.

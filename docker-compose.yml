@@ -37,7 +37,6 @@ x-geneformer-base: &geneformer-base
   user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
   volumes:
     - .:/app
-    - /var/run/docker.sock:/var/run/docker.sock
   # Optional: set LD_PRELOAD in .env to override the entrypoint’s aarch64 default.
   environment:
     <<: *geneformer-env

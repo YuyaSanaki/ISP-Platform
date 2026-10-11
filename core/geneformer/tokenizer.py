@@ -217,12 +217,16 @@ class TranscriptomeTokenizer:
         """
 
         data_set_num = self.start_reading_file_num
+        saved_any = False
         while(1) :
             
             tokenized_cells, cell_metadata = self.tokenize_files(
                 data_set_num, data_directory, file_format
             )
             if int(len(tokenized_cells)) == 0 :
+                # tokenize_files re-reads the same files once the last file is reached.
+                if self.last_dataset_flag == True :
+                    break
                 continue
             
             tokenized_dataset = self.create_dataset(tokenized_cells, cell_metadata, use_generator=use_generator)
@@ -230,11 +234,17 @@ class TranscriptomeTokenizer:
             output_path = output_directory+"/"+output_prefix+"_"+str(data_set_num)+".dataset"
             tokenized_dataset.save_to_disk(output_path)
             print("saved to {}".format(output_path))
+            saved_any = True
             
             if self.last_dataset_flag == True :
                 break
 
             data_set_num += 1
+
+        if not saved_any:
+            msg = f"No cells were tokenized from {data_directory}; no .dataset was written."
+            logger.error(msg)
+            raise RuntimeError(msg)
         
 
 

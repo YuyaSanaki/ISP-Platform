@@ -87,7 +87,7 @@ This is **a difference between the start and observed-state groups**, not a meas
 2. For each gene present in both, take Δh (genes are matched by token, not position) and pair it with its teacher value `Δr_obs` (up to 256 genes per cell). The gene's original normalized position `base_rank` is kept for the base-rank control but is not a decoder input.
 3. Split the **genes** (not the cells) 80:20. The 20% are never used for training and are kept for evaluation. Because the teacher is one value per gene, splitting by cell would leak the answers.
 
-With `state_feedback.placebo_contrast.enabled`, the decoder is trained on, and every feedback event uses, Δh minus the mean Δh of matched placebo perturbations in the same cell (see [state_feedback_decode_methods.md](state_feedback_decode_methods.md)).
+**Placebo contrast (stability runner only).** `state_feedback.placebo_contrast` is read only by `core/run_state_feedback_stability.py`, which produced the paper's placebo-corrected results. With `enabled: true` its decoder is trained on, and every feedback event uses, Δh minus the mean Δh of matched placebo perturbations in the same cell (see [state_feedback_decode_methods.md](state_feedback_decode_methods.md)). The State-feedback ISP runner (`core/run_state_feedback_isp.py`, the Web UI run type) does not read the key: its decoder is trained on Δh itself, `linear_deltarank` reranks with Δh itself, and direction fidelity, specificity and the endpoint conditions in sections 2.4–2.5 and 3.2 describe that decoder.
 
 **Model**
 
@@ -187,7 +187,7 @@ On the 20% of genes not used for training, it compares each method's predicted r
   1. `linear_deltarank` beats both `norm` and `delta_mlm`, and the 95% confidence interval of each difference (cell-level bootstrap) excludes 0.
   2. The correlation after removing what the original rank explains (partial ρ given base rank) has a 95% confidence interval above 0.
 - Condition 2 is needed because the teacher is a group-mean rank difference, so much of the correlation can be explained by position alone ("genes that start high tend to go down, genes that start low tend to go up"). The partial ρ is the information Δh adds beyond the original position.
-- Measured on BBRC (n=300, Δh-only decoder without placebo contrast, `46035be`, Pegasus 2026-09-29): pooled ρ **0.482**, partial ρ **0.324** [0.317, 0.330], PASS. With the placebo contrast (the default) the selected decoder fits the held-out genes better: held-out Spearman 0.65–0.67 against 0.50–0.52 without it (the selection metric of 2.2, BBRC n=300, decoder seeds 0/1/2, same cells). Artifacts: `output/sf_pegasus_20260929_final/` (repo checkout) or Pegasus `runs_final_46035be/`.
+- Measured on BBRC (n=300, Δh-only decoder without placebo contrast, `46035be`, Pegasus 2026-09-29): pooled ρ **0.482**, partial ρ **0.324** [0.317, 0.330], PASS. With the placebo contrast (stability runner, the default there) the selected decoder fits the held-out genes better: held-out Spearman 0.65–0.67 against 0.50–0.52 without it (the selection metric of 2.2, BBRC n=300, decoder seeds 0/1/2, same cells). Artifacts: `output/sf_pegasus_20260929_final/` (repo checkout) or Pegasus `runs_final_46035be/`.
 
 **Secondary: endpoint gate (`phase12_gate.csv`)**
 
@@ -271,7 +271,7 @@ These can be changed by editing the **Config YAML** in the Web UI. The defaults 
 | `decoder.*` | See 2.2 | Training cells, genes per cell, epochs, loss weights, `max_shift_grid`, held-out gene fraction |
 | `eval.*` | | Direction-fidelity settings (top-K, bootstrap and permutation counts) |
 | `stability.*` | seeds 0/1/2, 30 chains, `random_seeds: [0]` | Random-chain control and stability evaluation (`core/run_state_feedback_stability.py`): decoder seeds, `n_random_chains`, `random_seeds` (one independent draw each), `min_stratum` |
-| `placebo_contrast.*` | on, 10 placebos | Train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell |
+| `placebo_contrast.*` | on, 10 placebos | Stability runner only (`core/run_state_feedback_stability.py`): train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell. Not read by `core/run_state_feedback_isp.py` (Web UI run type) |
 
 `feedback_every_step`, `feedback_after_step`, `feedback_after_last_step` and `multi_step` were removed. A config that still sets them to anything other than feedback after every step stops with an error.
 
