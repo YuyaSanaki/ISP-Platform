@@ -106,6 +106,7 @@ class _PipelineHarness:
         self.rp = rp
         self.run_dir = tmp / "run"
         self.run_dir.mkdir()
+        self.output_root = tmp / "output"
         self.config = tmp / "pipeline.yaml"
         self.config.write_text("data: {input_dir: /data/study}\n", encoding="utf-8")
         self.resolved = {
@@ -143,7 +144,14 @@ class _PipelineHarness:
         rp = self.rp
         patches = [
             mock.patch.object(sys, "argv", ["run_pipeline.py", "--config", str(self.config), *argv]),
-            mock.patch.object(rp, "load_yaml", lambda p: {"data": {"input_dir": "/data/study"}}),
+            mock.patch.object(
+                rp,
+                "load_yaml",
+                lambda p: {
+                    "data": {"input_dir": "/data/study"},
+                    "paths": {"output_root": str(self.output_root)},
+                },
+            ),
             mock.patch.object(rp, "resolve_pipeline_paths", lambda pipeline, run_dir: dict(self.resolved)),
             mock.patch.object(rp, "remove_tokenized_outputs", lambda *a, **k: []),
             mock.patch.object(rp, "resolve_tokenized_dataset", lambda *a, **k: self._existing("dataset_path")),
