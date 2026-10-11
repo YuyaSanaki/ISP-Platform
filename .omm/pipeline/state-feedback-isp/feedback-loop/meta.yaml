@@ -1,0 +1,9 @@
+created: 2026-10-11T07:24:55.469Z
+updated: 2026-10-11T07:24:55.522Z
+update_count: 2
+last_field: concern
+kind: nested-class
+title: feedback-loop
+children: []
+parentPath:
+  - state-feedback-isp

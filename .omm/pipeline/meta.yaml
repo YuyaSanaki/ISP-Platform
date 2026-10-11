@@ -1,0 +1,14 @@
+created: 2026-10-11T07:24:53.043Z
+updated: 2026-10-11T07:24:53.126Z
+update_count: 2
+last_field: diagram
+git_commit: 493ceb7
+git_branch: main
+children:
+  - finetune-stage
+  - ft-batch-calibrate
+  - isp-stage
+  - isp-umap
+  - orchestrator
+  - state-feedback-isp
+  - tokenize-stage

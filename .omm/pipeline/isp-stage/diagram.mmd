@@ -1,0 +1,13 @@
+graph LR
+    isp-runner["ISP runner\nrun_isp.py"]
+    perturber["In silico perturber\ngeneformer/in_silico_perturber.py"]
+    isp-stats["ISP stats\ngeneformer/in_silico_perturber_stats.py"]
+    figure-analysis["Figure analysis\nisp_analysis.py"]
+    isp-runner -->|"perturb_data, states, genes, OE or KD"| perturber
+    perturber -->|"isp_results/*_raw.pickle"| isp-stats
+    isp-stats -->|"ispstats_results/*.csv, .parquet"| figure-analysis
+    class isp-runner entry
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

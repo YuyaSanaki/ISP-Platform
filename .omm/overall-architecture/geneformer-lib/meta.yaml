@@ -1,0 +1,16 @@
+created: 2026-10-11T07:24:51.847Z
+updated: 2026-10-11T07:24:51.902Z
+update_count: 2
+last_field: diagram
+kind: nested-class
+title: geneformer-lib
+children:
+  - backends-registry
+  - conversion-report
+  - gene-converter
+  - in-silico-perturber
+  - ortholog-loss-gate
+  - perturber-stats
+  - tokenizer
+  - training-helpers
+parentPath: []

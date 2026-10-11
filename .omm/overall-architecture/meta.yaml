@@ -1,0 +1,16 @@
+created: 2026-10-11T07:24:51.301Z
+updated: 2026-10-11T07:24:51.509Z
+update_count: 4
+last_field: concern
+git_commit: 493ceb7
+git_branch: main
+children:
+  - config-templates
+  - contracts
+  - core-runners
+  - deployment
+  - geneformer-lib
+  - model-assets
+  - run-outputs
+  - state-feedback
+  - webui

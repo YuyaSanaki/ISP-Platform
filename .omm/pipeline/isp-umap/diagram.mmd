@@ -1,0 +1,12 @@
+graph LR
+    umap-runner["UMAP runner\nrun_isp_umap.py"]
+    celltype-labels["Cell-type labels\nisp_umap_celltype.py"]
+    umap-plot-style["Plot style\numap_plot_style.py"]
+    postprocess-plots["Postprocess plots\nannotate_isp_umap_celltypes.py, plot_isp_umap_*.py"]
+    umap-runner -->|"copies cell_type from tokenized dataset"| celltype-labels
+    umap-runner -->|"scatter + trajectory arrows"| umap-plot-style
+    umap-runner -->|"optional, off by default"| postprocess-plots
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

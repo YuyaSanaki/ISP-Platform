@@ -1,0 +1,28 @@
+graph LR
+    sf-runner["SF runner\nrun_state_feedback_isp.py"]
+    sf-runtime["Runtime helpers\nstate_feedback/runtime.py"]
+    rank-edit["Rank edit\ncore/rank_edit.py"]
+    teacher["Teacher\nstate_feedback/teacher.py"]
+    delta-rank-decoder["Delta-rank decoder\nstate_feedback/decoder.py"]
+    feedback-loop["Feedback loop\nrun_condition, feedback.py, rerank.py"]
+    gene-states["Gene states\nstate_feedback/gene_states.py"]
+    direction-fidelity["Direction fidelity\nevaluate.py, controls.py, metrics.py, samples.py"]
+    stability-runner["Stability runner\nrun_state_feedback_stability.py"]
+    placebo-controls["Placebo controls\nrandom_chains.py, placebo_contrast.py, stability.py"]
+    oracle-runner["Phase 0 oracle runner\nrun_state_feedback_oracle.py"]
+    sf-runner -->|"start cells, centroids, scoring"| sf-runtime
+    sf-runner -->|"observed start-to-end rank change"| teacher
+    teacher -->|"targets, 80:20 gene split"| delta-rank-decoder
+    sf-runner -->|"OE or KD per step"| rank-edit
+    sf-runner -->|"6 conditions on same cells"| feedback-loop
+    feedback-loop -->|"per-gene delta h"| gene-states
+    feedback-loop -->|"linear_deltarank rerank"| delta-rank-decoder
+    sf-runner -->|"held-out genes"| direction-fidelity
+    stability-runner -->|"reuses run_condition, _build_decoder"| sf-runner
+    stability-runner -->|"matched random chains"| placebo-controls
+    oracle-runner -->|"OSKM OE only, no decoder"| rank-edit
+    class sf-runner,stability-runner entry
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

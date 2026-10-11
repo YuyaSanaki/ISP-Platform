@@ -1,0 +1,27 @@
+graph LR
+    asset-downloads["Asset downloads\nscripts/download_*.sh"]
+    gene-brief-builder["Gene brief builder\nscripts/build_gene_brief_function.py"]
+    url-import["Web UI URL import\nwebui/streamlit_remote_data.py"]
+    core-jobs["Core jobs\ncore/"]
+    google-drive["Google Drive"]
+    hugging-face["Hugging Face Hub"]
+    ensembl-biomart["Ensembl BioMart"]
+    container-registries["nvcr.io, ghcr.io"]
+    ncbi["NCBI FTP: gene_info, GEO"]
+    cellxgene["CELLxGENE curation API"]
+    dropbox["Dropbox and other http(s) URLs"]
+    asset-downloads -->|"Mouse Geneformer weights via gdown"| google-drive
+    asset-downloads -->|"Geneformer V2-104M, Mouse-Genecorpus-20M dicts"| hugging-face
+    asset-downloads -->|"fly orthologs, or ORTHOLOG_REFRESH=1"| ensembl-biomart
+    asset-downloads -->|"base image, uv"| container-registries
+    gene-brief-builder -->|"gene_info for human, mouse, fly"| ncbi
+    url-import -->|"GSE supplementary files"| ncbi
+    url-import -->|"dataset assets"| cellxgene
+    url-import -->|"share links"| google-drive
+    url-import -->|"direct archives"| dropbox
+    core-jobs -->|"uses local files fetched by"| asset-downloads
+    class google-drive,hugging-face,ensembl-biomart,container-registries,ncbi,cellxgene,dropbox external
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

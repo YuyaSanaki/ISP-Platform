@@ -1,0 +1,9 @@
+created: 2026-10-11T07:24:52.126Z
+updated: 2026-10-11T07:24:52.126Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: gene-converter
+children: []
+parentPath:
+  - geneformer-lib

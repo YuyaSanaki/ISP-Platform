@@ -1,0 +1,17 @@
+graph LR
+    tenx-to-loom["10x to loom\nexecute_tokenizer_pipeline.py, loom_write.py"]
+    celltype-annotation["Pre-ISP cell-type annotation\ncelltype_annotate_expression.py"]
+    conversion-report["Conversion report\ngeneformer/conversion_report.py"]
+    ortholog-loss-gate["Ortholog loss gate\ngeneformer/ortholog_loss_gate.py"]
+    transcriptome-tokenizer["Transcriptome tokenizer\ngeneformer/tokenizer.py"]
+    tenx-to-loom -->|"AnnData per sample"| celltype-annotation
+    celltype-annotation -->|"cell_type columns into loom"| tenx-to-loom
+    tenx-to-loom -->|"loom_files/*.loom"| conversion-report
+    tenx-to-loom -->|"loom_files/*.loom"| ortholog-loss-gate
+    ortholog-loss-gate -->|"Pass or Warn: continue, Block: exit 2"| transcriptome-tokenizer
+    tenx-to-loom -->|"loom_files/*.loom"| transcriptome-tokenizer
+    class ortholog-loss-gate concern
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

@@ -1,0 +1,9 @@
+created: 2026-10-11T07:24:54.597Z
+updated: 2026-10-11T07:24:54.597Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: celltype-labels
+children: []
+parentPath:
+  - isp-umap

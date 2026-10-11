@@ -1,0 +1,21 @@
+graph LR
+    image-build["Image build\nDockerfile, scripts/download_build_assets.sh"]
+    container-entrypoint["Container entrypoint\nscripts/container-entrypoint.sh"]
+    platform-webui["platform_webui\ndocker-compose.yml"]
+    compose-jobs["One-shot jobs\npipeline, tokenize, finetune, isp, isp_umap"]
+    direct-cli["Direct CLI\nrun_state_feedback_*.py, run_ft_batch_calibrate.py"]
+    h100-native["H100 native\nH100/"]
+    smoke-tools["Smoke and QA\nscripts/run_smoke_matrix.py, test_url_data_pipeline.py"]
+    unit-tests["Unit tests\ntests/"]
+    image-build -->|"bakes /opt/geneformer-assets"| container-entrypoint
+    container-entrypoint -->|"seed models and dicts, exec"| platform-webui
+    container-entrypoint -->|"seed models and dicts, exec"| compose-jobs
+    platform-webui -->|"Popen core runners"| compose-jobs
+    direct-cli -->|"inside container or conda env"| compose-jobs
+    h100-native -->|"sbatch or qsub, run_pipeline.sh"| compose-jobs
+    smoke-tools -->|"docker compose run pipeline"| compose-jobs
+    class platform-webui,h100-native entry
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

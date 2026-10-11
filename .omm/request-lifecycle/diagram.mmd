@@ -1,0 +1,26 @@
+graph LR
+    browser["Browser\nlocalhost:8502"]
+    study-ingest["Study ingest\nwebui/streamlit_upload.py, streamlit_remote_data.py"]
+    layout-contract["10x layout contract\ncontracts/data_input_layout.py"]
+    yaml-builder["Run YAML builder\napp.py"]
+    job-launcher["Job launcher\napp.py subprocess.Popen"]
+    core-runner["Core runner\ncore/run_*.py"]
+    job-monitor["Job monitor\napp.py _poll_active_job, _tail_log"]
+    approval-card["Ortholog approval card\nwebui/ortholog_approval_ui.py"]
+    output-browser["Output tab\napp.py, dropped_genes_ui.py"]
+    browser -->|"data.zip or URL"| study-ingest
+    study-ingest -->|"validate sample folders, states"| layout-contract
+    study-ingest -->|"data.input_dir, default states"| yaml-builder
+    browser -->|"run type, form, YAML editor"| yaml-builder
+    yaml-builder -->|"runs/id/config.yaml"| job-launcher
+    job-launcher -->|"python3 core/run_*.py --config"| core-runner
+    core-runner -->|"console.log, output/"| job-monitor
+    job-monitor -->|"log tail, figures zip"| browser
+    core-runner -->|"Block: ortholog_approval_request.yaml"| approval-card
+    approval-card -->|"approval_record.yaml, auto rerun"| yaml-builder
+    output-browser -->|"past pipeline runs from disk"| browser
+    class browser,core-runner entry
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

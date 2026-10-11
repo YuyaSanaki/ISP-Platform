@@ -1,0 +1,12 @@
+created: 2026-10-11T07:24:54.020Z
+updated: 2026-10-11T07:24:54.087Z
+update_count: 2
+last_field: diagram
+kind: nested-class
+title: isp-stage
+children:
+  - figure-analysis
+  - isp-runner
+  - isp-stats
+  - perturber
+parentPath: []

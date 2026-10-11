@@ -1,0 +1,30 @@
+graph LR
+    webui["Web UI\nwebui/"]
+    contracts["Contracts\ncontracts/"]
+    core-runners["CLI runners\ncore/run_*.py"]
+    geneformer-lib["Geneformer library\ncore/geneformer/"]
+    state-feedback["State-feedback package\ncore/state_feedback/"]
+    config-templates["Config templates\ncore/config/"]
+    model-assets["Model assets\nmodels/, core/geneformer/dicts/"]
+    run-outputs["Run outputs\noutput/"]
+    deployment["Deployment\nDockerfile, docker-compose.yml, H100/"]
+    webui -->|"writes run YAML, spawns subprocess"| core-runners
+    webui -->|"10x layout validation"| contracts
+    webui -->|"loads YAML templates"| config-templates
+    webui -->|"browses results"| run-outputs
+    core-runners -->|"10x sample discovery"| contracts
+    core-runners -->|"default YAML"| config-templates
+    core-runners -->|"tokenizer, perturber, stats"| geneformer-lib
+    core-runners -->|"multi-step ISP logic"| state-feedback
+    state-feedback -->|"hidden states, cosine shift"| geneformer-lib
+    geneformer-lib -->|"weights, token dicts, orthologs"| model-assets
+    core-runners -->|"run directories"| run-outputs
+    deployment -->|"serves on :8502"| webui
+    deployment -->|"one-shot jobs"| core-runners
+    deployment -->|"bakes and seeds"| model-assets
+    class webui,deployment entry
+    class model-assets,run-outputs store
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e

@@ -1,0 +1,9 @@
+created: 2026-10-11T07:24:54.332Z
+updated: 2026-10-11T07:24:54.332Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: figure-analysis
+children: []
+parentPath:
+  - isp-stage

@@ -1,0 +1,9 @@
+created: 2026-10-11T07:24:55.144Z
+updated: 2026-10-11T07:24:55.144Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: sf-runtime
+children: []
+parentPath:
+  - state-feedback-isp

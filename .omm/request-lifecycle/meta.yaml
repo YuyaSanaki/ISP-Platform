@@ -1,0 +1,16 @@
+created: 2026-10-11T07:24:55.947Z
+updated: 2026-10-11T07:24:56.080Z
+update_count: 3
+last_field: concern
+git_commit: 493ceb7
+git_branch: main
+children:
+  - approval-card
+  - browser
+  - core-runner
+  - job-launcher
+  - job-monitor
+  - layout-contract
+  - output-browser
+  - study-ingest
+  - yaml-builder

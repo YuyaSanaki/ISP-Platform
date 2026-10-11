@@ -1,0 +1,20 @@
+graph LR
+    backends-registry["Backend registry\nbackends/registry.py, species_context.py"]
+    tokenizer["Tokenizer\ntokenizer.py"]
+    gene-converter["Ortholog converter\ngene_converter.py"]
+    conversion-report["Conversion report\nconversion_report.py"]
+    ortholog-loss-gate["Ortholog loss gate\northolog_loss_gate.py"]
+    in-silico-perturber["In silico perturber\nin_silico_perturber.py"]
+    perturber-stats["Perturber stats\nin_silico_perturber_stats.py"]
+    training-helpers["Training helpers\nauto_batch_size.py, training_schedule.py, collator_for_classification.py"]
+    tokenizer -->|"max_input_size, dict paths"| backends-registry
+    tokenizer -->|"cross-species remap"| gene-converter
+    conversion-report -->|"mapped vs dropped genes"| gene-converter
+    ortholog-loss-gate -->|"critical-gene audit"| gene-converter
+    in-silico-perturber -->|"gene symbol to token"| gene-converter
+    in-silico-perturber -->|"auto forward batch size"| training-helpers
+    perturber-stats -->|"reads raw pickles written by"| in-silico-perturber
+    classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
+    classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
+    classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e
+    classDef store fill:#a6e3a1,stroke:#a6e3a1,color:#1e1e2e
