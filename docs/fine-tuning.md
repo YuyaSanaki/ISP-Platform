@@ -203,7 +203,7 @@ umap:
   pca_components: 50
 ```
 
-When enabled, generates a **PCA → UMAP** projection of the fine-tuned model's CLS embeddings on the eval set (last run only). Saved as PDF in the `figures/` subdirectory.
+When enabled, generates a **PCA → UMAP** projection of the fine-tuned model's last-layer hidden state at position 0 on the eval set (last run only). Inputs carry no `<cls>` token, so position 0 is the top-ranked gene of each cell ([tokenization.md § Input format](tokenization.md#input-format-no-special-tokens)). Saved as PDF in the `figures/` subdirectory.
 
 ### 3.7 Runtime and provenance
 

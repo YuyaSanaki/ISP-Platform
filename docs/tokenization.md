@@ -217,6 +217,15 @@ Saved under `data.output_dir`, typically **`{output_prefix}_0.dataset`** (suffix
 
 Point **`paths.dataset`** in [`core/config/finetune.yaml`](../core/config/finetune.yaml) or [`core/config/isp.yaml`](../core/config/isp.yaml) at this directory.
 
+### Input format: no special tokens
+
+`input_ids` is a plain rank-value encoding for every backend, Human Geneformer V2 included: gene tokens only, highest rank at position 0, up to `max_input_size` (4,096 for V2). The tokenizer never inserts `<cls>` or `<eos>`, although the V2 token dictionary contains both. Upstream Geneformer V2 (`TranscriptomeTokenizer(special_token=True)`) keeps 4,094 genes and adds `<cls>` at the front and `<eos>` at the end.
+
+- Fine-tuning trains all layers (`model.freeze_layers: 0`), so the fine-tuned model, ISP cell embeddings (mean over gene tokens) and State-feedback Δh all use the same format the model was fine-tuned on.
+- Position 0 is the top-ranked gene, not `<cls>`. The sequence-classification head and the fine-tune UMAP read this position.
+- Datasets tokenized by upstream Geneformer V2 (with `<cls>`/`<eos>`) cannot be mixed with platform datasets or models.
+- Only parts that use the pretrained model without fine-tuning see a format that differs from pretraining: the `delta_mlm` comparator of State-feedback ISP (pretrained MLM head). Adding `<cls>`/`<eos>` to its forward pass leaves the direction-fidelity result unchanged on BBRC (n=300, Human V2-104M): `delta_mlm` stays near zero (pooled Spearman −0.013 without, 0.013 with), and the Δrank decoder exceeds it by 0.495 (95% CI 0.486–0.505) and 0.470 (0.461–0.478).
+
 ---
 
 ## 5. Run provenance and logs
