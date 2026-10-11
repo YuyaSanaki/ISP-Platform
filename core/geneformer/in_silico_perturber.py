@@ -188,15 +188,18 @@ def resolve_forward_batch_size(
     model_directory,
     *,
     n_forwards: int = 1,
+    keep_layer: int | None = None,
     task: str = "isp_forward",
     label: str | None = None,
 ):
     """Turn forward_batch_size="auto" into a number measured on this GPU.
 
     ``n_forwards`` sizes the probe to the peak of the real scoring loop.
-    Group and State-feedback ISP hold a perturbed forward and an original forward;
+    State-feedback ISP holds a perturbed forward and an original forward;
     pass ``n_forwards=2`` and a distinct ``task`` so that cache is not reused
     from a single-forward genome-wide ISP calibration (that mismatch OOMs).
+    Group ISP keeps only layer ``keep_layer`` of the perturbed forward while the
+    original forward runs; pass ``n_forwards=2, keep_layer=layer_to_quant``.
     """
     if not is_auto(value):
         return int(value)
@@ -220,20 +223,28 @@ def resolve_forward_batch_size(
         with torch.no_grad():
             held = []
             for _ in range(n_forwards):
-                held.append(model(input_ids=input_ids, attention_mask=attention_mask))
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                if keep_layer is None:
+                    held.append(outputs)
+                else:
+                    held.append(batched_layer_embs(outputs, keep_layer).clone())
+                del outputs
             del held
 
+    cache_fields = {
+        "task": str(task),
+        "n_forwards": n_forwards,
+        "model": str(model_directory),
+        "seq_len": max_len,
+        "dtype": str(next(model.parameters()).dtype),
+    }
+    if keep_layer is not None:
+        cache_fields["keep_layer"] = int(keep_layer)
     return resolve_batch_size(
         value,
         default=fallback,
         probe=probe,
-        cache_fields={
-            "task": str(task),
-            "n_forwards": n_forwards,
-            "model": str(model_directory),
-            "seq_len": max_len,
-            "dtype": str(next(model.parameters()).dtype),
-        },
+        cache_fields=cache_fields,
         label=probe_label,
     )
 
@@ -1469,12 +1480,22 @@ class InSilicoPerturber:
         filtered_input_data = load_and_filter(self.filter_data, self.nproc, input_data_file)
         model = load_model(self.model_type, self.num_classes, model_directory)
         layer_to_quant = quant_layers(model)+self.emb_layer
+        if self.perturb_group:
+            group_probe = {
+                "n_forwards": 2,
+                "keep_layer": layer_to_quant,
+                "task": "isp_group_forward",
+                "label": "Group ISP forward_batch_size",
+            }
+        else:
+            group_probe = {}
         self.forward_batch_size = resolve_forward_batch_size(
             self.forward_batch_size,
             model,
             filtered_input_data,
             self.pad_token_id,
             model_directory,
+            **group_probe,
         )
 
         if self.cell_states_to_model is None:

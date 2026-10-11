@@ -32,7 +32,11 @@ perturbation:
   state_key: disease
   start_state: AD
   end_state: WT
-  alt_states: [] # Empty list = perturb each gene per cell ("all"). Otherwise list of Ensembl IDs.
+  # Extra state labels (values of state_key) scored besides start and end. With two or more,
+  # stats write alt columns per state (Shift_to_alt_end_<state>, ...).
+  alt_states: []
+  # Empty list = perturb each gene of each cell separately (genome-wide). Otherwise a list of
+  # gene symbols or Ensembl IDs perturbed together in every cell (group mode).
   genes_to_perturb: []
 
 model:

@@ -11,19 +11,21 @@ for _p in (ROOT / "core", ROOT / "contracts"):
     if _s not in sys.path:
         sys.path.insert(0, _s)
 
-try:
-    from geneformer.in_silico_perturber import make_perturbation_batch
 
-    DEPS_MISSING = None
-except Exception as exc:  # pragma: no cover
-    DEPS_MISSING = str(exc)
-
-
-@unittest.skipIf(DEPS_MISSING is not None, f"deps missing: {DEPS_MISSING}")
 class TestAnchorComboBatch(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Not at module level: importing the perturber before test_p0_species stubs the
+        # geneformer package breaks datasets.map pickling in later ISP tests.
+        try:
+            from geneformer import in_silico_perturber as isp
+        except Exception as exc:  # pragma: no cover
+            raise unittest.SkipTest(f"deps missing: {exc}")
+        cls.isp = isp
+
     def test_delete_pairs_anchor_with_each_gene(self):
         example_cell = {"input_ids": [[5, 6, 7, 8]], "length": [4]}
-        batch, indices = make_perturbation_batch(
+        batch, indices = self.isp.make_perturbation_batch(
             example_cell,
             "delete",
             [7],

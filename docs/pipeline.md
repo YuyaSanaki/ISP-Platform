@@ -187,7 +187,7 @@ Each run creates:
 
 ```text
 {output_root}/{YYYYMMDD}/pipeline_{HHMMSS}_{micro}Z/
-  pipeline_config_used.yaml
+  pipeline_config_used.yaml      # config as run: CLI ortholog options and derived output_prefix applied
   pipeline_resolved_paths.yaml
   pipeline_run.log
   stage_configs/
@@ -220,6 +220,8 @@ python3 run_pipeline.py --run-dir <run> --skip-tokenize    # reuse that run's to
 python3 run_pipeline.py --run-dir <run> --skip-finetune    # reuse that run's fine-tuned model
 python3 run_pipeline.py --skip-isp         # stop after fine-tuning
 ```
+
+`--skip-tokenize` without `--run-dir` (or `paths.run_dir`) stops at once: a new run folder has no tokenized dataset.
 
 ---
 

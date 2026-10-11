@@ -78,7 +78,10 @@ def _load_run_pipeline_validators():
         "build_tokenize_config",
         "format_pipeline_banner",
         "load_yaml",
+        "remove_tokenized_outputs",
+        "resolve_finetune_model_dir",
         "resolve_pipeline_paths",
+        "resolve_tokenized_dataset",
         "study_name_from_input_dir",
         "write_yaml",
     ):
