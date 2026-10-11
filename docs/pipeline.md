@@ -88,7 +88,7 @@ runtime:
   # train_batch_size: 32   # from FT batch calibrate; keep fixed once chosen
 
 perturbation:
-  type: delete  # delete | overexpress | inhibit | activate
+  type: delete  # delete | overexpress
   state_key: disease
   start_state: Disease   # must match 2nd segment of sample folder names
   end_state: Ctrl
@@ -123,7 +123,7 @@ Copied into each stage config under `stage_configs/` when the pipeline runs.
 | Field | Applied to |
 |-------|------------|
 | `nproc` | **Tokenize** (`tokenizer.nproc`), **Fine-tune** (`runtime.nproc`), **ISP** (`runtime.nproc`) — CPU workers for HuggingFace `datasets` map/filter |
-| `max_cells` | **Tokenize** (`tokenizer.max_cells`) — cap on cells tokenized per run |
+| `max_cells` | **Tokenize** (`tokenizer.max_cells`) — cells per dataset shard (bounds tokenizer RAM); fine-tune and ISP use all shards. Cross-species input also keeps at most `max_cells` cells per sample file |
 | `forward_batch_size` | **ISP** (`runtime.forward_batch_size`) — GPU minibatch for transformer forwards (`auto` or int) |
 | `train_batch_size` | **Fine-tune** (`training.batch_size`) — prefer Web UI **FT batch size (calibrate)**; keep fixed once chosen |
 
@@ -135,7 +135,7 @@ Copied into the generated ISP config. Same keys as [`core/config/isp.yaml`](../c
 
 | Field | Role |
 |-------|------|
-| `type` | Perturbation mode: `delete` (remove gene from rank encoding), `overexpress` (gene to front), `inhibit` (lower quartile), `activate` (higher quartile) |
+| `type` | Perturbation mode: `delete` (remove gene from rank encoding) or `overexpress` (gene to front). `inhibit` / `activate` (quartile shifts) are not implemented and stop with an error |
 | `state_key` | Metadata column for states (e.g. `disease`) |
 | `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (from folder names when `extract_metadata_from_path` is on) |
 | `organ_data` | Optional output filename prefix |
@@ -171,8 +171,8 @@ The pipeline resolves these per run:
 | Derived path | Location |
 |--------------|----------|
 | Loom temp | `{run}/loom_files/` |
-| Tokenized dataset | `{run}/tokenized_dataset/{study}_0.dataset` |
-| Fine-tune checkpoint | `{run}/finetune/all_run1/` |
+| Tokenized dataset | `{run}/tokenized_dataset/{study}_0.dataset`; if the tokenizer split the study into several shards, all of them concatenated in order as `{study}_merged.dataset` |
+| Fine-tune checkpoint | `{run}/finetune/{group}_run{k}/` (`all_run1` by default); with `training.num_runs > 1`, the run with the highest eval accuracy |
 | ISP results | `{run}/isp_results/`, `ispstats_results/`, `figures/` |
 | Fine-tune UMAP (when enabled) | `{run}/finetune/figures/*_umap.pdf` |
 | ISP UMAP (TOP1 significant, E2E standard) | `{run}/isp_umap/` — `umap_*.png`, `per_cell_isp_shift.csv` |
@@ -196,7 +196,8 @@ Each run creates:
     isp.yaml
   loom_files/                    # if input_type: single-cell
   tokenized_dataset/
-    {study_name}_0.dataset
+    {study_name}_0.dataset       # _1, _2, … when the study exceeds tokenizer.max_cells
+    {study_name}_merged.dataset  # only with several shards; used by fine-tune and ISP
   finetune/
     all_run1/                    # checkpoint → ISP
   isp_results/
@@ -204,7 +205,9 @@ Each run creates:
   figures/
 ```
 
-`num_classes` for ISP is read from `finetune/all_run1/label_dict.json` after fine-tuning.
+The tokenizer starts a new shard once the cells read so far reach `max_cells`, so large studies give several shards. Fine-tune and ISP use every shard.
+
+`num_classes` for ISP is read from the selected run's `label_dict.json` after fine-tuning. With `training.num_runs > 1`, ISP uses the run with the highest eval accuracy. `finetune.organ_key` (one model per group) stops the pipeline before ISP, because ISP needs a single model.
 
 ---
 
@@ -213,8 +216,8 @@ Each run creates:
 Inside the container (or with repo mounted at `/app`):
 
 ```bash
-python3 run_pipeline.py --skip-tokenize    # dataset already at derived path
-python3 run_pipeline.py --skip-finetune    # use existing finetune/all_run1
+python3 run_pipeline.py --run-dir <run> --skip-tokenize    # reuse that run's tokenized shards
+python3 run_pipeline.py --run-dir <run> --skip-finetune    # reuse that run's fine-tuned model
 python3 run_pipeline.py --skip-isp         # stop after fine-tuning
 ```
 

@@ -206,7 +206,7 @@ TOKENIZE_CONFIG=/app/core/config/my_tokenize.yaml docker compose run --rm tokeni
 
 ## 4. Output `.dataset`
 
-Saved under `data.output_dir`, typically **`{output_prefix}_0.dataset`** (suffix increments if the run is split).
+Saved under `data.output_dir`, typically **`{output_prefix}_0.dataset`**. A new shard (`_1`, `_2`, …) starts each time the cells read so far reach `tokenizer.max_cells`. The E2E pipeline merges all shards before fine-tuning; for standalone fine-tune or ISP, point `paths.dataset` at each shard yourself, or raise `max_cells` so the study fits in one shard.
 
 | Column / field | Role |
 |----------------|------|

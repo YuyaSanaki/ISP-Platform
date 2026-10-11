@@ -30,7 +30,10 @@ from pipeline_lib import (
     build_tokenize_config,
     format_pipeline_banner,
     load_yaml,
+    remove_tokenized_outputs,
+    resolve_finetune_model_dir,
     resolve_pipeline_paths,
+    resolve_tokenized_dataset,
     study_name_from_input_dir,
     write_yaml,
 )
@@ -160,12 +163,12 @@ def main() -> None:
     p.add_argument(
         "--skip-tokenize",
         action="store_true",
-        help="Skip tokenization (dataset must already exist at derived path).",
+        help="Skip tokenization (tokenized_dataset/{study}_<n>.dataset must already exist).",
     )
     p.add_argument(
         "--skip-finetune",
         action="store_true",
-        help="Skip fine-tuning (use existing checkpoint under finetune/all_run1).",
+        help="Skip fine-tuning (use the existing checkpoint under finetune/{group}_run{k}).",
     )
     p.add_argument(
         "--skip-isp",
@@ -321,10 +324,13 @@ def main() -> None:
     )
 
     pipeline_ok = False
-    finetune_model = Path(resolved["finetune_model_dir"])
+    finetune_model: Path | None = None
+    tokenized_dir = Path(resolved["tokenized_dir"])
 
     try:
         if not args.skip_tokenize:
+            for stale in remove_tokenized_outputs(tokenized_dir, resolved["study_name"]):
+                print(f"Removed tokenize output from an earlier attempt: {stale}")
             env = os.environ.copy()
             env["TOKENIZE_CONFIG"] = str(tokenize_cfg_path)
             _run_subprocess(
@@ -335,12 +341,12 @@ def main() -> None:
         else:
             print("Skipping tokenize (--skip-tokenize).")
 
-        dataset_path = Path(resolved["dataset_path"])
-        if not dataset_path.is_dir():
-            raise FileNotFoundError(
-                f"Tokenized dataset not found: {dataset_path}. "
-                "Run tokenize or fix data.output_prefix / input_dir."
-            )
+        resolved["dataset_path"] = str(
+            resolve_tokenized_dataset(tokenized_dir, resolved["study_name"])
+        )
+        print(f"Tokenized dataset for fine-tune / ISP: {resolved['dataset_path']}")
+        write_yaml(finetune_cfg_path, build_finetune_config(pipeline, resolved, finetune_tpl))
+        write_yaml(run_dir / "pipeline_resolved_paths.yaml", resolved)
 
         if args.skip_finetune and args.skip_isp:
             pipeline_ok = True
@@ -363,11 +369,10 @@ def main() -> None:
         else:
             print("Skipping fine-tune (--skip-finetune).")
 
-        if not finetune_model.is_dir():
-            raise FileNotFoundError(
-                f"Fine-tuned model directory not found: {finetune_model}. "
-                "Expected all_run1/ under the pipeline finetune folder."
-            )
+        finetune_model = resolve_finetune_model_dir(Path(resolved["finetune_run_dir"]))
+        resolved["finetune_model_dir"] = str(finetune_model)
+        print(f"Fine-tuned model for ISP: {finetune_model}")
+        write_yaml(run_dir / "pipeline_resolved_paths.yaml", resolved)
 
         num_classes = _num_classes_from_label_dict(finetune_model)
         isp_cfg = build_isp_config(
@@ -470,7 +475,7 @@ def main() -> None:
             {
                 "finished_at_utc": datetime.now(timezone.utc).isoformat(),
                 "run_status": "completed" if pipeline_ok else "failed",
-                "finetune_model_dir": str(finetune_model),
+                "finetune_model_dir": str(finetune_model) if finetune_model else None,
                 "dataset_path": resolved["dataset_path"],
             },
             service="pipeline",

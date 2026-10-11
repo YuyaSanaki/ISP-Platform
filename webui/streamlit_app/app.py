@@ -56,8 +56,6 @@ _STATS_MODE_LABELS = {
 _PERTURB_TYPE_LABELS = {
     "delete": "delete — remove gene from rank encoding",
     "overexpress": "overexpress — move gene to front of ranks",
-    "inhibit": "inhibit — move gene toward lower quartile",
-    "activate": "activate — move gene toward higher quartile",
 }
 _FT_TASK_TYPE_LABELS = {
     "disease": "disease — classify disease / condition labels",
@@ -208,6 +206,13 @@ from streamlit_upload import (
     summarize_existing_study,
 )
 from streamlit_remote_data import RemoteDataError, import_study_from_url
+from job_lock import (
+    acquire_job_lock,
+    mark_job_running,
+    read_active_job,
+    release_job_lock,
+    stop_job,
+)
 
 discover_sample_dirs = _dil.discover_sample_dirs
 WORKSPACE = Path(os.environ.get("WEBUI_WORKSPACE", ROOT / "data" / "streamlit_workspace")).resolve()
@@ -2980,7 +2985,10 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 step=1,
                 key="pipeline_ft_num_runs",
                 on_change=_apply_ft_isp_advanced_to_yaml,
-                help="Independent fine-tune runs with different seeds (`training.num_runs`).",
+                help=(
+                    "Independent fine-tune runs with different seeds (`training.num_runs`). "
+                    "ISP uses the run with the highest eval accuracy."
+                ),
             )
         st.selectbox(
             "warmup",
@@ -2998,7 +3006,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 
         st.markdown("**Tokenize / ISP options**")
         st.caption(
-            "`max_cells` caps tokenization; `max_ncells` / `stats.mode` affect ISP rankings; "
+            "`max_cells` sets the tokenizer shard size; `max_ncells` / `stats.mode` affect ISP rankings; "
             "UMAP / analysis only control optional plots."
         )
         st.number_input(
@@ -3009,8 +3017,10 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
             key="pipeline_max_cells",
             on_change=_apply_ft_isp_advanced_to_yaml,
             help=(
-                "Max cells tokenized (`runtime.max_cells` → tokenizer.max_cells). "
-                "Large values need more RAM; does not change ISP cell cap."
+                "Cells per tokenized shard (`runtime.max_cells` → tokenizer.max_cells). "
+                "Larger studies are split into several shards, and fine-tune and ISP use all of them. "
+                "Cross-species input keeps at most this many cells per sample file. "
+                "Large values need more RAM; does not change the ISP cell cap (`max_ncells`)."
             ),
         )
         c_cells, c_stats = st.columns(2)
@@ -3102,11 +3112,11 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
             """
 | Control | Effect |
 |---------|--------|
-| **perturbation.type** | delete / overexpress / inhibit / activate |
+| **perturbation.type** | delete / overexpress |
 | **state_key** | Metadata column for start/end (usually `disease`) |
 | **genes_to_perturb** | Empty = all genes; list = targeted ISP |
 | **task_type / label_column** | What the fine-tune classifier learns |
-| **tokenize max_cells** | Cap cells at tokenize (RAM / time) |
+| **tokenize max_cells** | Cells per tokenized shard (RAM). All shards are used. Cross-species: also cells kept per sample file |
 | **max_ncells** | How many cells ISP uses. Lower ≈ faster; **results change**. |
 | **stats.mode** | How cosine shifts are scored. Keep **goal_state_shift** for Disease→WT. |
 | **analysis plots** | Post-stats figures (top genes barplot, volcano, etc.). |
@@ -3325,6 +3335,7 @@ def _poll_active_job() -> None:
         return
     code = proc.poll()
     if code is not None:
+        release_job_lock(_ensure_workspace(), proc.pid)
         st.session_state["active_proc"] = None
         st.session_state.pop("active_run_type", None)
         st.session_state["last_exit_code"] = code
@@ -3610,6 +3621,33 @@ def _render_log_body() -> None:
             st.error(f"Last job failed (exit {code}).")
 
 
+def _render_stop_job_control(info: dict | None, *, key: str) -> None:
+    """Stop button for the running job (the whole process group)."""
+    if not info or info.get("state") != "running":
+        return
+    with st.popover("Stop job"):
+        st.markdown(
+            "Stops the running job and its child processes (SIGTERM, then SIGKILL "
+            "after 15 s). Files already written stay in the run folder, but the run "
+            "is incomplete."
+        )
+        if st.button("Stop now", type="primary", key=key):
+            with st.spinner("Stopping…"):
+                stop_job(info)
+            _poll_active_job()
+            st.rerun()
+
+
+def _own_job_lock_info() -> dict | None:
+    proc = st.session_state.get("active_proc")
+    if proc is None or proc.poll() is not None:
+        return None
+    info = read_active_job(_ensure_workspace())
+    if info is not None and info.get("pid") == proc.pid:
+        return info
+    return {"state": "running", "pid": proc.pid}
+
+
 def _live_log_busy_body(*, refresh_hint: str) -> None:
     proc = st.session_state.get("active_proc")
     if proc is not None and proc.poll() is not None:
@@ -3620,8 +3658,33 @@ def _live_log_busy_body(*, refresh_hint: str) -> None:
     st.warning(
         f"Job running… ({refresh_hint} — click **Refresh log** for the latest lines)"
     )
-    st.button("Refresh log", key="refresh_log_btn")
+    c_refresh, c_stop = st.columns([1, 1])
+    with c_refresh:
+        st.button("Refresh log", key="refresh_log_btn")
+    with c_stop:
+        _render_stop_job_control(_own_job_lock_info(), key="stop_job_btn")
     _render_log_body()
+
+
+def _render_other_session_job(info: dict) -> None:
+    """A job started from another browser session (or before a reload) is running."""
+    st.subheader("Logs & status")
+    st.warning(
+        f"A job started from another browser session is running "
+        f"({info.get('run_type') or 'unknown run type'}, started "
+        f"{info.get('started_utc') or '?'}). **Run job** stays disabled until it "
+        "finishes or is stopped."
+    )
+    if info.get("run_dir"):
+        st.caption(f"Run folder: `{info['run_dir']}`")
+    c_refresh, c_stop = st.columns([1, 1])
+    with c_refresh:
+        st.button("Refresh log", key="refresh_other_log_btn")
+    with c_stop:
+        _render_stop_job_control(info, key="stop_other_job_btn")
+    log_path = Path(str(info.get("log_path") or ""))
+    if log_path.is_file():
+        st.code(_tail_log(log_path), language="text")
 
 
 @st.fragment(run_every=_LOG_AUTO_REFRESH_SHORT)
@@ -3636,7 +3699,10 @@ def _render_live_log_while_busy_long() -> None:
     _live_log_busy_body(refresh_hint="auto-refreshes every 10 min")
 
 
-def _render_live_log(busy: bool) -> None:
+def _render_live_log(busy: bool, other_job: dict | None = None) -> None:
+    if not busy and other_job is not None:
+        _render_other_session_job(other_job)
+        return
     if busy:
         active = st.session_state.get("active_run_type") or st.session_state.get(
             "run_type_sel", ""
@@ -4390,6 +4456,7 @@ def _render_analysis_panel() -> None:
 
     proc = st.session_state.get("active_proc")
     busy = proc is not None and proc.poll() is None
+    other_job = None if busy else read_active_job(_ensure_workspace())
     url_busy = bool(st.session_state.get("url_fetch_active"))
     # FT calibrate / ISP UMAP / step-based ISP do not need a fresh 10x zip upload.
     study_data_required = run_label not in (
@@ -4416,7 +4483,13 @@ def _render_analysis_panel() -> None:
     # Block Run only while import/URL/job is actually in progress — not after
     # a successful load (imported_now). Disabling on imported_now left Run stuck
     # until the user changed Run type to force a rerun.
-    run_blocked = busy or isp_states_invalid or not isp_umap_ready or not isp_steps_ready
+    run_blocked = (
+        busy
+        or other_job is not None
+        or isp_states_invalid
+        or not isp_umap_ready
+        or not isp_steps_ready
+    )
     if study_data_required:
         run_blocked = run_blocked or import_pending or url_busy
     run_clicked = False
@@ -4427,6 +4500,11 @@ def _render_analysis_panel() -> None:
         )
         if busy:
             st.caption("Disabled while a job is running.")
+        elif other_job is not None:
+            st.caption(
+                "Disabled while a job started from another browser session is running "
+                "(one job at a time). See **Logs & status** below."
+            )
         elif run_label == RUN_TYPE_ISP_UMAP and not isp_umap_ready:
             st.caption(
                 "Disabled until you select a past ISP / pipeline run and a gene "
@@ -4496,8 +4574,9 @@ def _render_analysis_panel() -> None:
         )
         run_clicked = False
 
-    # Ortholog Approve curated_bridge → auto-launch a new Pipeline run.
-    if st.session_state.pop("ortholog_auto_rerun", False):
+    # Ortholog Approve curated_bridge → auto-launch a new Pipeline run
+    # (kept pending while another job holds the lock).
+    if not busy and other_job is None and st.session_state.pop("ortholog_auto_rerun", False):
         run_label = RUN_TYPE_PIPELINE
         st.session_state["run_type_sel"] = RUN_TYPE_PIPELINE
         run_clicked = True
@@ -4569,6 +4648,20 @@ def _render_analysis_panel() -> None:
                 cmd, env = [], os.environ.copy()
 
             if cmd:
+                locked, holder = acquire_job_lock(
+                    _ensure_workspace(),
+                    run_type=run_label,
+                    run_dir=str(run_dir),
+                    log_path=str(log_path),
+                )
+                if not locked:
+                    st.error(
+                        "Another job is already running "
+                        f"({(holder or {}).get('run_type') or 'unknown run type'}). "
+                        "Only one job runs at a time; wait for it or stop it."
+                    )
+                    cmd = []
+            if cmd:
                 st.session_state["last_run_dir"] = str(run_dir)
                 st.session_state["last_output_roots"] = [
                     str(p) for p in _guess_output_roots(run_label, cfg_obj)
@@ -4611,25 +4704,30 @@ def _render_analysis_panel() -> None:
                         f"State-feedback ISP from pipeline run `{source}` · {n_steps} step(s) · "
                         f"{decoder} (writes under that run’s `{_SF_ISP_OUTPUT_SUBDIR}/`)."
                     )
-                log_file = open(log_path, "w", encoding="utf-8", buffering=1)
                 try:
-                    p = subprocess.Popen(
-                        cmd,
-                        cwd=str(ROOT),
-                        env=env,
-                        stdout=log_file,
-                        stderr=subprocess.STDOUT,
-                        start_new_session=True,
-                    )
-                finally:
-                    log_file.close()
+                    log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+                    try:
+                        p = subprocess.Popen(
+                            cmd,
+                            cwd=str(ROOT),
+                            env=env,
+                            stdout=log_file,
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True,
+                        )
+                    finally:
+                        log_file.close()
+                except BaseException:
+                    release_job_lock(_ensure_workspace(), os.getpid())
+                    raise
+                mark_job_running(_ensure_workspace(), p.pid)
                 st.session_state["active_proc"] = p
                 st.session_state["active_log_path"] = log_path
                 st.session_state["active_run_type"] = run_label
                 st.success(f"Started. Run folder: `{run_dir}`")
                 st.rerun()
 
-    _render_live_log(busy)
+    _render_live_log(busy, other_job)
 
     st.subheader("Outputs")
     run_label = st.session_state.get("run_type_sel", "")

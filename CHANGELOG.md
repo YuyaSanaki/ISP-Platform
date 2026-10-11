@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.3.3] - 2026-10-10
 
+### Added
+
+- Web UI **Stop job** under **Logs & status**: stops the running job and its child processes (SIGTERM to the job's process group, SIGKILL after 15 s). The run folder keeps the files written so far.
+
 ### Changed
 
 - Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names. No code or result changes from v1.3.2.
@@ -91,6 +95,20 @@ Includes the peer-reviewed v1.0.1 (tag `v1.0.1`, review response for *Genes to C
 ### Notes
 
 - Pin analysis repos that need the previous schedule to branch **`ver1.0.0`** / image `isp-platform:v1.0.0`.
+
+### Fixed
+
+- The State-feedback ISP guide and config said that with `placebo_contrast.enabled` every feedback event uses the placebo contrast. Only the stability runner (`core/run_state_feedback_stability.py`) reads `state_feedback.placebo_contrast`; the State-feedback ISP runner (`core/run_state_feedback_isp.py`, Web UI run type) trains its decoder and reranks with Δh itself. The guide and config comment now say so, and the runner prints a note when the key is on. No results change: the paper's placebo-corrected results (τ, z) come from the stability runner, which applies the contrast.
+- Tokenization no longer loops forever when the last group of input files yields no cells (for example an empty sample, or loom files whose cells all fail `filter_pass`). `TranscriptomeTokenizer.tokenize_data` re-read the same files without end; it now stops after the last group, and raises an error if no cells were tokenized at all. Runs that finished before are unchanged, because they never reached this case. Test: `tests/test_tokenizer_empty_rounds.py`.
+- In silico perturbation with an anchor gene in combinations (`make_perturbation_batch` with `combos > 0` and `anchor_gene`) read the key `"input_ids "` (trailing space) and raised `KeyError`; it now reads `input_ids`. No results change: ISP Platform never reaches this branch, because a gene list resets `anchor_gene` and `combos`, genome-wide ISP takes the `"all"` branch, and `anchor_gene` is dropped whenever cell states are modelled. Test: `tests/test_anchor_combo_batch.py`.
+- Web UI runs one job at a time across all browser sessions. The running job used to live only in the session that started it, so a second tab, or the same tab after a reload, could start another job on the same GPU. **Run job** now takes a lock file in the Web UI workspace (`active_job.json`) and is disabled everywhere while the job runs; other sessions show the running job with its log and **Stop job**. The lock clears itself when the job's process exits. No results change: jobs run the same commands. Test: `tests/test_webui_job_lock.py`.
+- **The E2E pipeline (`core/run_pipeline.py`) uses every tokenized shard and the best fine-tuning run.** The tokenizer starts a new shard (`{study}_1.dataset`, …) each time the cells read so far reach `max_cells` (300,000 by default), but the pipeline passed only `{study}_0.dataset` to fine-tuning and ISP, so the cells in later shards were silently left out. With several shards, the pipeline now concatenates them in order into `tokenized_dataset/{study}_merged.dataset` (with a `{study}_merged.json` manifest of cells per shard) and uses that. ISP also always took `finetune/all_run1`; with `training.num_runs > 1` it now takes the run with the highest eval accuracy (ties go to the earlier run), the model that fine-tuning already reports as best. With `finetune.organ_key` set, the pipeline stops before ISP with an explanation instead of a missing `all_run1`. Re-tokenizing into an existing run folder (`--run-dir`) first removes shards from the earlier attempt. **Results change only for** runs where the cells read reached `max_cells` while input files remained (the run's `tokenized_dataset/` holds `{study}_1.dataset` or later), and runs with `num_runs > 1` whose best run was not run 1. Single-shard runs with `num_runs: 1` (the default) are unchanged. On cross-species input, `max_cells` still also limits each sample file, as before. Test: `tests/test_pipeline_stage_paths.py`.
+- ISP `perturbation.type: inhibit` and `activate` (shift a gene to a lower / higher quartile) now stop at once with "not implemented". They were offered in the Web UI and the YAML comments but never worked: without `isp.perturb_rank_direct_shift` the option check stopped with a bare `raise`, and with it the rank shift was never applied (several branches compared against `"active"`), so `activate` scored unperturbed cells; correcting the name only moved the failure to unfinished alignment code. Both types are removed from the Web UI selector, `core/config/isp.yaml`, `core/config/pipeline.yaml` and `docs/pipeline.md`. No results change: `delete` and `overexpress` take separate branches, and no released result used `inhibit` or `activate`. Test: `tests/test_perturb_type_unimplemented.py`.
+- ISP statistics accept more than one alternate state. `perturbation.alt_states` with two or more states made `InSilicoPerturberStats` (`goal_state_shift`) stop with `ValueError: too many values to unpack` after the whole perturbation had run, because it read each cell's shifts as exactly (start, goal, alt). It now reads them by position. With several alt states the alt columns are written per state (`Shift_to_alt_end_<state>`, `Alt_end_<state>_vs_random_pval`, `Alt_end_<state>_FDR`); with none or one alt state the output keeps its columns and is unchanged (checked against the previous code, including the 100,000-shift downsampling). **No results change:** runs with zero or one alt state (the default is none) produce the same tables, and runs with two or more stopped before writing any. State-feedback ISP does not use these statistics. Test: `tests/test_isp_stats_alt_states.py`.
+
+### Security
+
+- Compose services no longer mount the Docker socket (`/var/run/docker.sock`). Access to it from inside a container amounts to root on the host, and nothing in the image uses it (`scripts/run_smoke_matrix.py` calls `docker compose` from the host). No results change.
 
 ## [1.0.1] - 2026-10-09
 

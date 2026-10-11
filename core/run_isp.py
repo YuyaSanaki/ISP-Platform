@@ -32,6 +32,7 @@ import yaml
 from accelerate import Accelerator
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
 from geneformer.auto_batch_size import coerce_batch_size
+from geneformer.in_silico_perturber import check_perturb_type_implemented
 from geneformer.species_context import (
     backend_from_config,
     default_isp_forward_batch_size,
@@ -409,6 +410,7 @@ def main() -> None:
 
     pert = cfg.get("perturbation") or {}
     select_perturb_type = pert.get("type", "delete")
+    check_perturb_type_implemented(select_perturb_type)
     start_state = pert.get("start_state")
     end_state = pert.get("end_state")
     if start_state is None or end_state is None:

@@ -22,12 +22,11 @@ species:
   ortholog_policy: one2one
 
 perturbation:
-  type: delete # delete | overexpress | inhibit | activate
+  type: delete # delete | overexpress
     # "delete": delete gene from rank value encoding
     # "overexpress": move gene to front of rank value encoding
     #   (absent genes: insert at front + drop lowest-ranked tokens to preserve length)
-    # "inhibit": move gene to lower quartile of rank value encoding
-    # "activate": move gene to higher quartile of rank value encoding
+    # "inhibit" / "activate" (quartile shifts) are not implemented and stop with an error.
   organ_data: AD # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
   state_key: disease

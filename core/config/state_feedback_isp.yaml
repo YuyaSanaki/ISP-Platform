@@ -153,7 +153,9 @@ state_feedback:
   # restore the factor next to its start-encoding neighbour and delete the placebo
   # gene (docs/state_feedback_deletion_counterfactual.md); they need ctrl_reference: start.
   # On by default (the paper's method); without it most of the feedback gain is
-  # shared with placebo genes.
+  # shared with placebo genes. Read only by core/run_state_feedback_stability.py;
+  # core/run_state_feedback_isp.py (Web UI run type) trains and reranks with
+  # delta_h itself.
   placebo_contrast:
     enabled: true
     n_estimation: 10
