@@ -13,6 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - The State-feedback ISP guide and config said that with `placebo_contrast.enabled` every feedback event uses the placebo contrast. Only the stability runner (`core/run_state_feedback_stability.py`) reads `state_feedback.placebo_contrast`; the State-feedback ISP runner (`core/run_state_feedback_isp.py`, Web UI run type) trains its decoder and reranks with Δh itself. The guide and config comment now say so, and the runner prints a note when the key is on. No results change: the paper's placebo-corrected results (τ, z) come from the stability runner, which applies the contrast.
+- In silico perturbation with an anchor gene in combinations (`make_perturbation_batch` with `combos > 0` and `anchor_gene`) read the key `"input_ids "` (trailing space) and raised `KeyError`; it now reads `input_ids`. No results change: ISP Platform never reaches this branch, because a gene list resets `anchor_gene` and `combos`, genome-wide ISP takes the `"all"` branch, and `anchor_gene` is dropped whenever cell states are modelled. Test: `tests/test_anchor_combo_batch.py`.
 
 ## [1.0.1] - 2026-10-09
 

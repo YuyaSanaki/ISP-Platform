@@ -522,7 +522,7 @@ def make_perturbation_batch(example_cell,
             pass
         indices_to_perturb = [[i] for i in range(range_start, (example_cell["length"][0]-range_end))]
     elif combo_lvl>0 and (anchor_token is not None): 
-        example_input_ids = example_cell["input_ids "][0]
+        example_input_ids = example_cell["input_ids"][0]
         anchor_index = example_input_ids.index(anchor_token[0])
         indices_to_perturb = [sorted([anchor_index,i]) if i!=anchor_index else None for i in range(example_cell["length"][0])]  
         indices_to_perturb = [item for item in indices_to_perturb if item is not None]
