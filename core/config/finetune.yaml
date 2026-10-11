@@ -27,8 +27,10 @@ metadata:
     # Example: { genotype: cell_type }
 
   # Add a fixed-value column to every row
+  # E2E pipeline runs inherit this unless stages.finetune.metadata overrides it. organ_major is
+  # only a constant label: it is not used for training unless finetune.organ_key: organ_major.
   add_columns:
-    organ_major: aorta            # All PIPseq data is brain tissue
+    organ_major: aorta
 
   # Derive a column from another using a value mapping
   # derive_columns:

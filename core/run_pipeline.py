@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import os
 import shutil
@@ -82,9 +83,52 @@ def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
 
 
 def _run_subprocess(cmd: list[str], env: dict[str, str], label: str) -> None:
+    """Run a stage and relay its stdout and stderr through sys.stdout.
+
+    The child inherits file descriptors, not the Python-level tee of pipeline_run.log, so
+    its output is piped and written here to reach both the console and the log.
+    """
     print(f"\n>>> Starting {label}: {' '.join(cmd)}\n", flush=True)
-    subprocess.run(cmd, cwd=str(ROOT), env=env, check=True)
+    env = dict(env)
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    try:
+        assert proc.stdout is not None
+        while True:
+            chunk = proc.stdout.read1(65536)
+            if not chunk:
+                break
+            sys.stdout.write(decoder.decode(chunk))
+            sys.stdout.flush()
+        sys.stdout.write(decoder.decode(b"", final=True))
+        returncode = proc.wait()
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd)
     print(f"\n>>> {label} finished OK.\n", flush=True)
+
+
+def _ortholog_approval_stop_message(tokenized_dir: Path) -> str | None:
+    """Gate message when tokenize ended on an approved stop decision, else None."""
+    meta = tokenized_dir / "tokenize_run_metadata.yaml"
+    if not meta.is_file():
+        return None
+    with open(meta, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if data.get("run_status") != "stopped_ortholog_approval":
+        return None
+    gate = data.get("ortholog_loss_gate") or {}
+    return str(gate.get("message") or "The ortholog approval decision stopped tokenize.")
 
 
 def _num_classes_from_label_dict(model_dir: Path) -> int:
@@ -274,6 +318,7 @@ def main() -> None:
     )
 
     pipeline_ok = False
+    stopped_status: str | None = None
     finetune_model: Path | None = None
     tokenized_dir = Path(resolved["tokenized_dir"])
 
@@ -288,6 +333,17 @@ def main() -> None:
                 env,
                 "Tokenize",
             )
+            stop_message = _ortholog_approval_stop_message(tokenized_dir)
+            if stop_message is not None:
+                stopped_status = "stopped_ortholog_approval"
+                print("\n" + "=" * 72)
+                print("Pipeline stopped by the ortholog approval record (not an error).")
+                print("=" * 72)
+                print(f"  {stop_message}")
+                print("  No dataset was tokenized; fine-tune and ISP were not run.")
+                print(f"  Gate artifacts:    {resolved['tokenized_dir']}")
+                print("=" * 72)
+                return
         else:
             print("Skipping tokenize (--skip-tokenize).")
 
@@ -358,17 +414,45 @@ def main() -> None:
             print("Skipping ISP (--skip-isp).")
 
         # ------------------------------------------------------------------
-        # E2E standard: add ISP TOP1 (by shift toward goal) ISP-UMAP
+        # E2E standard: one ISP-UMAP per run
         # ------------------------------------------------------------------
         # We intentionally disable auto ISP UMAP in stages.isp.umap (handled via
         # Web UI "ISP UMAP" run type), but for Pipeline (E2E) we still want a
-        # quick "top hit" per run. Cost is small because it runs only one
-        # gene (single UMAP extraction for start/end + perturbed start).
+        # quick "top hit" per run. Genome-wide runs project the TOP1 gene (by
+        # shift toward goal); gene-list runs project the listed genes perturbed
+        # together, since group stats have no per-gene ranking to pick from.
         if not args.skip_isp:
             run_dir_path = Path(resolved["pipeline_run_dir"])
             ispstats_dir = run_dir_path / "ispstats_results"
             isp_umap_dir = run_dir_path / "isp_umap"
-            if not isp_umap_dir.is_dir() or not any(isp_umap_dir.glob("umap_*.png")):
+            perturbation = isp_cfg.get("perturbation") or {}
+            listed_genes = [str(g) for g in (perturbation.get("genes_to_perturb") or [])]
+            perturb_type = str(perturbation.get("type") or "delete").lower()
+            umap_done = isp_umap_dir.is_dir() and any(isp_umap_dir.glob("umap_*.png"))
+            if not umap_done and listed_genes:
+                if perturb_type in ("delete", "overexpress"):
+                    print(f"Running E2E ISP UMAP for the perturbed gene set: {', '.join(listed_genes)}")
+                    # Without --gene, run_isp_umap.py perturbs the stage config's genes_to_perturb as one group.
+                    _run_subprocess(
+                        [
+                            sys.executable,
+                            str(ROOT / "run_isp_umap.py"),
+                            "--run-dir",
+                            str(run_dir_path),
+                            "--pca-components",
+                            "50",
+                            "--umap-seed",
+                            "0",
+                        ],
+                        os.environ.copy(),
+                        "ISP UMAP (gene set)",
+                    )
+                else:
+                    print(
+                        f"E2E ISP UMAP: perturbation.type {perturb_type!r} is not supported "
+                        "(delete / overexpress only); skipping."
+                    )
+            elif not umap_done:
                 top_gene = None
                 # Primary source: significant_genes.csv (written by isp_analysis.py)
                 for cand in (ispstats_dir / "significant_genes.csv", ispstats_dir / "top100_positive_shifters.csv"):
@@ -451,7 +535,7 @@ def main() -> None:
             run_dir,
             {
                 "finished_at_utc": datetime.now(timezone.utc).isoformat(),
-                "run_status": "completed" if pipeline_ok else "failed",
+                "run_status": stopped_status or ("completed" if pipeline_ok else "failed"),
                 "finetune_model_dir": str(finetune_model) if finetune_model else None,
                 "dataset_path": resolved["dataset_path"],
             },
