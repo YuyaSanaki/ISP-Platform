@@ -2699,12 +2699,15 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 step=1,
                 key="pipeline_ft_num_runs",
                 on_change=_apply_ft_isp_advanced_to_yaml,
-                help="Independent fine-tune runs with different seeds (`training.num_runs`).",
+                help=(
+                    "Independent fine-tune runs with different seeds (`training.num_runs`). "
+                    "ISP uses the run with the highest eval accuracy."
+                ),
             )
 
         st.markdown("**Tokenize / ISP options**")
         st.caption(
-            "`max_cells` caps tokenization; `max_ncells` / `stats.mode` affect ISP rankings; "
+            "`max_cells` sets the tokenizer shard size; `max_ncells` / `stats.mode` affect ISP rankings; "
             "UMAP / analysis only control optional plots."
         )
         st.number_input(
@@ -2715,8 +2718,10 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
             key="pipeline_max_cells",
             on_change=_apply_ft_isp_advanced_to_yaml,
             help=(
-                "Max cells tokenized (`runtime.max_cells` → tokenizer.max_cells). "
-                "Large values need more RAM; does not change ISP cell cap."
+                "Cells per tokenized shard (`runtime.max_cells` → tokenizer.max_cells). "
+                "Larger studies are split into several shards, and fine-tune and ISP use all of them. "
+                "Cross-species input keeps at most this many cells per sample file. "
+                "Large values need more RAM; does not change the ISP cell cap (`max_ncells`)."
             ),
         )
         c_cells, c_stats = st.columns(2)
@@ -2766,7 +2771,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 | **state_key** | Metadata column for start/end (usually `disease`) |
 | **genes_to_perturb** | Empty = all genes; list = targeted ISP |
 | **task_type / label_column** | What the fine-tune classifier learns |
-| **tokenize max_cells** | Cap cells at tokenize (RAM / time) |
+| **tokenize max_cells** | Cells per tokenized shard (RAM). All shards are used. Cross-species: also cells kept per sample file |
 | **max_ncells** | How many cells ISP uses. Lower ≈ faster; **results change**. |
 | **stats.mode** | How cosine shifts are scored. Keep **goal_state_shift** for Disease→WT. |
 | **analysis plots** | Post-stats figures (top genes barplot, volcano, etc.). |
