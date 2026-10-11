@@ -88,7 +88,7 @@ runtime:
   # train_batch_size: 32   # from FT batch calibrate; keep fixed once chosen
 
 perturbation:
-  type: delete  # delete | overexpress | inhibit | activate
+  type: delete  # delete | overexpress
   state_key: disease
   start_state: Disease   # must match 2nd segment of sample folder names
   end_state: Ctrl
@@ -135,7 +135,7 @@ Copied into the generated ISP config. Same keys as [`core/config/isp.yaml`](../c
 
 | Field | Role |
 |-------|------|
-| `type` | Perturbation mode: `delete` (remove gene from rank encoding), `overexpress` (gene to front), `inhibit` (lower quartile), `activate` (higher quartile) |
+| `type` | Perturbation mode: `delete` (remove gene from rank encoding) or `overexpress` (gene to front). `inhibit` / `activate` (quartile shifts) are not implemented and stop with an error |
 | `state_key` | Metadata column for states (e.g. `disease`) |
 | `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (from folder names when `extract_metadata_from_path` is on) |
 | `organ_data` | Optional output filename prefix |

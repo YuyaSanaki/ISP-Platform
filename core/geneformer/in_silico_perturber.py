@@ -1086,6 +1086,23 @@ def mean_nonpadding_embs(embs, original_lens):
     mean_embs = masked_embs.sum(1) / original_lens.view(-1, 1).float()
     return mean_embs
 
+UNIMPLEMENTED_PERTURB_TYPES = ("inhibit", "activate")
+
+
+def check_perturb_type_implemented(perturb_type):
+    """Stop on perturbation types whose rank-shift code path was never finished.
+
+    ``inhibit`` / ``activate`` are accepted by the option table but their batch builders,
+    embedding alignment and scoring are incomplete (no shift is applied, or the run fails
+    later), so they cannot produce valid results.
+    """
+    if perturb_type in UNIMPLEMENTED_PERTURB_TYPES:
+        raise ValueError(
+            f"perturb_type '{perturb_type}' is not implemented in ISP Platform. "
+            "Use 'delete' or 'overexpress'."
+        )
+
+
 class InSilicoPerturber:
     valid_option_dict = {
         "perturb_type": {"delete","overexpress","inhibit","activate"},
@@ -1134,14 +1151,14 @@ class InSilicoPerturber:
 
         Parameters
         ----------
-        perturb_type : {"delete","overexpress","inhibit","activate"}
+        perturb_type : {"delete","overexpress"}
             Type of perturbation.
             "delete": delete gene from rank value encoding
             "overexpress": move gene to front of rank value encoding
                 (absent genes are inserted at front; net length growth is offset by
                 dropping the lowest-ranked / tail tokens so encoding length is preserved)
-            "inhibit": move gene to lower quartile of rank value encoding
-            "activate": move gene to higher quartile of rank value encoding
+            "inhibit" / "activate" (shift to a lower / higher quartile) are not implemented
+            and raise ValueError.
         perturb_rank_shift : None, {1,2,3}
             Number of quartiles by which to shift rank of gene.
             For example, if perturb_type="activate" and perturb_rank_shift=1:
@@ -1281,6 +1298,7 @@ class InSilicoPerturber:
             self.tokens_to_perturb = [self.gene_token_dict.get(gene) for gene in self.genes_to_perturb]
 
     def validate_options(self):
+        check_perturb_type_implemented(self.perturb_type)
         # confirm arguments are within valid options and compatible with each other
         for attr_name,valid_options in self.valid_option_dict.items():
             attr_value = self.__dict__[attr_name]
@@ -1330,28 +1348,6 @@ class InSilicoPerturber:
                             "of rank value encoding rather than shifted by quartile")
                     self.perturb_rank_direct_shift = None
 
-        
-        if self.perturb_type in ["inhibit", "activate"]:
-            if (self.perturb_rank_shift is None) and (self.perturb_rank_direct_shift is None) :
-                if self.perturb_type == "inhibit":
-                    logger.warning(
-                        "please set the perturb_rank_shift set into 1-4. " )
-                    logger.warning(
-                            f"please set the perturb_rank_direct_shift set into 1-{self.model_input_size}. " )
-                elif self.perturb_type == "active":
-                    logger.warning(
-                        "please set the perturb_rank_shift into 1-4. " )
-                    logger.warning(
-                            f"please set the perturb_rank_direct_shift into 1-{self.model_input_size}. " )
-                logger.warning(
-                    "You must set the perturb_rank_shift. But not setting!!")
-                logger.warning(
-                        "You must set the perturb_rank_direct_shift. But not setting!!")
-                raise
-            else :
-                pass
-                    
-        
         if (self.anchor_gene is not None) and (self.emb_mode == "cell_and_gene"):
             self.emb_mode = "cell"
             logger.warning(
@@ -1429,13 +1425,6 @@ class InSilicoPerturber:
                     "anchor_gene set to None. " \
                     "Currently, anchor gene not available " \
                     "when modeling multiple cell states.")
-        
-        if self.perturb_type in ["inhibit","activate"]:
-            if self.perturb_rank_shift is None and self.perturb_rank_direct_shift is None:
-                logger.error(
-                    "If perturb_type is inhibit or activate then " \
-                    "quartile to shift by must be specified.")
-                raise
         
         if self.filter_data is not None:
             for key,value in self.filter_data.items():

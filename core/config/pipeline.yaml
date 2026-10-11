@@ -62,11 +62,10 @@ runtime:
 
 # ISP perturbation (copied into stage ISP config; same as config/isp.yaml)
 perturbation:
-  type: delete  # delete | overexpress | inhibit | activate
+  type: delete  # delete | overexpress
   # "delete": delete gene from rank value encoding
   # "overexpress": move gene to front of rank value encoding
-  # "inhibit": move gene to lower quartile of rank value encoding
-  # "activate": move gene to higher quartile of rank value encoding
+  # "inhibit" / "activate" (quartile shifts) are not implemented and stop with an error.
   organ_data: null
   state_key: disease
   start_state: Disease

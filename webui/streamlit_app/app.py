@@ -56,8 +56,6 @@ _STATS_MODE_LABELS = {
 _PERTURB_TYPE_LABELS = {
     "delete": "delete — remove gene from rank encoding",
     "overexpress": "overexpress — move gene to front of ranks",
-    "inhibit": "inhibit — move gene toward lower quartile",
-    "activate": "activate — move gene toward higher quartile",
 }
 _FT_TASK_TYPE_LABELS = {
     "disease": "disease — classify disease / condition labels",
@@ -2764,7 +2762,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
             """
 | Control | Effect |
 |---------|--------|
-| **perturbation.type** | delete / overexpress / inhibit / activate |
+| **perturbation.type** | delete / overexpress |
 | **state_key** | Metadata column for start/end (usually `disease`) |
 | **genes_to_perturb** | Empty = all genes; list = targeted ISP |
 | **task_type / label_column** | What the fine-tune classifier learns |
