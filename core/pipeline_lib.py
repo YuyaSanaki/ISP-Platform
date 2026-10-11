@@ -7,7 +7,9 @@ per-stage YAML configs by merging defaults from config/*.yaml with overrides.
 from __future__ import annotations
 
 import copy
+import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -84,6 +86,8 @@ def resolve_pipeline_paths(pipeline: Mapping[str, Any], run_dir: Path) -> dict[s
 
     tokenized_dir = run_dir / "tokenized_dataset"
     loom_temp_dir = run_dir / "loom_files"
+    # Provisional until the stages run: run_pipeline replaces them with
+    # resolve_tokenized_dataset() and resolve_finetune_model_dir().
     dataset_path = tokenized_dir / f"{study}_0.dataset"
     finetune_run_dir = run_dir / "finetune"
     finetune_model_dir = finetune_run_dir / "all_run1"
@@ -106,6 +110,143 @@ def resolve_pipeline_paths(pipeline: Mapping[str, Any], run_dir: Path) -> dict[s
         "species": species,
         "max_input_size": backend.max_input_size,
     }
+
+
+def _shard_entries(tokenized_dir: Path, study: str) -> list[tuple[int, Path]]:
+    pattern = re.compile(rf"^{re.escape(study)}_(\d+)\.dataset$")
+    shards: list[tuple[int, Path]] = []
+    if tokenized_dir.is_dir():
+        for path in tokenized_dir.iterdir():
+            match = pattern.match(path.name)
+            if match and path.is_dir():
+                shards.append((int(match.group(1)), path))
+    return sorted(shards)
+
+
+def tokenized_shard_paths(tokenized_dir: Path, study: str) -> list[Path]:
+    """Tokenizer shards ``{study}_{n}.dataset`` in shard order (the tokenizer starts a new
+    shard each time the cells read so far reach ``tokenizer.max_cells``)."""
+    shards = _shard_entries(tokenized_dir, study)
+    indices = [i for i, _ in shards]
+    if indices and indices != list(range(len(indices))):
+        raise ValueError(
+            f"Tokenized shards under {tokenized_dir} are not numbered 0..{len(indices) - 1}: "
+            f"{[p.name for _, p in shards]}. Re-run tokenize into a fresh run directory."
+        )
+    return [p for _, p in shards]
+
+
+def merged_dataset_path(tokenized_dir: Path, study: str) -> Path:
+    return tokenized_dir / f"{study}_merged.dataset"
+
+
+def remove_tokenized_outputs(tokenized_dir: Path, study: str) -> list[Path]:
+    """Delete shards and the merged dataset left by an earlier tokenize in this run directory."""
+    removed: list[Path] = []
+    stale = [p for _, p in _shard_entries(tokenized_dir, study)]
+    merged = merged_dataset_path(tokenized_dir, study)
+    for path in [*stale, merged, merged.with_suffix(".json")]:
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed.append(path)
+        elif path.is_file():
+            path.unlink()
+            removed.append(path)
+    return removed
+
+
+def resolve_tokenized_dataset(tokenized_dir: Path, study: str) -> Path:
+    """
+    Dataset path for fine-tune and ISP covering every tokenizer shard.
+
+    One shard is used as is. Several shards are concatenated in shard order into
+    ``{study}_merged.dataset`` (reused while ``{study}_merged.json`` lists the same shards).
+    """
+    shards = tokenized_shard_paths(tokenized_dir, study)
+    if not shards:
+        raise FileNotFoundError(
+            f"Tokenized dataset not found: no {study}_<n>.dataset under {tokenized_dir}. "
+            "Run tokenize or fix data.output_prefix / input_dir."
+        )
+    if len(shards) == 1:
+        return shards[0]
+
+    merged = merged_dataset_path(tokenized_dir, study)
+    manifest = merged.with_suffix(".json")
+    names = [p.name for p in shards]
+    if merged.is_dir() and manifest.is_file():
+        with open(manifest, encoding="utf-8") as f:
+            if (json.load(f) or {}).get("shards") == names:
+                return merged
+
+    from datasets import concatenate_datasets, load_from_disk
+
+    parts = [load_from_disk(str(p)) for p in shards]
+    combined = concatenate_datasets(parts)
+    if merged.exists():
+        shutil.rmtree(merged)
+    combined.save_to_disk(str(merged))
+    with open(manifest, "w", encoding="utf-8") as f:
+        json.dump(
+            {"shards": names, "cells_per_shard": [len(p) for p in parts], "cells": len(combined)},
+            f,
+            indent=2,
+        )
+    print(
+        f"Merged {len(shards)} tokenized shards ({len(combined)} cells) into {merged}",
+        flush=True,
+    )
+    return merged
+
+
+_FINETUNE_RUN_DIR = re.compile(r"^(?P<group>.+)_run(?P<run>\d+)$")
+
+
+def _eval_accuracy(run_dir: Path) -> float | None:
+    path = run_dir / "eval_results.json"
+    if not path.is_file():
+        return None
+    with open(path, encoding="utf-8") as f:
+        metrics = json.load(f) or {}
+    for key in ("test_accuracy", "eval_accuracy"):
+        if metrics.get(key) is not None:
+            return float(metrics[key])
+    return None
+
+
+def resolve_finetune_model_dir(finetune_run_dir: Path) -> Path:
+    """
+    Fine-tuned checkpoint for ISP under ``finetune/{group}_run{k}/``.
+
+    With ``training.num_runs > 1`` the run with the highest eval accuracy is used (ties and
+    runs without accuracy fall back to the lowest run number, as in run_finetune's best_*).
+    ``finetune.organ_key`` groups give one model per group, which ISP cannot choose between.
+    """
+    runs: dict[str, list[tuple[int, Path]]] = {}
+    if finetune_run_dir.is_dir():
+        for path in finetune_run_dir.iterdir():
+            match = _FINETUNE_RUN_DIR.match(path.name)
+            if match and path.is_dir() and (path / "label_dict.json").is_file():
+                runs.setdefault(match.group("group"), []).append((int(match.group("run")), path))
+    if not runs:
+        raise FileNotFoundError(
+            f"No fine-tuned model under {finetune_run_dir} "
+            "(expected {group}_run{k}/ with label_dict.json). Check the fine-tune log."
+        )
+    if len(runs) > 1:
+        raise ValueError(
+            f"Fine-tune wrote one model per group {sorted(runs)} (finetune.organ_key is set). "
+            "Pipeline ISP needs a single model: set stages.finetune.finetune.organ_key: null, "
+            "or run ISP separately with paths.geneformer_model set to one group's run."
+        )
+    (candidates,) = runs.values()
+    candidates.sort()
+    best_path, best_acc = candidates[0][1], _eval_accuracy(candidates[0][1])
+    for _, path in candidates[1:]:
+        acc = _eval_accuracy(path)
+        if acc is not None and (best_acc is None or acc > best_acc):
+            best_path, best_acc = path, acc
+    return best_path
 
 
 def build_tokenize_config(
@@ -237,8 +378,8 @@ def format_pipeline_banner(
         f"  study / prefix:     {resolved['study_name']}",
         f"  species:            {resolved.get('species', {})}",
         f"  max_input_size:     {resolved.get('max_input_size', 2048)}",
-        f"  tokenized dataset:  {resolved['dataset_path']}",
-        f"  finetune model:     {resolved['finetune_model_dir']}",
+        f"  tokenized dir:      {resolved['tokenized_dir']}",
+        f"  finetune dir:       {resolved['finetune_run_dir']}",
         "",
         "  stage configs:",
     ]

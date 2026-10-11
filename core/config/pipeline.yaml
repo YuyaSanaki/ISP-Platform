@@ -7,8 +7,8 @@
 # Layout: /data/ExperimentName/Time-Condition-Replicate/barcodes.tsv.gz (+ features, matrix)
 # data.input_dir = /app/data/ExperimentName/ (one experiment) or /app/data/ (many).
 # Paths below are derived under {paths.output_root}/{YYYYMMDD}/pipeline_<UTC>/:
-#   tokenized_dataset/{study_name}_0.dataset
-#   finetune/all_run1/          (checkpoint for ISP)
+#   tokenized_dataset/{study_name}_0.dataset   (+ _1, … and _merged when split by max_cells)
+#   finetune/all_run1/          (checkpoint for ISP; best eval accuracy when num_runs > 1)
 #   isp_results/                (ISP outputs directly under the pipeline run folder)
 #
 # Optional: override any section via stages.tokenize / finetune / isp
@@ -54,7 +54,7 @@ species:
 # Applied to tokenize, fine-tune, and ISP stage configs (overrides config/*.yaml defaults).
 runtime:
   nproc: 16
-  max_cells: 300000              # tokenize: tokenizer.max_cells (large values need ample RAM)
+  max_cells: 300000              # tokenize: tokenizer.max_cells = cells per shard (large values need ample RAM)
   forward_batch_size: auto       # ISP: "auto" = measure GPU at startup; or set an int
   # Fine-tune: set an integer from Web UI "FT batch size (calibrate)", then keep it fixed.
   # Changing train_batch_size changes optimization dynamics / results — do not retune casually.
