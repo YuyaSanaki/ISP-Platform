@@ -1,14 +1,16 @@
 ### English
 
 Everything a run writes, under `output/{YYYYMMDD}/`:
-`pipeline_{HHMMSS}_{µs}Z/` → `stage_configs/`, `loom_files/`, `tokenized_dataset/{study}_0.dataset` (+ conversion and gate
-reports), `finetune/all_run1/`, `isp_results/*_raw.pickle`, `ispstats_results/`, `figures/`, `isp_umap/`,
-`state_feedback_isp/`, `pipeline_run.log`, `pipeline_*_metadata.yaml`. Web UI run folders live in
-`data/streamlit_workspace/runs/<id>/` (`config.yaml`, `console.log`).
+`pipeline_{HHMMSS}_{µs}Z/` → `stage_configs/`, `loom_files/`, `tokenized_dataset/{study}_{n}.dataset` (one shard per
+`max_cells`; `{study}_merged.dataset` when there are several; plus conversion and gate reports), `finetune/{group}_run{k}/`,
+`isp_results/*_raw.pickle`, `ispstats_results/`, `figures/`, `isp_umap/`, `state_feedback_isp/`, `pipeline_run.log`
+(pipeline and stage output), `pipeline_config_used.yaml` (config as run), `pipeline_*_metadata.yaml`. Web UI run folders
+live in `data/streamlit_workspace/runs/<id>/` (`config.yaml`, `console.log`).
 
 ### 日本語
 
 実行結果はすべて `output/{YYYYMMDD}/` の下に書かれます。
-`pipeline_{HHMMSS}_{µs}Z/` の中に `stage_configs/`、`loom_files/`、`tokenized_dataset/{study}_0.dataset`（変換レポート・ゲートの結果も）、
-`finetune/all_run1/`、`isp_results/*_raw.pickle`、`ispstats_results/`、`figures/`、`isp_umap/`、`state_feedback_isp/`、
-`pipeline_run.log`、`pipeline_*_metadata.yaml`。Web UI の実行フォルダは `data/streamlit_workspace/runs/<id>/`（`config.yaml`、`console.log`）です。
+`pipeline_{HHMMSS}_{µs}Z/` の中に `stage_configs/`、`loom_files/`、`tokenized_dataset/{study}_{n}.dataset`（`max_cells` ごとに1つ。複数あるときは
+`{study}_merged.dataset` も。変換レポート・ゲートの結果も）、`finetune/{group}_run{k}/`、`isp_results/*_raw.pickle`、`ispstats_results/`、
+`figures/`、`isp_umap/`、`state_feedback_isp/`、`pipeline_run.log`（パイプラインと各ステージの出力）、`pipeline_config_used.yaml`（実際に使った設定）、
+`pipeline_*_metadata.yaml`。Web UI の実行フォルダは `data/streamlit_workspace/runs/<id>/`（`config.yaml`、`console.log`）です。

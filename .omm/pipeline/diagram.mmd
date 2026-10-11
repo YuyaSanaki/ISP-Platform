@@ -9,11 +9,11 @@ graph LR
     orchestrator -->|"subprocess, TOKENIZE_CONFIG"| tokenize-stage
     orchestrator -->|"subprocess, stage_configs/finetune.yaml"| finetune-stage
     orchestrator -->|"accelerate launch, stage_configs/isp.yaml"| isp-stage
-    orchestrator -->|"TOP1 significant gene, PCA 50, seed 0"| isp-umap
+    orchestrator -->|"TOP1 significant gene or gene list, PCA 50, seed 0"| isp-umap
     ft-batch-calibrate -.->|"train_batch_size pasted by user"| finetune-stage
-    tokenize-stage -->|"tokenized_dataset/study_0.dataset"| finetune-stage
+    tokenize-stage -->|"tokenized_dataset, all shards"| finetune-stage
     tokenize-stage -->|"tokenized dataset"| isp-stage
-    finetune-stage -->|"finetune/all_run1 + label_dict.json"| isp-stage
+    finetune-stage -->|"best finetune run + label_dict.json"| isp-stage
     isp-stage -->|"ispstats_results/significant_genes.csv"| isp-umap
     isp-stage -.->|"reuses run: dataset, model, start/end states"| state-feedback-isp
     class orchestrator entry
