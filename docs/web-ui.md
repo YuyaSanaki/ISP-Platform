@@ -181,6 +181,14 @@ Under the page title:
 | **Analysis** | Data input, run type, YAML, **Run job**, live log, and the current-session Outputs section                                                                                     |
 | **Output**   | Browse past `pipeline_`* folders under `/app/output` **only** (dropped-gene table, figures inline, CSV previews, zip download). Works even if the Analysis session / Streamlit connection was lost |
 
+### One job at a time, and stopping a job
+
+Only one job runs at a time across **all** browser sessions. **Run job** takes a lock file, `{WEBUI_WORKSPACE}/active_job.json`, and is disabled in every session while the job runs. A tab opened later, or the same tab after a reload, shows the running job under **Logs & status** (run type, run folder, log tail).
+
+**Stop job → Stop now** (next to **Refresh log**) stops the job and its child processes: SIGTERM to the job's process group, then SIGKILL after 15 s. Files already written stay in the run folder, but the run is incomplete; the log shows `stopped by signal 15`.
+
+The lock clears itself when the job's process exits, including after a Web UI or container restart. It covers Web UI jobs only: a CLI job (`docker compose run …`) on the same GPU is not blocked.
+
 
 ---
 

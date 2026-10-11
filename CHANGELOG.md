@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Web UI **Stop job** under **Logs & status**: stops the running job and its child processes (SIGTERM to the job's process group, SIGKILL after 15 s). The run folder keeps the files written so far.
+
 ### Changed
 
 - Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names.
@@ -15,6 +19,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The State-feedback ISP guide and config said that with `placebo_contrast.enabled` every feedback event uses the placebo contrast. Only the stability runner (`core/run_state_feedback_stability.py`) reads `state_feedback.placebo_contrast`; the State-feedback ISP runner (`core/run_state_feedback_isp.py`, Web UI run type) trains its decoder and reranks with Δh itself. The guide and config comment now say so, and the runner prints a note when the key is on. No results change: the paper's placebo-corrected results (τ, z) come from the stability runner, which applies the contrast.
 - Tokenization no longer loops forever when the last group of input files yields no cells (for example an empty sample, or loom files whose cells all fail `filter_pass`). `TranscriptomeTokenizer.tokenize_data` re-read the same files without end; it now stops after the last group, and raises an error if no cells were tokenized at all. Runs that finished before are unchanged, because they never reached this case. Test: `tests/test_tokenizer_empty_rounds.py`.
 - In silico perturbation with an anchor gene in combinations (`make_perturbation_batch` with `combos > 0` and `anchor_gene`) read the key `"input_ids "` (trailing space) and raised `KeyError`; it now reads `input_ids`. No results change: ISP Platform never reaches this branch, because a gene list resets `anchor_gene` and `combos`, genome-wide ISP takes the `"all"` branch, and `anchor_gene` is dropped whenever cell states are modelled. Test: `tests/test_anchor_combo_batch.py`.
+- Web UI runs one job at a time across all browser sessions. The running job used to live only in the session that started it, so a second tab, or the same tab after a reload, could start another job on the same GPU. **Run job** now takes a lock file in the Web UI workspace (`active_job.json`) and is disabled everywhere while the job runs; other sessions show the running job with its log and **Stop job**. The lock clears itself when the job's process exits. No results change: jobs run the same commands. Test: `tests/test_webui_job_lock.py`.
+
+### Security
+
+- Compose services no longer mount the Docker socket (`/var/run/docker.sock`). Access to it from inside a container amounts to root on the host, and nothing in the image uses it (`scripts/run_smoke_matrix.py` calls `docker compose` from the host). No results change.
 
 ## [1.0.1] - 2026-10-09
 

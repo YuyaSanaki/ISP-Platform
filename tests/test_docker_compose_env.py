@@ -28,6 +28,10 @@ class DockerComposeEnvTests(unittest.TestCase):
                 f"service {name!r} environment missing base keys: {sorted(missing)}",
             )
 
+    def test_no_service_mounts_docker_socket(self) -> None:
+        text = COMPOSE.read_text()
+        self.assertNotIn("docker.sock", text)
+
     def test_isp_honors_skip_model_seed_from_host_env(self) -> None:
         proc = subprocess.run(
             ["docker", "compose", "config"],
