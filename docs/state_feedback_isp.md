@@ -87,7 +87,7 @@ This is **a difference between the start and observed-state groups**, not a meas
 2. For each gene present in both, take Δh (genes are matched by token, not position) and pair it with its teacher value `Δr_obs` (up to 256 genes per cell). The gene's original normalized position `base_rank` is kept for the base-rank control but is not a decoder input.
 3. Split the **genes** (not the cells) 80:20. The 20% are never used for training and are kept for evaluation. Because the teacher is one value per gene, splitting by cell would leak the answers.
 
-**Placebo contrast (stability runner only).** `state_feedback.placebo_contrast` is read only by `core/run_state_feedback_stability.py`, which produced the paper's placebo-corrected results. With `enabled: true` its decoder is trained on, and every feedback event uses, Δh minus the mean Δh of matched placebo perturbations in the same cell (see [state_feedback_decode_methods.md](state_feedback_decode_methods.md)). The State-feedback ISP runner (`core/run_state_feedback_isp.py`, the Web UI run type) does not read the key: its decoder is trained on Δh itself, `linear_deltarank` reranks with Δh itself, and direction fidelity, specificity and the endpoint conditions in sections 2.4–2.5 and 3.2 describe that decoder.
+**Placebo contrast (stability runner only).** `state_feedback.placebo_contrast` is read only by `core/run_state_feedback_stability.py`, which produced the paper's placebo-corrected results and is what the Web UI runs in its default mode, **Placebo-corrected (paper method)**. With `enabled: true` its decoder is trained on, and every feedback event uses, Δh minus the mean Δh of matched placebo perturbations in the same cell (see [state_feedback_decode_methods.md](state_feedback_decode_methods.md)). The decoder-diagnostics runner (`core/run_state_feedback_isp.py`, Web UI mode **Decoder diagnostics (no placebo correction)**) does not read the key: its decoder is trained on Δh itself, `linear_deltarank` reranks with Δh itself, and direction fidelity, specificity and the endpoint conditions in sections 2.4–2.5 and 3.2 describe that decoder.
 
 **Model**
 
@@ -205,7 +205,14 @@ The same decoder is given Δh from other gene sets and from random gene perturba
 
 ## 3. Web UI settings
 
-Choose the Run type **State-feedback ISP**.
+Choose the Run type **State-feedback ISP**, then a **Mode**:
+
+| Mode | Runner | Use it for |
+|---|---|---|
+| **Placebo-corrected (paper method)** (default) | `core/run_state_feedback_stability.py` | Results you report. The paper's two-tier correction: correction placebos are subtracted from Δh at every feedback event and in decoder training, and comparison placebo chains give τ, z and the rank among placebos. The placebo genes are written to the run folder (3.2) and shown in the Outputs panel |
+| **Decoder diagnostics (no placebo correction)** | `core/run_state_feedback_isp.py` | Checking the decoder: direction fidelity, the six conditions and perturbation specificity. The decoder reads Δh itself and no placebo is drawn, so endpoint values include the gain shared with placebo genes and are not τ |
+
+Both modes share the source run, the steps, max_ncells, the GPU batch size and the observed state. The other settings below belong to one mode.
 
 **Source run and steps**
 
@@ -218,20 +225,35 @@ Choose the Run type **State-feedback ISP**.
 | Step N: genes | Genes perturbed together in this step (one per line; symbols or Ensembl IDs) |
 | GPU batch size | `auto` (recommended) or manual. Scoring runs two forward passes per step (perturbed and original), so reusing the genome-wide ISP batch size often causes out-of-memory errors |
 
+**Placebo correction (Placebo-corrected mode)**
+
+| Setting | Default (paper) | Meaning |
+|---|---|---|
+| Decoder seeds | `0 1 2` | One decoder is trained per seed; τ and the criteria S1–S4 are reported per seed (`stability.seeds`) |
+| Correction placebos | 10 | Matched placebo gene sets swapped in for the query genes at every step; their mean Δh is subtracted before decoding and in decoder training (`placebo_contrast.n_estimation`) |
+| Correction draw seed | 1 | Seed of the correction draw. Must differ from the comparison draw seeds (`placebo_contrast.estimation_draw_seed`) |
+| Comparison placebo chains (per draw) | 30 | Placebo chains run through the whole simulation; τ is the feedback gain minus their mean gain (`stability.n_random_chains`, at least 3) |
+| Comparison draw seeds | `0` | One independent draw of comparison chains per seed (`stability.random_seeds`) |
+| Idle reranks after the last step | 5 | Extra reranks with no new perturbation, for criterion S2 (`stability.idle_events`) |
+
+Placebo genes are matched to each query gene by detection rate and median position in the start cells (`stability.*` in 3.1, `core/state_feedback/random_chains.py`). With the defaults the run simulates 31 chains without feedback and then with feedback for each of 3 decoder seeds, and every feedback event also runs the 10 correction placebos, so it takes hours. Lower the counts for a quick check, and use the defaults for results you report. Works with a single step (simultaneous perturbation).
+
 **Basic settings**
 
 | Setting | Default | Meaning |
 |---|---|---|
-| max_ncells | 300 | Number of start-state cells. Every condition runs GPU forward passes over these cells, so run time is roughly proportional (observed: about 26 min in total and about 4 min per condition at n=50) |
-| Δrank decoder | Train a new decoder in this run | Train a new decoder, or reuse one trained earlier on the same Pipeline run (same fine-tuned model). The steps it was trained on are shown in brackets. **Reusing it for a different step list is a transfer test; performance is not guaranteed.** This includes the same genes in a different order: the gene added last ends up at the front of the encoding, so the Δh the decoder sees changes. On BBRC OSKM (n=3000, all 24 orders, feedback after every step), a decoder trained on simultaneous OSKM matched a decoder trained on each order only for the 6 orders ending in POU5F1, whose encodings match the simultaneous one at the front. On the other 18 its direction fidelity (pooled Spearman) fell to 0.32–0.36, against 0.42–0.47 for per-order decoders (mean over 24 orders: 0.38 vs 0.46; partial ρ given base rank 0.29 vs 0.35). The endpoint order ranking from the two decoders was uncorrelated (Spearman −0.02) |
-| Direction fidelity only | Off | When on, the endpoint conditions are skipped and only decoder training (or loading) and direction fidelity (and specificity) run. Works with a single step |
+| max_ncells | 300 | Number of start-state cells. Every chain or condition runs GPU forward passes over these cells, so run time is roughly proportional (Decoder diagnostics, observed: about 26 min in total and about 4 min per condition at n=50) |
+| Observed state for the teacher (under **Feedback and teacher**) | Blank = pipeline end state | State that supplies the decoder's teacher (and the `oracle` ranks in Decoder diagnostics). It must exist in the same dataset under the same state key, with enough cells. If the dataset has an intermediate-state label, it can be used here |
 
-**Conditions**
+**Decoder and conditions (Decoder diagnostics mode)**
 
 | Setting | Default | Meaning |
 |---|---|---|
+| Δrank decoder | Train a new decoder in this run | Train a new decoder, or reuse one trained earlier on the same Pipeline run (same fine-tuned model). The steps it was trained on are shown in brackets. **Reusing it for a different step list is a transfer test; performance is not guaranteed.** This includes the same genes in a different order: the gene added last ends up at the front of the encoding, so the Δh the decoder sees changes. On BBRC OSKM (n=3000, all 24 orders, feedback after every step), a decoder trained on simultaneous OSKM matched a decoder trained on each order only for the 6 orders ending in POU5F1, whose encodings match the simultaneous one at the front. On the other 18 its direction fidelity (pooled Spearman) fell to 0.32–0.36, against 0.42–0.47 for per-order decoders (mean over 24 orders: 0.38 vs 0.46; partial ρ given base rank 0.29 vs 0.35). The endpoint order ranking from the two decoders was uncorrelated (Spearman −0.02) |
+| Direction fidelity only | Off | When on, the endpoint conditions are skipped and only decoder training (or loading) and direction fidelity (and specificity) run. Works with a single step |
 | Conditions | All six | Conditions to run (2.4). The `linear_deltarank` verdict needs `norm` and `delta_mlm`, and the gap needs `no_feedback` and `oracle`, so **keeping all of them selected is recommended** |
-| Observed state for the teacher | Blank = pipeline end state | State that supplies the decoder's teacher and the `oracle` ranks. It must exist in the same dataset under the same state key, with enough cells. If the dataset has an intermediate-state label, it can be used here |
+
+Decoders trained in the Placebo-corrected mode read the placebo contrast, not Δh, so they are not offered for reuse here.
 
 **Feedback after every step**
 
@@ -239,13 +261,13 @@ Feedback is applied after every step, including the last. There is no other sche
 
 KLF4 → **feedback** → MYC → **feedback** → SOX2 → **feedback** → POU5F1 → **feedback**
 
-This is what makes State-feedback ISP sequential: each step acts on the state the model inferred after the previous step. Without feedback between steps (`no_feedback`) the result depends only on the final encoding, and so does feedback only after the last step. The endpoint conditions therefore need at least 2 steps.
+This is what makes State-feedback ISP sequential: each step acts on the state the model inferred after the previous step. Without feedback between steps (`no_feedback`) the result depends only on the final encoding, and so does feedback only after the last step. The endpoint conditions of Decoder diagnostics therefore need at least 2 steps.
 
-> **Caution: the error grows with the number of steps.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. Each feedback event (with `ctrl_reference: start`) recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Nothing undoes it. Displacement and decoder error therefore grow with the number of steps, and past the observed end-state ranks the shift reflects encoding disturbance rather than the biology the model has learned. Part of the gain is not specific to the chosen genes: on BBRC OSKM (4 steps), random genes gained most of what OSKM gained (docs/state_feedback_decode_methods.md, "Multi-step stability evaluation"). **Keep chains short, compare only chains with the same number of steps, and before a biological claim subtract matched random chains** (`core/run_state_feedback_stability.py`).
+> **Caution: the error grows with the number of steps.** The decoder is trained to predict the whole observed start→end rank change from the Δh with all steps applied. Each feedback event (with `ctrl_reference: start`) recomputes Δh from the start encoding, including earlier steps and earlier reorders, and adds another end-point-scale displacement to an order that has already moved. Nothing undoes it. Displacement and decoder error therefore grow with the number of steps, and past the observed end-state ranks the shift reflects encoding disturbance rather than the biology the model has learned. Part of the gain is not specific to the chosen genes: on BBRC OSKM (4 steps), random genes gained most of what OSKM gained (docs/state_feedback_decode_methods.md, "Multi-step stability evaluation"). **Keep chains short, compare only chains with the same number of steps, and before a biological claim subtract matched placebo chains** (the Placebo-corrected mode, or `core/run_state_feedback_stability.py` on the command line).
 
 There is no per-cell stop. A convergence stop (Spearman > 0.995 twice in a row) was removed: each step adds a new perturbation, so small feedback changes so far do not mean the next step's feedback will be small, and a whole-encoding threshold misses large moves of a few genes (in a 2048-gene cell, one gene moving from the bottom to the top still gives Spearman 0.997). A 2-cycle stop was also removed: it required the whole order to return exactly to the one from two events ago, which practically never happens because a new perturbation enters between events.
 
-**Perturbation specificity (optional)**
+**Perturbation specificity (optional, Decoder diagnostics mode)**
 
 | Setting | Meaning |
 |---|---|
@@ -270,8 +292,8 @@ These can be changed by editing the **Config YAML** in the Web UI. The defaults 
 | `observed_max_ncells`, `min_detection_count` | 3000, 5 | Maximum cells used to build the teacher, and minimum number of cells a gene must be detected in to be used |
 | `decoder.*` | See 2.2 | Training cells, genes per cell, epochs, loss weights, `max_shift_grid`, held-out gene fraction |
 | `eval.*` | | Direction-fidelity settings (top-K, bootstrap and permutation counts) |
-| `stability.*` | seeds 0/1/2, 30 chains, `random_seeds: [0]` | Random-chain control and stability evaluation (`core/run_state_feedback_stability.py`): decoder seeds, `n_random_chains`, `random_seeds` (one independent draw each), `min_stratum` |
-| `placebo_contrast.*` | on, 10 placebos | Stability runner only (`core/run_state_feedback_stability.py`): train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell. Not read by `core/run_state_feedback_isp.py` (Web UI run type) |
+| `stability.*` | seeds 0/1/2, 30 chains, `random_seeds: [0]` | Comparison placebo chains and stability evaluation (`core/run_state_feedback_stability.py`, Placebo-corrected mode): decoder seeds, `n_random_chains`, `random_seeds` (one independent draw each), `idle_events` (set in the Web UI), and `min_stratum`, `topk` (YAML only) |
+| `placebo_contrast.*` | on, 10 placebos | Correction placebos (`core/run_state_feedback_stability.py`, Placebo-corrected mode): train the decoder on, and rerank with, Δh minus the mean Δh of `n_estimation` matched placebos per cell. The Web UI always sets `enabled: true` in this mode and `enabled: false` in Decoder diagnostics, whose runner (`core/run_state_feedback_isp.py`) does not read the key |
 
 `feedback_every_step`, `feedback_after_step`, `feedback_after_last_step` and `multi_step` were removed. A config that still sets them to anything other than feedback after every step stops with an error.
 
@@ -279,7 +301,24 @@ Steps are read from `state_feedback.steps`. Older configs that list them under `
 
 ### 3.2 Outputs
 
-Written under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`.
+**Placebo-corrected mode.** Written under `{pipeline_run}/state_feedback_isp/state_feedback_stability_<time>/` (the same layout as `core/run_state_feedback_stability.py` on the command line).
+
+| Path | Contents |
+|---|---|
+| `estimation_placebos.json` | Correction placebos: draw seed, and for each placebo the gene symbols (`placebos`) and tokens per step; `left_out_by_chain` counts placebos left out of a chain's correction because they share a gene with it |
+| `random_chains.json` | Comparison placebos per draw seed: for each chain and query gene the placebo gene, its token and covariates (`picks`: start-cell detection and rank, goal-state detection, teacher Δrank), the matching stratum and the balance against it |
+| `random_strata.json` | Tokens of the stratum each placebo gene was drawn from |
+| `delete_cells.csv` | Only with delete steps: per chain and cell, whether the factors were present and how many correction placebos were usable |
+| `no_feedback/<chain>/` | Per-cell shifts of every chain without feedback |
+| `seed<N>/decoder/` | Decoder trained on the placebo contrast for decoder seed N |
+| `seed<N>/multi_<chain>/` | Per-cell shifts of every chain with feedback (and the idle reranks of the query chain) |
+| `specificity.csv` | τ per decoder seed (`specific_gain_mean`, with CI), z against the comparison placebos, rank among them; `set` = `all` or one comparison draw |
+| `stability_verdict.json`, `seed_agreement.csv`, `events.csv`, `endpoints.csv` | Criteria S1–S4 and the data behind them |
+| `run_manifest.json` | Settings, including the placebo counts and draw seeds |
+
+The Web UI Outputs panel shows τ per seed, S1–S4 and the two placebo gene tables, each with a CSV download.
+
+**Decoder diagnostics mode.** Written under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`.
 
 | Path | Contents |
 |---|---|
@@ -296,12 +335,12 @@ The Web UI Outputs panel shows the direction-fidelity verdict, the per-method ta
 
 ### 3.3 Running with the defaults, and what to check
 
-The defaults (all six conditions, feedback after every step, max_ncells 300, train a new decoder) include every condition needed for the comparison.
+For results you report, use the Placebo-corrected mode with its defaults (the paper's settings) and report τ with its CI, z and the rank among comparison placebos. The steps below check the decoder in Decoder diagnostics mode, whose defaults (all six conditions, feedback after every step, max_ncells 300, train a new decoder) include every condition needed for the comparison.
 
 1. Look at the **direction-fidelity verdict** first. If it does not pass, the decoder cannot be said to read the direction of rank change, however large the endpoint shift is.
 2. If it passes, use the endpoint gate as secondary information. The `oracle` value is a rough ceiling, not a target.
 3. Check that `null_feedback` has a shift of 0 and an unchanged order.
-4. Before a biological claim, run `core/run_state_feedback_stability.py` and report the specific gain over matched placebo chains.
+4. Before a biological claim, run the Placebo-corrected mode (or `core/run_state_feedback_stability.py`) and report the specific gain over matched placebo chains.
 5. To save time, reuse a decoder trained on the same Pipeline run with the same step list (for example to add conditions or specificity). Using it on a different step list than it was trained on is a transfer test; train a new decoder for results you report (see the Δrank decoder row in 3).
 
 ---

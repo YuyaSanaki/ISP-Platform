@@ -811,6 +811,16 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
             self.assertTrue(app._default_config_path(app.RUN_TYPE_STATE_FEEDBACK_ISP).is_file())
             cfg = Path("/tmp/fake_sf.yaml")
             st.session_state.clear()
+            # Default: the paper's placebo-corrected runner; decoder reuse does not apply.
+            st.session_state["sf_isp_decoder_checkpoint"] = "/runs/a/decoder/delta_rank_decoder.pt"
+            st.session_state["sf_isp_eval_only"] = True
+            cmd, env = app._build_command_and_env(app.RUN_TYPE_STATE_FEEDBACK_ISP, cfg)
+            self.assertTrue(cmd[1].endswith("run_state_feedback_stability.py"))
+            self.assertEqual(cmd[2:], ["--config", str(cfg)])
+            self.assertEqual(env.get("STATE_FEEDBACK_ISP_CONFIG"), str(cfg))
+
+            st.session_state.clear()
+            st.session_state["sf_isp_mode"] = app._SF_MODE_DIAGNOSTIC
             cmd, env = app._build_command_and_env(app.RUN_TYPE_STATE_FEEDBACK_ISP, cfg)
             self.assertTrue(cmd[1].endswith("run_state_feedback_isp.py"))
             self.assertEqual(cmd[2:], ["--config", str(cfg)])
@@ -825,6 +835,67 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
         finally:
             _restore_modules(saved)
 
+    def test_build_yaml_placebo_defaults(self):
+        """Default mode writes the paper's two-tier placebo correction."""
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / "pipeline_test"
+                _write_isp_stage(run_dir)
+                self._steps(st)
+                st.session_state["isp_steps_n"] = 1
+                yaml_text, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIsNone(err, err)
+                cfg = __import__("yaml").safe_load(yaml_text)
+                self.assertTrue(cfg["paths"]["output_root"].endswith("state_feedback_isp"))
+                self.assertFalse(cfg["paths"]["output_date_subdir"])
+                sf = cfg["state_feedback"]
+                self.assertEqual(sf["steps"], [{"type": "overexpress", "genes": ["Pou5f1", "Sox2"]}])
+                self.assertEqual(sf["placebo_contrast"],
+                                 {"enabled": True, "n_estimation": 10, "estimation_draw_seed": 1})
+                stab = sf["stability"]
+                self.assertEqual(stab["seeds"], [0, 1, 2])
+                self.assertEqual(stab["n_random_chains"], 30)
+                self.assertEqual(stab["random_seeds"], [0])
+                self.assertEqual(stab["idle_events"], 5)
+                self.assertEqual(stab["min_stratum"], 50)
+                self.assertNotIn("conditions", sf)
+                self.assertNotIn("specificity", sf)
+                self.assertEqual(sf["observed_state"], "WT")
+                self.assertIn("max_shift_grid", sf["decoder"])
+
+                st.session_state.update({
+                    "sf_isp_seeds": "0, 2 2",
+                    "sf_isp_n_comparison": 20,
+                    "sf_isp_comparison_seeds": "3 4",
+                    "sf_isp_n_correction": 5,
+                    "sf_isp_correction_seed": 7,
+                    "sf_isp_idle_events": 0,
+                })
+                yaml_text, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIsNone(err, err)
+                sf = __import__("yaml").safe_load(yaml_text)["state_feedback"]
+                self.assertEqual(sf["stability"]["seeds"], [0, 2])
+                self.assertEqual(sf["stability"]["n_random_chains"], 20)
+                self.assertEqual(sf["stability"]["random_seeds"], [3, 4])
+                self.assertEqual(sf["stability"]["idle_events"], 0)
+                self.assertEqual(sf["placebo_contrast"]["n_estimation"], 5)
+                self.assertEqual(sf["placebo_contrast"]["estimation_draw_seed"], 7)
+
+                st.session_state["sf_isp_correction_seed"] = 4
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("must differ", err)
+                st.session_state["sf_isp_correction_seed"] = 1
+                st.session_state["sf_isp_seeds"] = "a b"
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("Decoder seeds", err)
+                st.session_state["sf_isp_seeds"] = "0"
+                st.session_state["sf_isp_n_comparison"] = 2
+                _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+                self.assertIn("at least 3", err)
+        finally:
+            _restore_modules(saved)
+
     def test_build_yaml_defaults(self):
         app, st, saved = _load_streamlit_app_helpers()
         try:
@@ -832,6 +903,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 run_dir = Path(tmp) / "pipeline_test"
                 _write_isp_stage(run_dir)
                 self._steps(st)
+                st.session_state["sf_isp_mode"] = app._SF_MODE_DIAGNOSTIC
                 yaml_text, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIsNone(err, err)
                 cfg = __import__("yaml").safe_load(yaml_text)
@@ -850,6 +922,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(sf["conditions"], list(app._SF_ISP_CONDITIONS))
+                self.assertFalse(sf["placebo_contrast"]["enabled"])
                 self.assertEqual(sf["observed_state"], "WT")
                 for removed in ("feedback_after_step", "feedback_every_step",
                                 "feedback_after_last_step", "multi_step"):
@@ -871,6 +944,7 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 self._steps(st)
                 st.session_state.update(
                     {
+                        "sf_isp_mode": app._SF_MODE_DIAGNOSTIC,
                         "sf_isp_max_ncells": 50,
                         "sf_isp_conditions": ["no_feedback", "linear_deltarank"],
                         "sf_isp_observed_state": "AD",
@@ -907,7 +981,9 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 run_dir = Path(tmp) / "pipeline_test"
                 _write_isp_stage(run_dir)
+                diagnostic = {"sf_isp_mode": app._SF_MODE_DIAGNOSTIC}
                 self._steps(st)
+                st.session_state.update(diagnostic)
                 st.session_state["sf_isp_spec_enabled"] = True
                 st.session_state["sf_isp_spec_sets"] = "no colon here"
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
@@ -917,11 +993,13 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("at least one gene", err)
                 self._steps(st)
+                st.session_state.update(diagnostic)
                 st.session_state["sf_isp_conditions"] = ["not_a_condition"]
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("at least one condition", err)
 
                 self._steps(st)
+                st.session_state.update(diagnostic)
                 st.session_state["isp_steps_n"] = 1
                 _, err = app._build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
                 self.assertIn("at least 2 steps", err)
@@ -972,6 +1050,68 @@ class TestStateFeedbackIspWebui(unittest.TestCase):
                 self.assertNotIn("specificity_rows", summary)
                 self.assertEqual(app._load_state_feedback_summary(empty), {"run": empty})
                 self.assertEqual(app._discover_sf_isp_runs(Path(tmp) / "missing"), [])
+        finally:
+            _restore_modules(saved)
+
+    def test_placebo_run_records(self):
+        import json
+
+        app, _st, saved = _load_streamlit_app_helpers()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "pipeline_test"
+                run = source / "state_feedback_isp" / "state_feedback_stability_010203"
+                (run / "seed0" / "decoder").mkdir(parents=True)
+                (run / "seed0" / "decoder" / "delta_rank_decoder.pt").write_bytes(b"x")
+                (run / "run_manifest.json").write_text(json.dumps({
+                    "mode": "state_feedback_stability",
+                    "steps": [{"name": "OS", "type": "overexpress", "genes": ["Pou5f1", "Sox2"]},
+                              {"name": "K", "type": "overexpress", "genes": ["Klf4"]}],
+                    "random_seeds": [0], "n_random_chains": 2,
+                    "placebo_contrast": {"enabled": True, "n_estimation": 1,
+                                         "estimation_draw_seed": 1},
+                }))
+                (run / "estimation_placebos.json").write_text(json.dumps({
+                    "draw_seed": 1, "n_estimation": 1,
+                    "placebos": [[["Actb", "Gapdh"], ["Tbp"]]],
+                    "placebo_tokens": [[[11, 12], [13]]],
+                    "left_out_by_chain": {"random_s0_1": 1},
+                }))
+                (run / "random_chains.json").write_text(json.dumps({"0": {
+                    "seed": 0,
+                    "picks": [
+                        {"chain": 0, "configured_token": 1, "configured_gene": "Pou5f1",
+                         "token": 21, "gene": "Rpl3", "start_detection": 0.4},
+                        {"chain": 1, "configured_token": 1, "configured_gene": "Pou5f1",
+                         "token": 22, "gene": "Rps6", "start_detection": 0.5},
+                    ],
+                }}))
+                (run / "specificity.csv").write_text("seed,set,specific_gain_mean\n0,all,0.1\n")
+                (run / "stability_verdict.json").write_text(json.dumps(
+                    {"passed": {"S1": True, "S2": True, "S3": True, "S4": True},
+                     "multi_step_supported": True}))
+
+                self.assertEqual(app._discover_sf_isp_runs(source), [run])
+                # Placebo-contrast decoders read a different input; they are not offered for reuse.
+                self.assertEqual(app._discover_sf_isp_decoders(source), [])
+
+                summary = app._load_state_feedback_summary(run)
+                self.assertEqual(summary["specificity_csv"], run / "specificity.csv")
+                self.assertTrue(summary["stability_verdict"]["multi_step_supported"])
+                self.assertEqual(summary["placebo_contrast"]["n_estimation"], 1)
+                self.assertEqual(summary["random_seeds"], [0])
+                self.assertEqual(summary["correction_placebos"], [
+                    {"placebo": 0, "step": 1, "step_name": "OS", "factors": "Pou5f1 Sox2",
+                     "placebo_genes": "Actb Gapdh"},
+                    {"placebo": 0, "step": 2, "step_name": "K", "factors": "Klf4",
+                     "placebo_genes": "Tbp"},
+                ])
+                self.assertEqual(summary["correction_left_out"], {"random_s0_1": 1})
+                self.assertEqual(
+                    [(r["chain"], r["factor"], r["placebo_gene"], r["start_detection"])
+                     for r in summary["comparison_placebos"]],
+                    [("random_s0_0", "Pou5f1", "Rpl3", 0.4), ("random_s0_1", "Pou5f1", "Rps6", 0.5)],
+                )
         finally:
             _restore_modules(saved)
 
