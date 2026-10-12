@@ -202,7 +202,7 @@ The lock clears itself when the job's process exits, including after a Web UI or
 | FT batch size (calibrate) | Measures GPU; recommends Pipeline `runtime.train_batch_size` ([fine-tuning.md](fine-tuning.md) § batch size) |
 | Pipeline (E2E)            | [pipeline.md](pipeline.md)                                                                                   |
 | ISP UMAP                  | [isp_umap.md](isp_umap.md) — pick a **past Pipeline ISP run** + gene (not Data input zip)                    |
-| State-feedback ISP        | [state_feedback_isp.md](state_feedback_isp.md) — pick a **past Pipeline ISP run** + ordered OE/KD steps, plus decoder / conditions |
+| State-feedback ISP        | [state_feedback_isp.md](state_feedback_isp.md) — pick a **past Pipeline ISP run** + ordered OE/KD steps; mode **Placebo-corrected (paper method)** (default) or **Decoder diagnostics** |
 
 What State-feedback ISP does, and every setting (conditions, feedback, specificity), is explained in [state_feedback_isp.md](state_feedback_isp.md) (v1.0.1).
 
@@ -237,7 +237,7 @@ Under **Advanced options** (collapsed by default):
 
 **Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. Optional expander **Cluster / cell-type analysis** enables `cluster_coexpr_analysis/` after the UMAP (`n_clusters` can be a fixed K or `auto`). The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
 
-**State-feedback ISP** (OE then KD, or any ordered list of steps): use Run type **State-feedback ISP**. Choose the same past pipeline folder and add steps (`overexpress` / `delete` + gene lists); after each step, a Δrank decoder reorders each cell's genes from the model output before the next step. Writes under `{pipeline_run}/state_feedback_isp/`. Read [state_feedback_isp.md](state_feedback_isp.md) before choosing conditions; design and results are in [state_feedback_decode_methods.md](state_feedback_decode_methods.md).
+**State-feedback ISP** (OE then KD, or any ordered list of steps): use Run type **State-feedback ISP**. Choose the same past pipeline folder and add steps (`overexpress` / `delete` + gene lists); after each step, a Δrank decoder reorders each cell's genes from the model output before the next step. The default mode, **Placebo-corrected (paper method)**, runs `core/run_state_feedback_stability.py` with the paper's two-tier placebo correction (10 correction placebos, 30 comparison placebo chains, decoder seeds 0–2), reports τ per seed and records the placebo genes (`estimation_placebos.json`, `random_chains.json`, also shown and downloadable in Outputs). **Decoder diagnostics (no placebo correction)** runs `core/run_state_feedback_isp.py` for direction fidelity and the six conditions; its endpoint values are not τ. Writes under `{pipeline_run}/state_feedback_isp/`. Read [state_feedback_isp.md](state_feedback_isp.md) before choosing conditions; design and results are in [state_feedback_decode_methods.md](state_feedback_decode_methods.md).
 
 Pipeline (E2E) additionally runs **TOP1 significant ISP UMAP** automatically once (same output directory; gene = top FDR-significant by shift toward goal). Full trajectory UMAP remains available via Run type **ISP UMAP**.
 
