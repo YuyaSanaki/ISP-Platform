@@ -34,7 +34,7 @@ Native species: **mouse**. Config: `species.model: mouse_geneformer`.
 
 | Variant (`species.mouse_variant`) | Web UI | Directory | Size / architecture |
 |-----------------------------------|--------|-----------|---------------------|
-| `base` (default) | Base (6L / ~10M) | `mouse-Geneformer/` | ~10M params; 6L / 256 / 2048 / SiLU |
+| `base` (default) | Base (6L / ~33M) | `mouse-Geneformer/` | ~33M params; 6L / 256 / 2048 / SiLU |
 | `12l_e20` | Large (12L-E20) | `mouse-Geneformer-12L-E20/` | 12L / 256 / 2048 / SiLU (same vocab as base) |
 
 ```bash

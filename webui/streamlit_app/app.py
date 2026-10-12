@@ -33,7 +33,7 @@ _MODEL_LABELS = {
     "human_geneformer": "Human Geneformer V2",
 }
 _MOUSE_VARIANT_LABELS = {
-    "base": "Base (6L / ~10M)",
+    "base": "Base (6L / ~33M)",
     "12l_e20": "Large (12L-E20)",
 }
 _HUMAN_VARIANT_LABELS = {
@@ -3568,7 +3568,7 @@ def _render_species_model_controls() -> None:
             key="pipeline_mouse_variant",
             format_func=lambda v: _MOUSE_VARIANT_LABELS.get(v, v),
             on_change=_apply_species_to_yaml,
-            help="Base = 6L / ~10M; Large = 12L-E20 (same 2048 vocab). YAML: base | 12l_e20.",
+            help="Base = 6L / ~33M; Large = 12L-E20 (same 2048 vocab). YAML: base | 12l_e20.",
         )
     else:
         st.selectbox(
