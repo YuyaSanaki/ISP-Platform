@@ -10,6 +10,9 @@ graph LR
     stability-runner["Stability runner\nrun_state_feedback_stability.py"]
     placebo-controls["Placebo controls\nrandom_chains.py, placebo_contrast.py, stability.py"]
     oracle-runner["Phase 0 oracle runner\nrun_state_feedback_oracle.py"]
+    webui["Web UI State-feedback ISP\nwebui/streamlit_app/app.py"]
+    webui -->|"default: Placebo-corrected (paper method)"| stability-runner
+    webui -->|"Decoder diagnostics (no placebo)"| sf-runner
     sf-runner -->|"start cells, centroids, scoring"| sf-runtime
     sf-runner -->|"observed start-to-end rank change"| teacher
     teacher -->|"targets, 80:20 gene split"| delta-rank-decoder
@@ -19,9 +22,10 @@ graph LR
     feedback-loop -->|"linear_deltarank rerank"| delta-rank-decoder
     sf-runner -->|"held-out genes"| direction-fidelity
     stability-runner -->|"reuses run_condition, _build_decoder"| sf-runner
-    stability-runner -->|"matched random chains"| placebo-controls
+    stability-runner -->|"correction and comparison placebos"| placebo-controls
     oracle-runner -->|"OSKM OE only, no decoder"| rank-edit
     class sf-runner,stability-runner entry
+    class webui external
     classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
     classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
     classDef entry fill:#89b4fa,stroke:#89b4fa,color:#1e1e2e

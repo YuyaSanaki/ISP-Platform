@@ -5,7 +5,7 @@ graph LR
     finetune-stage["Fine-tune\ncore/run_finetune.py"]
     isp-stage["ISP\ncore/run_isp.py"]
     isp-umap["ISP UMAP\ncore/run_isp_umap.py"]
-    state-feedback-isp["State-feedback ISP\ncore/run_state_feedback_isp.py"]
+    state-feedback-isp["State-feedback ISP\nrun_state_feedback_stability.py, run_state_feedback_isp.py"]
     orchestrator -->|"subprocess, TOKENIZE_CONFIG"| tokenize-stage
     orchestrator -->|"subprocess, stage_configs/finetune.yaml"| finetune-stage
     orchestrator -->|"accelerate launch, stage_configs/isp.yaml"| isp-stage
