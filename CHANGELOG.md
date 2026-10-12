@@ -4,7 +4,9 @@ All notable changes to **ISP Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.0.2] - 2026-10-12
+
+Release cited in the revised manuscript (*Genes to Cells*). Results of the paper are the same as with v1.0.1: none of the changes below applies to its analyses (single-shard tokenization, `num_runs: 1`, `delete` / `overexpress`, no alt states, State-feedback ISP on the command line).
 
 ### Added
 
@@ -15,8 +17,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Renamed **ISP³ Platform** to **ISP Platform** (README, logo, Web UI title, docs). The repository, Docker image (`isp-platform`), Compose service and environment variables keep their names.
 - **Web UI State-feedback ISP runs the paper's placebo-corrected method by default.** The run type used to start only `core/run_state_feedback_isp.py`, whose decoder reads Δh itself and which draws no placebos, so Web UI results differed from the paper's τ and recorded no placebo genes. A new **Mode** selector defaults to **Placebo-corrected (paper method)**, which runs `core/run_state_feedback_stability.py` with `placebo_contrast.enabled: true` and the paper's settings as defaults (10 correction placebos with draw seed 1, 30 comparison placebo chains with draw seed 0, decoder seeds 0–2, 5 idle reranks). All of these can be changed in the Web UI. Output goes to `{pipeline_run}/state_feedback_isp/state_feedback_stability_<time>/`, as on the command line, including `estimation_placebos.json` (correction placebo genes per step) and `random_chains.json` (comparison placebo genes with covariates). The Outputs panel shows τ per seed with CI, z and rank, the S1–S4 verdict, and both placebo gene tables with CSV downloads. The previous behaviour remains as **Decoder diagnostics (no placebo correction)**, which now writes `placebo_contrast.enabled: false` to its config and labels its results as not τ. **No results change:** both runners are unchanged, and command-line runs behave as before. Test: `tests/test_auto_batch_and_isp_validation.py`.
 
+- The README note on AI assistance names the tool that was used (Cursor).
+- `VERSION` is 1.0.2, and the Compose default image is `isp-platform:v1.0.2` (rebuild with `docker compose build`). The Dockerfile and `requirements.txt` are unchanged from v1.0.1.
+
 ### Fixed
 
+- The mouse Geneformer base model was labelled "~10M" parameters in the Web UI (variant selector and its help), `README.md`, `models/README.md` and `docs/web-ui.md`. Counted from `models/mouse-Geneformer/model.safetensors`, it has 32,581,416 parameters, so the label now reads **Base (6L / ~33M)**. Only the label changes. The YAML id stays `base` and no results change.
 - The State-feedback ISP guide and config said that with `placebo_contrast.enabled` every feedback event uses the placebo contrast. Only the stability runner (`core/run_state_feedback_stability.py`) reads `state_feedback.placebo_contrast`; the State-feedback ISP runner (`core/run_state_feedback_isp.py`, now the Web UI's Decoder diagnostics mode, see Changed) trains its decoder and reranks with Δh itself. The guide and config comment now say so, and the runner prints a note when the key is on. No results change: the paper's placebo-corrected results (τ, z) come from the stability runner, which applies the contrast.
 - Tokenization no longer loops forever when the last group of input files yields no cells (for example an empty sample, or loom files whose cells all fail `filter_pass`). `TranscriptomeTokenizer.tokenize_data` re-read the same files without end; it now stops after the last group, and raises an error if no cells were tokenized at all. Runs that finished before are unchanged, because they never reached this case. Test: `tests/test_tokenizer_empty_rounds.py`.
 - In silico perturbation with an anchor gene in combinations (`make_perturbation_batch` with `combos > 0` and `anchor_gene`) read the key `"input_ids "` (trailing space) and raised `KeyError`; it now reads `input_ids`. No results change: ISP Platform never reaches this branch, because a gene list resets `anchor_gene` and `combos`, genome-wide ISP takes the `"all"` branch, and `anchor_gene` is dropped whenever cell states are modelled. Test: `tests/test_anchor_combo_batch.py`.

@@ -7,12 +7,12 @@
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.0.1 · Docker image `isp-platform:v1.0.1`
+**Release:** v1.0.2 · Docker image `isp-platform:v1.0.2`
 
 
 Run tokenize, fine-tune, ISP, UMAP, and multi-step multi-gene ISP from the **CLI** or **Web UI**, both on Docker Compose and Streamlit. Multi-step ISP is **State-feedback ISP**: OE/KD steps are applied in order on the gene-rank tokens, and after each step the model output reorders the genes before the next step.
 
-AI tools (Cursor and Antigravity) assisted with code and documentation. The authors reviewed, tested, and modified the generated code and manually verified results.
+An AI tool (Cursor) assisted with code and documentation. The authors reviewed, tested, and modified the generated code and manually verified results.
 
 ## Platform scheme
 
@@ -262,7 +262,7 @@ IDs below match YAML (`species.*`) and the Web UI selectors. There is **no fly p
 
 | Model (`species.model`) | Variant id (YAML)   | Web UI label     | Native species | Size / architecture                                          | Checkpoint dir (`models/`)  | Docker bake                           |
 | ----------------------- | ------------------- | ---------------- | -------------- | ------------------------------------------------------------ | --------------------------- | ------------------------------------- |
-| `mouse_geneformer`      | `base` (default)    | Base (6L / ~10M) | mouse          | ~10M params; **6L** / 256 dim / seq **2048** / SiLU          | `mouse-Geneformer/`         | `minimal`, `default`, `all`           |
+| `mouse_geneformer`      | `base` (default)    | Base (6L / ~33M) | mouse          | ~33M params; **6L** / 256 dim / seq **2048** / SiLU          | `mouse-Geneformer/`         | `minimal`, `default`, `all`           |
 | `mouse_geneformer`      | `12l_e20`           | Large (12L-E20)  | mouse          | **12L** / 256 dim / seq **2048** / SiLU (same vocab as base) | `mouse-Geneformer-12L-E20/` | `default`, `all`                      |
 | `human_geneformer`      | `v2_104m` (default) | Base (V2-104M)   | human          | ~**104M** params; 12L / 768 dim / seq **4096**               | `human-Geneformer-V2-104M/` | `default`, `all`                      |
 | `human_geneformer`      | `v2_316m`           | Large (V2-316M)  | human          | ~**316M** params; 18L / 1152 dim / seq **4096**              | `human-Geneformer-V2-316M/` | not baked — download from HF manually |
