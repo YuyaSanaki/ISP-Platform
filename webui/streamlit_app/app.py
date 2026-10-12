@@ -214,6 +214,12 @@ _SF_ISP_CONDITION_HELP = {
 _SF_ISP_DEFAULT_MAX_NCELLS = 300
 _SF_ISP_OUTPUT_SUBDIR = "state_feedback_isp"
 _SF_ISP_DECODER_TRAIN = "Train a new decoder in this run"
+# Placebo-corrected = core/run_state_feedback_stability.py (the paper's two-tier correction);
+# diagnostics = core/run_state_feedback_isp.py (decoder on Δh itself, no placebo).
+_SF_MODE_PLACEBO = "Placebo-corrected (paper method)"
+_SF_MODE_DIAGNOSTIC = "Decoder diagnostics (no placebo correction)"
+_SF_ISP_MODES = (_SF_MODE_PLACEBO, _SF_MODE_DIAGNOSTIC)
+_SF_RUN_PREFIXES = ("state_feedback_isp_", "state_feedback_stability_")
 
 _STEP_TYPE_LABELS = {
     "overexpress": "overexpress (OE) — move genes to front of ranks",
@@ -469,12 +475,15 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
             cmd.append("--no-trajectory-arrows")
         env["ISP_UMAP_CONFIG"] = cfg
     elif run_label == RUN_TYPE_STATE_FEEDBACK_ISP:
-        cmd = ["python3", str(CORE / "run_state_feedback_isp.py"), "--config", cfg]
-        checkpoint = str(st.session_state.get("sf_isp_decoder_checkpoint") or "").strip()
-        if checkpoint:
-            cmd.extend(["--decoder-checkpoint", checkpoint])
-        if st.session_state.get("sf_isp_eval_only"):
-            cmd.append("--eval-only")
+        if _sf_isp_mode() == _SF_MODE_PLACEBO:
+            cmd = ["python3", str(CORE / "run_state_feedback_stability.py"), "--config", cfg]
+        else:
+            cmd = ["python3", str(CORE / "run_state_feedback_isp.py"), "--config", cfg]
+            checkpoint = str(st.session_state.get("sf_isp_decoder_checkpoint") or "").strip()
+            if checkpoint:
+                cmd.extend(["--decoder-checkpoint", checkpoint])
+            if st.session_state.get("sf_isp_eval_only"):
+                cmd.append("--eval-only")
         env["STATE_FEEDBACK_ISP_CONFIG"] = cfg
     elif run_label == RUN_TYPE_PIPELINE:
         cmd = ["python3", str(CORE / "run_pipeline.py"), "--config", cfg]
@@ -1085,6 +1094,119 @@ def _sf_isp_template_block() -> dict:
     return dict(block) if isinstance(block, dict) else {}
 
 
+def _sf_isp_mode() -> str:
+    mode = st.session_state.get("sf_isp_mode")
+    return mode if mode in _SF_ISP_MODES else _SF_MODE_PLACEBO
+
+
+def _sf_placebo_defaults() -> dict:
+    """Session defaults of the placebo widgets, from the core template (the paper's values)."""
+    tpl = _sf_isp_template_block()
+    stab = tpl.get("stability") or {}
+    pc = tpl.get("placebo_contrast") or {}
+    return {
+        "sf_isp_seeds": " ".join(str(s) for s in stab.get("seeds") or [0, 1, 2]),
+        "sf_isp_n_comparison": int(stab.get("n_random_chains", 30)),
+        "sf_isp_comparison_seeds": " ".join(str(s) for s in stab.get("random_seeds") or [0]),
+        "sf_isp_n_correction": int(pc.get("n_estimation", 10)),
+        "sf_isp_correction_seed": int(pc.get("estimation_draw_seed", 1)),
+        "sf_isp_idle_events": int(stab.get("idle_events", 5)),
+    }
+
+
+def _parse_int_list(text) -> list[int] | None:
+    """``"0 1, 2"`` → ``[0, 1, 2]`` (duplicates dropped); None if empty or not integers."""
+    out: list[int] = []
+    for tok in str(text or "").replace(",", " ").split():
+        try:
+            value = int(tok)
+        except ValueError:
+            return None
+        if value not in out:
+            out.append(value)
+    return out or None
+
+
+def _sf_placebo_block(template: dict) -> tuple[dict | None, str | None]:
+    """``stability`` + ``placebo_contrast`` for the placebo-corrected runner."""
+    defaults = _sf_placebo_defaults()
+
+    def _get(key):
+        value = st.session_state.get(key)
+        return defaults[key] if value is None or value == "" else value
+
+    seeds = _parse_int_list(_get("sf_isp_seeds"))
+    if not seeds:
+        return None, "Decoder seeds: enter one or more integers (e.g. `0 1 2`)."
+    comparison_seeds = _parse_int_list(_get("sf_isp_comparison_seeds"))
+    if not comparison_seeds:
+        return None, "Comparison placebo draw seeds: enter one or more integers (e.g. `0`)."
+    correction_seed = int(_get("sf_isp_correction_seed"))
+    if correction_seed in comparison_seeds:
+        return None, (
+            "The correction placebo draw seed must differ from the comparison placebo draw "
+            "seeds: the two groups are separate draws, so a perturbation is never compared "
+            "with the placebos that corrected it."
+        )
+    n_comparison = int(_get("sf_isp_n_comparison"))
+    if n_comparison < 3:
+        return None, "Use at least 3 comparison placebo chains (z needs 3 or more)."
+    n_correction = int(_get("sf_isp_n_correction"))
+    if n_correction < 1:
+        return None, "Use at least 1 correction placebo."
+    block = dict(template)
+    block["stability"] = {
+        **(template.get("stability") or {}),
+        "seeds": seeds,
+        "n_random_chains": n_comparison,
+        "random_seeds": comparison_seeds,
+        "idle_events": max(0, int(_get("sf_isp_idle_events"))),
+    }
+    block["placebo_contrast"] = {
+        **(template.get("placebo_contrast") or {}),
+        "enabled": True,
+        "n_estimation": n_correction,
+        "estimation_draw_seed": correction_seed,
+    }
+    return block, None
+
+
+def _sf_diagnostic_block(template: dict, n_steps: int) -> tuple[dict | None, str | None]:
+    """``conditions`` (+ optional ``specificity``) for the runner without placebo correction."""
+    conditions = [
+        c for c in (st.session_state.get("sf_isp_conditions") or _SF_ISP_CONDITIONS)
+        if c in _SF_ISP_CONDITIONS
+    ]
+    eval_only = bool(st.session_state.get("sf_isp_eval_only"))
+    if not conditions and not eval_only:
+        return None, "Select at least one condition (or turn on direction-fidelity only)."
+    if n_steps < 2 and not eval_only and _SF_ISP_BETWEEN_STEP_CONDITIONS.intersection(conditions):
+        return None, (
+            "Feedback is applied between steps, so the endpoint conditions need at least 2 "
+            "steps. Add a step, or turn on direction-fidelity only."
+        )
+    block = dict(template)
+    block["conditions"] = conditions
+    block["placebo_contrast"] = {**(template.get("placebo_contrast") or {}), "enabled": False}
+    if st.session_state.get("sf_isp_spec_enabled"):
+        sets, sets_err = _parse_sf_specificity_sets(
+            st.session_state.get("sf_isp_spec_sets"),
+            str(st.session_state.get("sf_isp_spec_sets_type") or "overexpress"),
+        )
+        if sets_err:
+            return None, sets_err
+        match_gene = str(st.session_state.get("sf_isp_spec_match_gene") or "").strip()
+        block["specificity"] = {
+            "enabled": True,
+            "sets": sets,
+            "n_random": int(st.session_state.get("sf_isp_spec_n_random") or 0),
+            "random_size": int(st.session_state.get("sf_isp_spec_random_size") or 1),
+            "random_type": str(st.session_state.get("sf_isp_spec_random_type") or "overexpress"),
+            "random_match_detection": match_gene or None,
+        }
+    return block, None
+
+
 def _build_state_feedback_isp_yaml_from_pipeline_run(
     run_dir: Path,
 ) -> tuple[str | None, str | None]:
@@ -1098,56 +1220,32 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
     if err:
         return None, err
     steps = _isp_steps_collect()
-    n_steps = len(steps)
-    conditions = [
-        c for c in (st.session_state.get("sf_isp_conditions") or _SF_ISP_CONDITIONS)
-        if c in _SF_ISP_CONDITIONS
-    ]
-    eval_only = bool(st.session_state.get("sf_isp_eval_only"))
-    if not conditions and not eval_only:
-        return None, "Select at least one condition (or turn on direction-fidelity only)."
-    if n_steps < 2 and not eval_only and _SF_ISP_BETWEEN_STEP_CONDITIONS.intersection(conditions):
-        return None, (
-            "Feedback is applied between steps, so the endpoint conditions need at least 2 "
-            "steps. Add a step, or turn on direction-fidelity only."
-        )
     template = _sf_isp_template_block()
-    template.pop("steps", None)
-    template.pop("specificity", None)
-    sf = {"steps": steps, **template}
+    for key in ("steps", "specificity", "conditions"):
+        template.pop(key, None)
+    if _sf_isp_mode() == _SF_MODE_PLACEBO:
+        block, err = _sf_placebo_block(template)
+    else:
+        block, err = _sf_diagnostic_block(template, len(steps))
+    if err:
+        return None, err
     observed = str(st.session_state.get("sf_isp_observed_state") or "").strip()
-    sf.update(
-        {
-            "conditions": conditions,
-            "observed_state": observed or out["perturbation"]["end_state"],
-        }
-    )
-    if st.session_state.get("sf_isp_spec_enabled"):
-        sets, sets_err = _parse_sf_specificity_sets(
-            st.session_state.get("sf_isp_spec_sets"),
-            str(st.session_state.get("sf_isp_spec_sets_type") or "overexpress"),
-        )
-        if sets_err:
-            return None, sets_err
-        match_gene = str(st.session_state.get("sf_isp_spec_match_gene") or "").strip()
-        sf["specificity"] = {
-            "enabled": True,
-            "sets": sets,
-            "n_random": int(st.session_state.get("sf_isp_spec_n_random") or 0),
-            "random_size": int(st.session_state.get("sf_isp_spec_random_size") or 1),
-            "random_type": str(st.session_state.get("sf_isp_spec_random_type") or "overexpress"),
-            "random_match_detection": match_gene or None,
-        }
-    out["state_feedback"] = sf
+    out["state_feedback"] = {
+        "steps": steps,
+        **block,
+        "observed_state": observed or out["perturbation"]["end_state"],
+    }
     return _dump_run_yaml(out), None
 
 
 def _discover_sf_isp_runs(source_run: Path) -> list[Path]:
-    """State-feedback run folders under a pipeline run, newest first."""
+    """State-feedback run folders under a pipeline run (both modes), newest first."""
     root = source_run / _SF_ISP_OUTPUT_SUBDIR
     if not root.is_dir():
         return []
-    runs = [p for p in root.glob("**/state_feedback_isp_*") if p.is_dir()]
+    runs = {
+        p for prefix in _SF_RUN_PREFIXES for p in root.glob(f"**/{prefix}*") if p.is_dir()
+    }
     return sorted(runs, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
@@ -1195,7 +1293,63 @@ def _load_state_feedback_summary(run: Path) -> dict:
         out["gate"] = manifest.get("gate") or []
         out["decoder"] = manifest.get("decoder") or {}
         out["feedback"] = manifest.get("feedback") or {}
+        if manifest.get("placebo_contrast"):
+            out["placebo_contrast"] = manifest["placebo_contrast"]
+            out["random_seeds"] = manifest.get("random_seeds") or []
+            out["n_random_chains"] = manifest.get("n_random_chains")
+    if (run / "specificity.csv").is_file():
+        out["specificity_csv"] = run / "specificity.csv"
+    stability = _read_json(run / "stability_verdict.json")
+    if stability:
+        out["stability_verdict"] = stability
+    comparison = _sf_comparison_placebo_rows(_read_json(run / "random_chains.json"))
+    if comparison:
+        out["comparison_placebos"] = comparison
+    correction = _read_json(run / "estimation_placebos.json")
+    if correction:
+        out["correction_placebos"] = _sf_correction_placebo_rows(
+            correction, manifest.get("steps") or []
+        )
+        out["correction_left_out"] = correction.get("left_out_by_chain") or {}
     return out
+
+
+def _sf_comparison_placebo_rows(draws: dict) -> list[dict]:
+    """``random_chains.json`` → one row per comparison placebo gene (chain × factor)."""
+    rows: list[dict] = []
+    for draw_seed, draw in draws.items():
+        picks = draw.get("picks") if isinstance(draw, dict) else None
+        if not isinstance(picks, list):
+            continue
+        for p in picks:
+            if not isinstance(p, dict):
+                continue
+            rows.append({
+                "draw_seed": draw_seed,
+                "chain": f"random_s{draw_seed}_{p.get('chain')}",
+                "factor": p.get("configured_gene"),
+                "placebo_gene": p.get("gene"),
+                "placebo_token": p.get("token"),
+                **{k: p[k] for k in ("start_detection", "start_rank", "goal_detection",
+                                     "teacher_delta") if k in p},
+            })
+    return rows
+
+
+def _sf_correction_placebo_rows(record: dict, steps: list) -> list[dict]:
+    """``estimation_placebos.json`` → one row per correction placebo and step."""
+    rows: list[dict] = []
+    for k, placebo in enumerate(record.get("placebos") or []):
+        for i, genes in enumerate(placebo):
+            step = steps[i] if i < len(steps) and isinstance(steps[i], dict) else {}
+            rows.append({
+                "placebo": k,
+                "step": i + 1,
+                "step_name": step.get("name", ""),
+                "factors": " ".join(str(g) for g in step.get("genes") or []),
+                "placebo_genes": " ".join(str(g) for g in genes),
+            })
+    return rows
 
 
 def _render_isp_steps_source_picker() -> None:
@@ -1329,21 +1483,46 @@ def _render_isp_steps_batch_widgets() -> None:
 
 
 def _render_state_feedback_isp_controls() -> None:
-    """Run-type column: State-feedback ISP (steps + decoder + evaluation options)."""
-    st.info(
-        "Trains a **Δrank decoder** on this run's observed start → goal rank change, "
-        "then uses it to reorder each cell's genes after the perturbation steps "
-        "(the gene set is unchanged; only the order moves). Every selected condition "
-        "is scored in one run, including **no_feedback** (the same steps without feedback) "
-        "as the baseline. "
-        "Outputs go under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`."
+    """Run-type column: State-feedback ISP (steps + placebo correction or decoder diagnostics)."""
+    st.session_state.setdefault("sf_isp_mode", _SF_MODE_PLACEBO)
+    st.radio(
+        "Mode",
+        list(_SF_ISP_MODES),
+        key="sf_isp_mode",
+        help=(
+            "Placebo-corrected runs the paper's method (core/run_state_feedback_stability.py). "
+            "Decoder diagnostics runs core/run_state_feedback_isp.py: the decoder reads Δh "
+            "itself and no placebo is used, so its endpoint gain is not the paper's τ."
+        ),
     )
+    placebo_mode = _sf_isp_mode() == _SF_MODE_PLACEBO
+    if placebo_mode:
+        st.info(
+            "Trains a **Δrank decoder** on this run's observed start → goal rank change and "
+            "reorders each cell's genes after every perturbation step (the gene set is "
+            "unchanged; only the order moves). Two groups of matched **placebo genes** are "
+            "drawn from the start cells: **correction placebos** are swapped in for the query "
+            "genes at every step and their mean Δh is subtracted before decoding, and "
+            "**comparison placebo chains** run the whole simulation to give the null. The "
+            "result is the factor-specific effect **τ** (feedback gain minus the mean gain of "
+            "the comparison placebos) per decoder seed. The placebo genes are written to "
+            "`estimation_placebos.json` and `random_chains.json`. "
+            "Outputs go under `{pipeline_run}/state_feedback_isp/state_feedback_stability_<time>/`."
+        )
+    else:
+        st.warning(
+            "**No placebo correction.** The decoder is trained on, and reranks with, Δh itself, "
+            "so most of the feedback gain is shared with placebo genes and the endpoint values "
+            "are not the paper's τ. Use this mode to check the decoder (direction fidelity, "
+            "conditions, specificity), and the placebo-corrected mode for results you report. "
+            "Outputs go under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`."
+        )
     st.caption(
         "Model-space readout only — sequential (each step acts on the state inferred "
-        "after the previous steps), not a simulated time course. The decoder's "
-        "direction fidelity is checked on held-out genes against a base-rank-only "
-        "predictor (partial ρ given base rank must exclude 0)."
+        "after the previous steps), not a simulated time course."
     )
+    for key, value in _sf_placebo_defaults().items():
+        st.session_state.setdefault(key, value)
     st.session_state.setdefault("sf_isp_max_ncells", _SF_ISP_DEFAULT_MAX_NCELLS)
     st.session_state.setdefault("sf_isp_conditions", list(_SF_ISP_CONDITIONS))
     st.session_state.setdefault("sf_isp_observed_state", "")
@@ -1365,10 +1544,121 @@ def _render_state_feedback_isp_controls() -> None:
         max_value=100_000,
         step=50,
         key="sf_isp_max_ncells",
-        help="Every condition runs GPU forwards over these cells; 300 is the tested default.",
+        help="Every chain runs GPU forwards over these cells; 300 is the tested default.",
     )
 
     source = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
+    if placebo_mode:
+        _render_sf_placebo_controls()
+    else:
+        _render_sf_diagnostic_controls(source)
+
+    with st.expander("Feedback and teacher", expanded=False):
+        n_steps = int(st.session_state.get("isp_steps_n") or _DEFAULT_ISP_STEPS)
+        st.markdown(
+            f"**Feedback after every step:** {n_steps} step(s) = {n_steps} feedback event(s) "
+            "per chain. Overexpressed genes stay at the front."
+        )
+        st.warning(
+            "The error grows with the number of steps. Each feedback event adds a rank "
+            "change on top of an order that has already moved, and it is not undone. Compare "
+            "only chains with the same number of steps."
+            + (
+                ""
+                if placebo_mode
+                else " Part of the gain is non-specific (placebo genes also move toward the "
+                "goal); this mode does not subtract it."
+            )
+        )
+        st.text_input(
+            "Observed state for the teacher (blank = pipeline end state)",
+            key="sf_isp_observed_state",
+            help="State whose observed ranks train the decoder (and supply the oracle).",
+        )
+
+    _render_isp_steps_batch_widgets()
+    _render_isp_steps_ready_status()
+
+    if st.button("Apply run + steps to Config YAML", type="secondary", key="sf_isp_apply_btn"):
+        run_dir = Path(source)
+        if not source or not run_dir.is_dir():
+            st.error("Select a past Pipeline ISP run in the left column.")
+            return
+        yaml_text, err = _build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
+        if err:
+            st.error(err)
+        else:
+            st.session_state["yaml_editor"] = yaml_text
+            st.session_state["isp_steps_source_run_dir"] = str(run_dir.resolve())
+            st.success(f"Filled State-feedback ISP config from `{run_dir.name}`.")
+            st.rerun()
+
+
+def _render_sf_placebo_controls() -> None:
+    """Placebo-corrected mode: decoder seeds and the two placebo groups."""
+    with st.expander("Placebo correction (paper method)", expanded=True):
+        st.text_input(
+            "Decoder seeds",
+            key="sf_isp_seeds",
+            help="One decoder is trained per seed; τ is reported per seed. Paper: 0 1 2.",
+        )
+        c_corr, c_comp = st.columns(2)
+        with c_corr:
+            st.number_input(
+                "Correction placebos",
+                min_value=1,
+                max_value=100,
+                key="sf_isp_n_correction",
+                help=(
+                    "Matched placebo gene sets swapped in for the query genes at every step; "
+                    "their mean Δh is subtracted before decoding (and in decoder training). "
+                    "Paper: 10."
+                ),
+            )
+            st.number_input(
+                "Correction draw seed",
+                min_value=0,
+                max_value=1_000_000,
+                key="sf_isp_correction_seed",
+                help="Must differ from the comparison draw seeds. Paper: 1.",
+            )
+        with c_comp:
+            st.number_input(
+                "Comparison placebo chains (per draw)",
+                min_value=3,
+                max_value=500,
+                key="sf_isp_n_comparison",
+                help=(
+                    "Placebo chains run through the whole simulation; τ = feedback gain minus "
+                    "their mean gain, z = distance from them in SD. Paper: 30."
+                ),
+            )
+            st.text_input(
+                "Comparison draw seeds",
+                key="sf_isp_comparison_seeds",
+                help="One independent draw of the comparison chains per seed. Paper: 0.",
+            )
+        st.number_input(
+            "Idle reranks after the last step",
+            min_value=0,
+            max_value=50,
+            key="sf_isp_idle_events",
+            help="Extra reranks with no new perturbation (stability criterion S2). Paper: 5.",
+        )
+        seeds = _parse_int_list(st.session_state.get("sf_isp_seeds")) or []
+        draws = _parse_int_list(st.session_state.get("sf_isp_comparison_seeds")) or []
+        n_chains = 1 + int(st.session_state.get("sf_isp_n_comparison") or 0) * len(draws)
+        st.caption(
+            f"This run simulates {n_chains} chains (the query genes and "
+            f"{n_chains - 1} comparison placebo chains) without feedback once, then with "
+            f"feedback for each of {len(seeds)} decoder seed(s). Every feedback event also "
+            f"runs the {int(st.session_state.get('sf_isp_n_correction') or 0)} correction "
+            "placebos, so expect hours at the paper's settings."
+        )
+
+
+def _render_sf_diagnostic_controls(source: str) -> None:
+    """Decoder-diagnostics mode: decoder reuse, conditions and perturbation specificity."""
     decoders = _discover_sf_isp_decoders(Path(source)) if source else []
     labels = {_SF_ISP_DECODER_TRAIN: ""}
     for ckpt in decoders:
@@ -1396,30 +1686,13 @@ def _render_state_feedback_isp_controls() -> None:
         help="Runs the held-out-gene direction-fidelity check (and specificity, if on) only.",
     )
 
-    with st.expander("Conditions and feedback", expanded=False):
+    with st.expander("Conditions", expanded=False):
         st.multiselect(
             "Conditions",
             list(_SF_ISP_CONDITIONS),
             key="sf_isp_conditions",
             format_func=lambda c: _SF_ISP_CONDITION_HELP.get(c, c),
             disabled=bool(st.session_state.get("sf_isp_eval_only")),
-        )
-        n_steps = int(st.session_state.get("isp_steps_n") or _DEFAULT_ISP_STEPS)
-        st.markdown(
-            f"**Feedback after every step:** {n_steps} step(s) = {n_steps} feedback event(s) "
-            "per chain. Overexpressed genes stay at the front."
-        )
-        st.warning(
-            "The error grows with the number of steps. Each feedback event adds a rank "
-            "change on top of an order that has already moved, and it is not undone; part "
-            "of the gain is non-specific (random genes also move toward the goal). Keep "
-            "chains short, compare only chains with the same number of steps, and subtract "
-            "matched random chains before a biological claim."
-        )
-        st.text_input(
-            "Observed state for the teacher (blank = pipeline end state)",
-            key="sf_isp_observed_state",
-            help="State whose observed ranks train the decoder and supply the oracle.",
         )
 
     with st.expander("Perturbation specificity (optional)", expanded=False):
@@ -1464,23 +1737,6 @@ def _render_state_feedback_isp_controls() -> None:
             ),
         )
 
-    _render_isp_steps_batch_widgets()
-    _render_isp_steps_ready_status()
-
-    if st.button("Apply run + steps to Config YAML", type="secondary", key="sf_isp_apply_btn"):
-        run_dir = Path(source)
-        if not source or not run_dir.is_dir():
-            st.error("Select a past Pipeline ISP run in the left column.")
-            return
-        yaml_text, err = _build_state_feedback_isp_yaml_from_pipeline_run(run_dir)
-        if err:
-            st.error(err)
-        else:
-            st.session_state["yaml_editor"] = yaml_text
-            st.session_state["isp_steps_source_run_dir"] = str(run_dir.resolve())
-            st.success(f"Filled State-feedback ISP config from `{run_dir.name}`.")
-            st.rerun()
-
 
 def _render_state_feedback_results(source_run: str | None) -> None:
     """Outputs panel: verdict and tables of a State-feedback run under the source run."""
@@ -1497,6 +1753,14 @@ def _render_state_feedback_results(source_run: str | None) -> None:
     st.caption(f"`{run}`")
 
     import pandas as pd
+
+    if run.name.startswith("state_feedback_stability_"):
+        _render_sf_placebo_results(summary, pd)
+        return
+    st.warning(
+        "Decoder diagnostics run (no placebo correction): endpoint values include the "
+        "non-specific gain shared with placebo genes and are not τ."
+    )
 
     verdict = summary.get("verdict")
     if verdict:
@@ -1554,6 +1818,98 @@ def _render_state_feedback_results(source_run: str | None) -> None:
         st.caption(
             f"Feedback after every step: {n_events} event(s) per chain. The error grows with "
             "the number of steps; compare chains of the same length only."
+        )
+
+
+def _render_sf_placebo_results(summary: dict, pd) -> None:
+    """Outputs of a placebo-corrected run: τ per seed, S1-S4 and the placebo gene records."""
+    run = summary["run"]
+    contrast = summary.get("placebo_contrast") or {}
+    if contrast:
+        if contrast.get("enabled"):
+            st.caption(
+                f"Correction placebos: {contrast.get('n_estimation')} (draw seed "
+                f"{contrast.get('estimation_draw_seed')}). Comparison placebo chains: "
+                f"{summary.get('n_random_chains')} per draw (draw seeds "
+                f"{', '.join(str(s) for s in summary.get('random_seeds') or [])})."
+            )
+        else:
+            st.warning(
+                "This run had `placebo_contrast.enabled: false`: τ subtracts the comparison "
+                "placebos, but the decoder read Δh itself (not the paper's two-tier correction)."
+            )
+
+    spec_csv = summary.get("specificity_csv")
+    if spec_csv:
+        spec = pd.read_csv(spec_csv)
+        if "set" in spec.columns:
+            spec = spec[spec["set"] == "all"]
+        st.markdown("**Factor-specific effect τ** (feedback gain minus the mean gain of the "
+                    "comparison placebo chains)")
+        cols = ["seed", "n_cells", "n_random_chains", "configured_gain_mean",
+                "random_gain_mean", "specific_gain_mean", "specific_gain_ci_low",
+                "specific_gain_ci_high", "z_vs_random", "rank_among_random",
+                "null_empirical_p", "frac_cells_positive"]
+        st.dataframe(
+            spec[[c for c in cols if c in spec.columns]].rename(
+                columns={"specific_gain_mean": "tau", "specific_gain_ci_low": "tau_ci_low",
+                         "specific_gain_ci_high": "tau_ci_high", "z_vs_random": "z"}
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "rank_among_random = 1 means the query genes gained more than every comparison "
+            f"placebo chain. Every draw and seed: `{spec_csv.name}`."
+        )
+    else:
+        st.caption("Run still in progress or failed before writing τ (see console.log).")
+
+    stability = summary.get("stability_verdict") or {}
+    if stability.get("passed"):
+        passed = stability["passed"]
+        text = " · ".join(f"{k} {'pass' if v else 'fail'}" for k, v in passed.items())
+        (st.success if stability.get("multi_step_supported") else st.warning)(
+            f"Stability criteria S1-S4: {text}"
+        )
+
+    st.markdown("**Placebo genes**")
+    correction = summary.get("correction_placebos") or []
+    if correction:
+        df = pd.DataFrame(correction)
+        st.markdown("Correction placebos (subtracted at every feedback event)")
+        st.dataframe(df, use_container_width=True, hide_index=True, height=240)
+        left_out = summary.get("correction_left_out") or {}
+        if left_out:
+            st.caption(
+                "Left out of a chain's correction for sharing a gene with it: "
+                + ", ".join(f"{c} {n}" for c, n in left_out.items())
+            )
+        st.download_button(
+            "Download correction placebos (.csv)",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name=f"{run.name}_correction_placebos.csv",
+            mime="text/csv",
+            key="sf_dl_correction_placebos",
+        )
+    comparison = summary.get("comparison_placebos") or []
+    if comparison:
+        df = pd.DataFrame(comparison)
+        st.markdown("Comparison placebo chains (the null for τ)")
+        st.dataframe(df, use_container_width=True, hide_index=True, height=240)
+        st.download_button(
+            "Download comparison placebos (.csv)",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name=f"{run.name}_comparison_placebos.csv",
+            mime="text/csv",
+            key="sf_dl_comparison_placebos",
+        )
+    if not correction and not comparison:
+        st.caption("No placebo records yet (they are written before the first chain runs).")
+    else:
+        st.caption(
+            "Full records: `estimation_placebos.json` (correction) and `random_chains.json` "
+            "(comparison, with matching strata and balance) in the run folder."
         )
 
 
@@ -1788,13 +2144,23 @@ def _render_run_directory_output(run_label: str) -> None:
                 genes = "+".join(s.get("genes") or []) or "(no genes)"
                 lines.append(f"{i}. {s.get('type', 'overexpress')} {genes}")
             st.code("steps\n" + "\n".join(lines), language="text")
-        checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
-        st.code(f"decoder\n{checkpoint or 'train new'}", language="text")
-        st.caption(
-            "**Run job** writes `direction_fidelity/`, per-condition folders, "
-            "`phase12_gate.csv` and `run_manifest.json` under "
-            "`<selected pipeline run>/state_feedback_isp/state_feedback_isp_<time>/`."
-        )
+        if _sf_isp_mode() == _SF_MODE_PLACEBO:
+            st.code(f"mode\n{_SF_MODE_PLACEBO}", language="text")
+            st.caption(
+                "**Run job** writes `specificity.csv` (τ per decoder seed), "
+                "`stability_verdict.json`, the placebo genes (`estimation_placebos.json`, "
+                "`random_chains.json`) and `run_manifest.json` under "
+                "`<selected pipeline run>/state_feedback_isp/state_feedback_stability_<time>/`."
+            )
+        else:
+            checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
+            st.code(f"mode\n{_SF_MODE_DIAGNOSTIC}", language="text")
+            st.code(f"decoder\n{checkpoint or 'train new'}", language="text")
+            st.caption(
+                "**Run job** writes `direction_fidelity/`, per-condition folders, "
+                "`phase12_gate.csv` and `run_manifest.json` under "
+                "`<selected pipeline run>/state_feedback_isp/state_feedback_isp_<time>/`."
+            )
     else:
         source = st.session_state.get("isp_umap_source_run_dir")
         genes = _normalize_isp_umap_genes(st.session_state.get("isp_umap_genes_text"))
@@ -4352,11 +4718,15 @@ def _render_analysis_panel() -> None:
                     n_steps = len(
                         (cfg_obj.get("state_feedback") or {}).get("steps") or []
                     )
-                    checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
-                    decoder = f"decoder `{checkpoint}`" if checkpoint else "new decoder"
+                    if _sf_isp_mode() == _SF_MODE_PLACEBO:
+                        detail = _SF_MODE_PLACEBO
+                    else:
+                        checkpoint = st.session_state.get("sf_isp_decoder_checkpoint")
+                        decoder = f"decoder `{checkpoint}`" if checkpoint else "new decoder"
+                        detail = f"{_SF_MODE_DIAGNOSTIC} · {decoder}"
                     st.info(
                         f"State-feedback ISP from pipeline run `{source}` · {n_steps} step(s) · "
-                        f"{decoder} (writes under that run’s `{_SF_ISP_OUTPUT_SUBDIR}/`)."
+                        f"{detail} (writes under that run’s `{_SF_ISP_OUTPUT_SUBDIR}/`)."
                     )
                 try:
                     log_file = open(log_path, "w", encoding="utf-8", buffering=1)
