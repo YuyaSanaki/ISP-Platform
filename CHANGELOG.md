@@ -4,6 +4,12 @@ All notable changes to **ISP Platform** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Fine-tune embedding UMAP (`generate_umap` in `core/run_finetune.py`) could stall for many hours after a successful fine-tune on human V2 (seq 4096): it reloaded the model with `output_hidden_states=True` (all layers), ran every eval cell at `batch_size//2` with no progress logs, and a hang left the E2E pipeline short of ISP. It now subsamples up to `umap.max_cells` (default 2000), caps the forward batch (1 at 4096 / 4 at 2048), reads only the last-layer CLS via `.bert`, prints flushed stage progress, and treats UMAP errors as non-fatal so ISP still runs. Present since v1.0.0. No change to fine-tune weights or ISP scores.
+
 ## [1.0.2] - 2026-10-12
 
 Release cited in the revised manuscript (*Genes to Cells*). Results of the paper are the same as with v1.0.1: none of the changes below applies to its analyses (single-shard tokenization, `num_runs: 1`, `delete` / `overexpress`, no alt states, State-feedback ISP on the command line).
