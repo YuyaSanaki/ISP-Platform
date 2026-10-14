@@ -330,6 +330,16 @@ def resolve_train_batch_size(
 # UMAP generation
 # ---------------------------------------------------------------------------
 
+def _ft_umap_forward_batch_size(requested: int, max_input_size: int) -> int:
+    """Cap FT-UMAP forward batch for long sequences (mirrors ISP UMAP caps)."""
+    bs = max(1, int(requested))
+    if int(max_input_size) >= 4096:
+        return min(bs, 1)
+    if int(max_input_size) >= 2048:
+        return min(bs, 4)
+    return bs
+
+
 def generate_umap(
     model_path: str,
     eval_ds,
@@ -340,8 +350,14 @@ def generate_umap(
     batch_size: int,
     seed: int,
     umap_cfg: dict[str, Any],
+    max_input_size: int = 2048,
 ):
-    """Generate PCA → UMAP projection plot and save as PDF."""
+    """Generate PCA → UMAP projection plot and save as PDF.
+
+    Designed not to stall the fine-tune stage: subsample cells, cap the forward
+    batch on long sequences, avoid materialising every encoder layer, and print
+    stage progress with flush. Failures raise to the caller (which may continue).
+    """
     try:
         import umap
         import matplotlib
@@ -351,50 +367,83 @@ def generate_umap(
         from sklearn.decomposition import PCA
         from torch.utils.data import DataLoader
     except ImportError as e:
-        print(f"  UMAP skipped — missing dependency: {e}")
+        print(f"  UMAP skipped — missing dependency: {e}", flush=True)
         return
 
-    print(f"  Generating UMAP for {group_name}...")
+    n_total = len(eval_ds)
+    max_cells = int(umap_cfg.get("max_cells", 2000))
+    ds = eval_ds
+    if n_total > max_cells:
+        rng = np.random.default_rng(int(seed))
+        idx = np.sort(rng.choice(n_total, size=max_cells, replace=False)).tolist()
+        ds = eval_ds.select(idx)
+        print(
+            f"  Generating UMAP for {group_name} "
+            f"({len(ds)}/{n_total} eval cells, seed={seed})...",
+            flush=True,
+        )
+    else:
+        print(f"  Generating UMAP for {group_name} ({n_total} eval cells)...", flush=True)
 
+    emb_bs = _ft_umap_forward_batch_size(max(1, int(batch_size) // 2), max_input_size)
+    print(
+        f"  UMAP embedding batch_size={emb_bs} (max_input_size={max_input_size})",
+        flush=True,
+    )
+
+    # Last-layer CLS only — output_hidden_states=True keeps all layers and can
+    # stall / OOM on human V2 (4096) after a full fine-tune.
+    print("  UMAP: loading model...", flush=True)
     umap_model = BertForSequenceClassification.from_pretrained(
-        model_path, output_hidden_states=True
+        model_path, output_hidden_states=False
     ).to(DEVICE)
     umap_model.eval()
+    bert = getattr(umap_model, "bert", None)
+    if bert is None:
+        raise RuntimeError(
+            "Fine-tune UMAP needs a BertForSequenceClassification with a .bert encoder"
+        )
 
     loader = DataLoader(
-        eval_ds,
-        batch_size=max(1, batch_size // 2),
+        ds,
+        batch_size=emb_bs,
         collate_fn=data_collator,
+        num_workers=0,
     )
 
     embs, lbls = [], []
+    n_batches = (len(ds) + emb_bs - 1) // emb_bs
+    print(f"  UMAP: embedding ({n_batches} batches)...", flush=True)
     with torch.no_grad():
-        for b in loader:
+        for i, b in enumerate(loader, start=1):
             inp = {
                 k: v.to(DEVICE)
                 for k, v in b.items()
                 if k in ["input_ids", "attention_mask"]
             }
-            out = umap_model(**inp)
-            hs = out.hidden_states[-1]
-            cls = hs[:, 0, :].half().cpu().numpy()
+            out = bert(**inp)
+            cls = out.last_hidden_state[:, 0, :].float().cpu().numpy()
             embs.append(cls)
             if "labels" in b:
                 lbls.extend(b["labels"].cpu().numpy())
+            if i == 1 or i == n_batches or i % max(1, n_batches // 10) == 0:
+                print(f"  UMAP embed batch {i}/{n_batches}", flush=True)
 
-    del umap_model
+    del umap_model, bert
     _empty_device_cache()
 
     if not embs:
-        print("  UMAP skipped — no embeddings extracted.")
+        print("  UMAP skipped — no embeddings extracted.", flush=True)
         return
 
     embs = np.vstack(embs).astype(np.float32)
     lbls = np.array(lbls)
 
     n_samp, n_feat = embs.shape
-    n_pca = min(umap_cfg.get("pca_components", 50), n_samp, n_feat)
+    n_pca = min(int(umap_cfg.get("pca_components", 50)), n_samp, n_feat)
+    print(f"  UMAP: PCA ({n_samp}×{n_feat} → {n_pca})...", flush=True)
     red = PCA(n_components=n_pca, random_state=seed).fit_transform(embs)
+    print("  UMAP: fitting 2D projection...", flush=True)
     proj = umap.UMAP(
         n_components=2,
         random_state=seed,
@@ -429,8 +478,7 @@ def generate_umap(
     pdf_path = figures_dir / f"{group_name}_umap.pdf"
     plt.savefig(pdf_path, format="pdf", dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"  UMAP saved: {pdf_path}")
-
+    print(f"  UMAP saved: {pdf_path}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Main
@@ -879,21 +927,28 @@ def main() -> None:
 
                 saved_model_paths.append(out_dir)
 
-                # UMAP on last run
+                # UMAP on last run (best-effort: never block ISP after a good FT)
                 if do_umap and run_idx == num_runs - 1:
                     del model
                     _empty_device_cache()
-                    generate_umap(
-                        model_path=out_dir,
-                        eval_ds=eval_proc,
-                        data_collator=data_collator,
-                        inv_label_dict=inv_label_dict,
-                        group_name=group_name,
-                        figures_dir=figures_dir,
-                        batch_size=run_batch_size,
-                        seed=seed,
-                        umap_cfg=umap_cfg,
-                    )
+                    try:
+                        generate_umap(
+                            model_path=out_dir,
+                            eval_ds=eval_proc,
+                            data_collator=data_collator,
+                            inv_label_dict=inv_label_dict,
+                            group_name=group_name,
+                            figures_dir=figures_dir,
+                            batch_size=run_batch_size,
+                            seed=seed,
+                            umap_cfg=umap_cfg,
+                            max_input_size=int(max_len),
+                        )
+                    except Exception as exc:
+                        print(
+                            f"  WARNING: Fine-tune UMAP failed (continuing to ISP): {exc}",
+                            flush=True,
+                        )
 
             # Summary for this group
             if accuracy_list:
