@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import torch
 from umap_plot_style import plot_isp_umap_scatter
-from platform_paths import localize, localize_path
+from platform_paths import local_path, localize, localize_path
 import yaml
 from datasets import load_from_disk
 from transformers import AutoModelForSequenceClassification
@@ -997,19 +997,19 @@ def main() -> None:
     default_cfg = localize_path(os.environ.get("ISP_UMAP_CONFIG", "/app/core/config/isp_umap.yaml"))
     parser.add_argument(
         "--config",
-        type=str,
+        type=localize_path,
         default=default_cfg,
         help="YAML config path (default: /app/core/config/isp_umap.yaml)",
     )
     parser.add_argument(
         "--output-dir",
-        type=Path,
+        type=local_path,
         default=None,
         help="Output directory (default: /app/output/<date>/isp_umap_<time>/ or <run-dir>/isp_umap/)",
     )
     parser.add_argument(
         "--run-dir",
-        type=Path,
+        type=local_path,
         default=None,
         help="Completed pipeline run directory (loads stage_configs/isp.yaml for dataset/model/genes).",
     )

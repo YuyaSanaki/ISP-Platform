@@ -36,6 +36,11 @@ def localize_path(value: str | os.PathLike) -> str:
     return s
 
 
+def local_path(value: str | os.PathLike) -> Path:
+    """``argparse`` type for path options: ``Path`` with ``/app`` mapped."""
+    return Path(localize_path(value))
+
+
 def localize(obj: Any) -> Any:
     """Config with every string that is an ``/app`` path rewritten (dicts and lists recursed)."""
     if not needs_mapping():

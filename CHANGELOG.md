@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-20
+
+Makes the Apple silicon support added in v1.4.0 work end to end, checked on an M1 Max (64 GB, macOS 26) with the Web UI and the CLI: Pipeline (E2E) with mouse and human models, ISP UMAP with cluster / cell-type analysis, rank enrichment, genome-wide ISP, State-feedback ISP (placebo-corrected), FT batch size (calibrate) and **Stop job**. On NVIDIA hosts nothing changes, and no ISP scores or τ change.
+
+### Fixed
+
+- **Web UI job lock on macOS.** Without `/proc`, `webui/job_lock.py` counted any PID that still answered a signal as running, including the finished job left as a zombie, so the lock never cleared and **Run job** stayed disabled after the first job. Process start times now come from `psutil` when `/proc` is missing, and zombies count as finished. **Stop job** no longer fails when macOS refuses SIGKILL to a process group that holds only zombies. Test: `tests/test_webui_job_lock.py`.
+- **Batch-size calibration on the Metal GPU.** `forward_batch_size: auto` fell back to the default batch size on a Mac, and **FT batch size (calibrate)** (`core/run_ft_batch_calibrate.py`) stopped with "CUDA is required". Both now measure on MPS (`core/geneformer/auto_batch_size.py`): the budget is `torch.mps.recommended_max_memory()` minus the memory the Metal driver holds, capped by the RAM macOS reports as available, and the peak of a probe is the memory the driver holds after it. Test: `tests/test_auto_batch_and_isp_validation.py`.
+- **`/app/...` paths in CLI options on macOS.** v1.4.0 mapped `/app` to the checkout inside configs, but not in path options, so `--config /app/...`, `--run-dir`, `--output-dir` and the ortholog file options of `run_pipeline.py`, `run_isp.py`, `run_finetune.py`, `run_isp_umap.py`, `run_isp_rank_enrichment.py`, `execute_tokenizer_pipeline.py` and the State-feedback runners failed when `/app` does not exist. They are now mapped as well (`platform_paths.local_path`). The default model folder (`/app/models`, `core/geneformer/backends/registry.py`) is mapped too, so `pipeline_resolved_paths.yaml` records the real path.
+- ISP UMAP joint overlays (`core/plot_isp_umap_joint_overlays.py`) stopped with `KeyError: 'Unknown'` when cell-type prediction left cells as Unknown or Ambiguous, which have no colour in the palette. Those cells are now drawn in grey. Not specific to macOS.
+
+### Changed
+
+- README and `docs/web-ui.md` (macOS): batch-size calibration on MPS, and a note that fine-tuning human Geneformer V2 (4096 tokens, fp32) on a Mac is slow.
+- Docker image / Compose default tag is `isp-platform:v1.4.1`.
+
 ## [1.4.0] - 2026-10-20
 
 Adds **gene set enrichment after ISP** (rank enrichment of the top Start, Goal and ISP genes on Reactome, GO and KEGG, computed locally) for normal ISP and State-feedback ISP, switched on together with cluster / cell-type analysis (`postprocess.enabled`, Web UI **Cluster / cell-type / enrichment analysis**). Also adds Apple silicon support. ISP scores and τ are unchanged.

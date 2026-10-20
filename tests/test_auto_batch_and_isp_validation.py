@@ -127,9 +127,9 @@ class TestAutoBatchSize(unittest.TestCase):
             42,
         )
 
-    def test_resolve_auto_without_cuda_uses_default(self):
-        # Force the no-CUDA branch instead of relying on torch being un-imported.
-        with mock.patch.object(self.abs.torch.cuda, "is_available", return_value=False):
+    def test_resolve_auto_without_gpu_uses_default(self):
+        # Force the no-GPU branch (no CUDA, no MPS) instead of relying on the host.
+        with mock.patch.object(self.abs, "_accelerator", return_value=None):
             chosen = self.abs.resolve_batch_size(
                 "auto",
                 default=77,
@@ -137,6 +137,36 @@ class TestAutoBatchSize(unittest.TestCase):
                 cache_fields={"task": "unit_no_cuda"},
             )
         self.assertEqual(chosen, 77)
+
+    def _fake_mps(self, *, held: int = 0):
+        gib = 1024**3
+        return types.SimpleNamespace(
+            empty_cache=lambda: None,
+            recommended_max_memory=lambda: 40 * gib,
+            current_allocated_memory=lambda: 0,
+            driver_allocated_memory=lambda: held,
+        )
+
+    def test_mps_snapshot_caps_free_by_available_ram(self):
+        gib = 1024**3
+        fake_psutil = types.SimpleNamespace(
+            virtual_memory=lambda: types.SimpleNamespace(available=10 * gib)
+        )
+        with mock.patch.object(self.abs, "_accelerator", return_value="mps"), mock.patch.object(
+            self.abs.torch, "mps", self._fake_mps(held=2 * gib), create=True
+        ), mock.patch.dict(sys.modules, {"psutil": fake_psutil}):
+            snap = self.abs.read_gpu_memory_snapshot()
+        self.assertEqual(snap.total, 40 * gib)
+        self.assertEqual(snap.free, 10 * gib)
+        self.assertTrue(snap.free_accounting_reliable)
+
+    def test_mps_measure_reports_driver_memory_as_peak(self):
+        with mock.patch.object(self.abs, "_accelerator", return_value="mps"), mock.patch.object(
+            self.abs.torch, "mps", self._fake_mps(held=123), create=True
+        ), mock.patch.object(self.abs, "empty_cache"), mock.patch.object(self.abs, "synchronize"):
+            rate, peak = self.abs._measure(lambda _: None, 8, repeats=1)
+        self.assertEqual(peak, 123)
+        self.assertGreater(rate, 0)
 
     def test_calibrate_stops_on_oom(self):
         def probe(bs: int) -> None:
@@ -669,7 +699,11 @@ class TestOrthologGateYamlControls(unittest.TestCase):
             app._apply_ortholog_gate_to_yaml()
             tok = self._tokenizer_cfg(st)
             self.assertNotIn("ortholog_audit_inline", tok)
-            self.assertEqual(tok["ortholog_audit"], "/app/analysis/analysis_manifest.yaml")
+            from platform_paths import localize_path
+
+            self.assertEqual(
+                tok["ortholog_audit"], localize_path("/app/analysis/analysis_manifest.yaml")
+            )
             self.assertTrue(tok["ortholog_loss_gate"])
         finally:
             _restore_modules(saved)

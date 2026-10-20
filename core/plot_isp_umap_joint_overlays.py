@@ -425,7 +425,7 @@ def run_joint_overlays(
             start_xy[m, 0],
             start_xy[m, 1],
             s=8,
-            color=tpal[str(t)],
+            color=tpal.get(str(t), "#BBBBBB"),
             label=str(t),
             alpha=0.85,
             rasterized=True,

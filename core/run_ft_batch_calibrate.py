@@ -17,11 +17,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import torch
 import yaml
 from transformers import BertForSequenceClassification
 
 sys.path.append(os.getcwd())
+from compute_device import device_name, get_device, has_accelerator  # noqa: E402
 from geneformer.auto_batch_size import (  # noqa: E402
     BusyGPUError,
     is_auto,
@@ -71,9 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
-        default=os.environ.get(
-            "FT_BATCH_CALIBRATE_CONFIG",
-            "/app/core/config/ft_batch_calibrate.yaml",
+        default=localize_path(
+            os.environ.get(
+                "FT_BATCH_CALIBRATE_CONFIG",
+                "/app/core/config/ft_batch_calibrate.yaml",
+            )
         ),
         help="YAML config path (or FT_BATCH_CALIBRATE_CONFIG)",
     )
@@ -86,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
-    config_path = Path(args.config).resolve()
+    config_path = Path(localize_path(args.config)).resolve()
     cfg = load_config(config_path)
 
     # Always measure fresh for this dedicated run type (ignore stale cache).
@@ -98,11 +100,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  config: {config_path}")
     log_species_banner(species_from_config(cfg), prefix="  ")
 
-    if not torch.cuda.is_available():
+    if not has_accelerator():
         raise SystemExit(
-            "CUDA is required for FT batch calibration. "
+            "A GPU (CUDA or Apple silicon MPS) is required for FT batch calibration. "
             "Run this job on a GPU host (e.g. the webui / pipeline container)."
         )
+    print(f"  device: {device_name()}")
 
     model_dir = resolve_model_dir(cfg)
     backend = backend_from_config(cfg)
@@ -122,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         output_attentions=False,
         output_hidden_states=False,
         ignore_mismatched_sizes=True,
-    ).to("cuda")
+    ).to(get_device())
 
     max_len = int(model.config.max_position_embeddings)
     pad_id = int(model.config.pad_token_id or 0)
@@ -164,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     chosen_i = int(chosen)
     payload: dict[str, Any] = {
         "recommended_train_batch_size": chosen_i,
-        "gpu": torch.cuda.get_device_name(),
+        "gpu": device_name(),
         "model_dir": str(model_dir),
         "seq_len": max_len,
         "num_labels": num_labels,

@@ -126,7 +126,7 @@ def parse_args():
     )
     parser.add_argument(
         "--ortholog-curated-overlay",
-        type=str,
+        type=localize_path,
         default=None,
         help=(
             "Optional project curated ortholog overlay: a TSV file or a directory "
@@ -149,13 +149,13 @@ def parse_args():
     )
     parser.add_argument(
         "--ortholog-audit",
-        type=str,
+        type=localize_path,
         default=None,
         help="Path to analysis_manifest.yaml (or ortholog_audit YAML) for the loss gate.",
     )
     parser.add_argument(
         "--ortholog-approval-record",
-        type=str,
+        type=localize_path,
         default=None,
         help=(
             "NEW approved YAML (status: approved) matching a prior Block request_id / "

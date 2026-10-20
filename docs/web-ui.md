@@ -38,7 +38,7 @@ Then open **[http://localhost:8502](http://localhost:8502)** on your laptop. See
 
 **GPU note:** the `platform_webui` service requests **1 GPU** because **Run job** launches tokenize/finetune/ISP as in-container subprocesses that need CUDA. Idle Jupyter is not used.
 
-**Apple silicon Mac:** no Docker. After `bash scripts/macos/setup.sh` (README, macOS), start the Web UI with `bash scripts/macos/webui.sh` and open **[http://localhost:8502](http://localhost:8502)**. Jobs run on the Metal GPU (MPS). Paths shown as `/app/...` in templates are mapped to the checkout.
+**Apple silicon Mac:** no Docker. After `bash scripts/macos/setup.sh` (README, macOS), start the Web UI with `bash scripts/macos/webui.sh` and open **[http://localhost:8502](http://localhost:8502)**. Jobs run on the Metal GPU (MPS). Paths shown as `/app/...` in templates are mapped to the checkout. **FT batch size (calibrate)** and ISP GPU batch size **Auto** measure on the Metal GPU; macOS shares the same unified memory, so close large apps before calibrating. Fine-tuning human Geneformer V2 (4096 tokens) on a Mac is slow; see README, macOS.
 
 ---
 

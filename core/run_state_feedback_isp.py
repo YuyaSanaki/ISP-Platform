@@ -56,7 +56,7 @@ from geneformer.species_context import (
     species_from_config,
 )
 from rank_edit import PERTURB_OVEREXPRESS, legacy_steps_block, normalize_step_type, parse_steps
-from platform_paths import localize
+from platform_paths import local_path, localize
 
 from state_feedback import controls
 from state_feedback import runtime as rt
@@ -804,7 +804,7 @@ def run_perturbation_specificity(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--config", type=local_path, required=True)
     parser.add_argument("--max-ncells", type=int, default=None)
     parser.add_argument("--forward-batch-size", default=None)
     parser.add_argument("--nproc", type=int, default=None)

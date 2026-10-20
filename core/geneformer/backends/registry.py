@@ -12,9 +12,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
+from platform_paths import localize_path
+
 GENEFORMER_PKG_ROOT = Path(__file__).resolve().parent.parent
 DICTS_ROOT = GENEFORMER_PKG_ROOT / "dicts"
-DEFAULT_MODELS_ROOT = Path(os.environ.get("GENEFORMER_MODELS_ROOT", "/app/models"))
+DEFAULT_MODELS_ROOT = Path(os.environ.get("GENEFORMER_MODELS_ROOT") or localize_path("/app/models"))
 
 
 class Organism(str, Enum):

@@ -43,7 +43,7 @@ from geneformer.species_context import (
     species_from_config,
 )
 from rank_edit import apply_single_step_overexpress
-from platform_paths import localize
+from platform_paths import local_path, localize
 from state_feedback.oracle_rerank import (
     build_pseudobulk_rank_priority,
     rerank_fixed_gene_set,
@@ -398,7 +398,7 @@ def run_oracle_endpoint(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--config", type=local_path, required=True)
     parser.add_argument("--max-ncells", type=int, default=None)
     parser.add_argument("--forward-batch-size", default=None)
     parser.add_argument("--nproc", type=int, default=None)

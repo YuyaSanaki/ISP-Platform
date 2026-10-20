@@ -7,7 +7,7 @@
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.4.0 (adds gene set enrichment after ISP; includes the peer-reviewed v1.0.1) · Docker image `isp-platform:v1.4.0`
+**Release:** v1.4.1 (Apple silicon fixes for v1.4.0, which adds gene set enrichment after ISP; includes the peer-reviewed v1.0.1) · Docker image `isp-platform:v1.4.1`
 
 
 Run tokenize, fine-tune, ISP, UMAP, and multi-step multi-gene ISP from the **CLI** or **Web UI**, both on Docker Compose and Streamlit. Multi-step ISP is **State-feedback ISP**: OE/KD steps are applied in order on the gene-rank tokens, and after each step the model output reorders the genes before the next step.
@@ -193,7 +193,9 @@ bash scripts/macos/setup.sh        # .venv-macos (Python 3.12, PyTorch with MPS)
 bash scripts/macos/webui.sh        # Web UI at http://localhost:8502
 ```
 
-For the CLI, `source scripts/macos/env.sh` and run the scripts in `core/` with `python` (for example `python core/run_pipeline.py --config core/config/pipeline.yaml`). Paths written as `/app/...` in configs are mapped to the checkout. Operations without a Metal kernel fall back to the CPU (`PYTORCH_ENABLE_MPS_FALLBACK=1`). Fine-tuning runs in fp32 on MPS. Unified memory is shared with macOS. Batch-size calibration needs CUDA, so on a Mac `auto` uses the default batch size. If a run runs out of memory, set a smaller batch size.
+For the CLI, `source scripts/macos/env.sh` and run the scripts in `core/` with `python` (for example `python core/run_pipeline.py --config core/config/pipeline.yaml`). Paths written as `/app/...` in configs and in path options (`--config`, `--run-dir`, `--output-dir`, …) are mapped to the checkout. Operations without a Metal kernel fall back to the CPU (`PYTORCH_ENABLE_MPS_FALLBACK=1`).
+
+Unified memory is shared with macOS. `forward_batch_size: auto` (ISP, State-feedback ISP) and **FT batch size (calibrate)** measure on the Metal GPU against `torch.mps.recommended_max_memory()` minus what macOS and other processes already use, so close large apps before calibrating. If a run still runs out of memory, set a smaller batch size. Fine-tuning runs in fp32 on MPS (fp16 is CUDA-only). Human Geneformer V2 pads every cell to 4096 tokens, so fine-tuning it on a Mac is slow (about 10 s per step with batch size 2 on an M1 Max) and needs much of the unified memory; the mouse model (2048 tokens) is much faster.
 
 ## Quick start (Web UI — Pipeline E2E)
 

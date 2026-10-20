@@ -41,7 +41,7 @@ from transformers import (
 )
 
 from compute_device import device_name, empty_cache, get_device
-from platform_paths import localize, localize_path
+from platform_paths import local_path, localize, localize_path
 
 # Resolved once at import: CUDA, Apple silicon MPS, or CPU (compute_device).
 DEVICE = get_device()
@@ -499,7 +499,7 @@ def main() -> None:
     )
     p.add_argument(
         "--config",
-        type=Path,
+        type=local_path,
         default=Path(default_cfg),
         help="YAML config path (default: FINETUNE_CONFIG or /app/core/config/finetune.yaml).",
     )

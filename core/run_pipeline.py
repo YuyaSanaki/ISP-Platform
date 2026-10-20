@@ -39,7 +39,7 @@ from pipeline_lib import (
 )
 from data_input_layout import unique_states_from_samples
 from run_pipeline_log import install_rotating_stdio_tee
-from platform_paths import localize_path
+from platform_paths import local_path, localize_path
 from run_provenance import update_service_provenance, write_service_provenance
 
 
@@ -200,7 +200,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Run Tokenize → Fine-tune → ISP pipeline.")
     p.add_argument(
         "--config",
-        type=Path,
+        type=local_path,
         default=Path(default_cfg),
         help="Pipeline YAML (default: PIPELINE_CONFIG or config/pipeline.yaml).",
     )
@@ -221,13 +221,13 @@ def main() -> None:
     )
     p.add_argument(
         "--run-dir",
-        type=Path,
+        type=local_path,
         default=None,
         help="Resume an existing pipeline run directory (required with --skip-tokenize).",
     )
     p.add_argument(
         "--ortholog-curated-overlay",
-        type=str,
+        type=localize_path,
         default=None,
         help=(
             "Optional project curated ortholog overlay (TSV file or directory with "
@@ -237,7 +237,7 @@ def main() -> None:
     )
     p.add_argument(
         "--ortholog-audit",
-        type=str,
+        type=localize_path,
         default=None,
         help=(
             "Path to analysis_manifest.yaml (or ortholog_audit YAML) for tokenize "
@@ -246,7 +246,7 @@ def main() -> None:
     )
     p.add_argument(
         "--ortholog-approval-record",
-        type=str,
+        type=localize_path,
         default=None,
         help=(
             "NEW approved YAML (status: approved) for ortholog_loss_gate; "

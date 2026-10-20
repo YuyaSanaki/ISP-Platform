@@ -22,8 +22,25 @@ LOCK_FILE = "active_job.json"
 _MUTEX_FILE = "active_job.lock"
 
 
+def _psutil_start_ticks(pid: int) -> int | None:
+    """Start time of ``pid`` in 1/100 s since the epoch (no ``/proc``, e.g. macOS)."""
+    import psutil
+
+    try:
+        proc = psutil.Process(pid)
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return None
+        return int(round(proc.create_time() * 100))
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+        return None
+    except psutil.AccessDenied:
+        return None
+
+
 def _proc_start_ticks(pid: int) -> int | None:
     """Start time of ``pid`` in clock ticks since boot; None if gone or a zombie."""
+    if not Path("/proc").is_dir():
+        return _psutil_start_ticks(pid)
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
     except OSError:
@@ -49,8 +66,6 @@ def pid_alive(pid: int, start_ticks: int | None = None) -> bool:
         return False
     except PermissionError:
         pass
-    if not Path("/proc").is_dir():
-        return True
     ticks = _proc_start_ticks(pid)
     if ticks is None:
         return False
@@ -184,6 +199,7 @@ def stop_job(info: dict[str, Any], grace_s: float = 15.0) -> bool:
         time.sleep(0.25)
     try:
         os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
+        # macOS raises EPERM when only zombies are left in the group.
         pass
     return True

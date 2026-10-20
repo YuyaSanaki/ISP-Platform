@@ -65,7 +65,7 @@ from geneformer.species_context import (
     species_from_config,
 )
 from rank_edit import PERTURB_OVEREXPRESS, legacy_steps_block, normalize_step_type, parse_steps
-from platform_paths import localize
+from platform_paths import local_path, localize
 import postprocess_switch as pps
 import run_state_feedback_isp as rsf
 
@@ -117,7 +117,7 @@ def _endpoint(rows: list[dict[str, Any]]) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--config", type=local_path, default=None)
     parser.add_argument("--max-ncells", type=int, default=None)
     parser.add_argument("--forward-batch-size", default=None)
     parser.add_argument("--nproc", type=int, default=None)

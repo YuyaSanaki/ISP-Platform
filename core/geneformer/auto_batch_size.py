@@ -11,6 +11,10 @@ as "Not Supported" / N/A and ``torch.cuda.mem_get_info()`` often under-reports
 free bytes (~half the pool) even at 0% util with no GPU processes. Busy checks
 and memory budgets must not treat that soft under-report as a busy GPU.
 
+On Apple silicon (MPS) the budget is Metal's recommended working set, capped by
+the RAM macOS reports as available, and the peak of a probe is the memory the
+Metal driver holds after it (PyTorch keeps no peak counter for MPS).
+
 Results are cached per (GPU, model, sequence length, dtype) because probing
 costs about a minute; set GENEFORMER_BATCH_SIZE_CACHE=off to always re-probe.
 """
@@ -27,6 +31,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import torch
+
+from compute_device import device_name, device_type, empty_cache, is_oom, synchronize
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +174,30 @@ def nvidia_smi_memory_supported() -> bool | None:
         return False
 
 
+def _accelerator() -> str | None:
+    kind = device_type()
+    return kind if kind in {"cuda", "mps"} else None
+
+
+def _mps_memory_snapshot() -> GpuMemorySnapshot:
+    import psutil
+
+    torch.mps.empty_cache()
+    total = int(torch.mps.recommended_max_memory())
+    allocated = int(torch.mps.current_allocated_memory())
+    held = int(torch.mps.driver_allocated_memory())
+    free = min(max(total - held, 0), int(psutil.virtual_memory().available))
+    return GpuMemorySnapshot(
+        free=free, total=total, allocated=allocated, util_pct=None, free_accounting_reliable=True
+    )
+
+
 def read_gpu_memory_snapshot() -> GpuMemorySnapshot:
     """Read free/total/util and whether torch free bytes can be trusted."""
-    if not torch.cuda.is_available():
+    kind = _accelerator()
+    if kind == "mps":
+        return _mps_memory_snapshot()
+    if kind != "cuda":
         return GpuMemorySnapshot(0, 0, 0, None, False)
     torch.cuda.empty_cache()
     free, total = torch.cuda.mem_get_info()
@@ -232,7 +259,7 @@ def gpu_is_busy_for_calibration(
     Memory fallback: only when torch free accounting is trusted AND free is
     critically low. Never abort solely because GB10 under-reports free bytes.
     """
-    if not torch.cuda.is_available():
+    if _accelerator() is None:
         return False, ""
 
     snap = snapshot or read_gpu_memory_snapshot()
@@ -258,10 +285,7 @@ def gpu_is_busy_for_calibration(
 
 
 def _is_oom(exc: BaseException) -> bool:
-    oom_type = getattr(torch.cuda, "OutOfMemoryError", None)
-    if oom_type is not None and isinstance(exc, oom_type):
-        return True
-    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+    return is_oom(exc)
 
 
 def _cache_path() -> Path | None:
@@ -314,23 +338,26 @@ def _write_cache(path: Path | None, key: str, batch_size: int, fields: Mapping[s
 def _measure(
     probe: Callable[[int], None], candidate: int, repeats: int
 ) -> tuple[float, int] | None:
-    """Return (samples per second, peak bytes) for one batch, or None on CUDA OOM."""
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
+    """Return (samples per second, peak bytes) for one batch, or None on GPU OOM."""
+    mps = _accelerator() == "mps"
+    empty_cache()
+    if not mps:
+        torch.cuda.reset_peak_memory_stats()
     try:
         probe(candidate)  # warm up kernels / allocator before timing
-        torch.cuda.synchronize()
+        synchronize()
         started = time.perf_counter()
         for _ in range(repeats):
             probe(candidate)
-        torch.cuda.synchronize()
+        synchronize()
         elapsed = time.perf_counter() - started
     except Exception as e:  # noqa: BLE001 - OOM is the expected stop condition
         if not _is_oom(e):
             raise
-        torch.cuda.empty_cache()
+        empty_cache()
         return None
-    return (candidate * repeats) / max(elapsed, 1e-9), torch.cuda.max_memory_allocated()
+    peak = torch.mps.driver_allocated_memory() if mps else torch.cuda.max_memory_allocated()
+    return (candidate * repeats) / max(elapsed, 1e-9), int(peak)
 
 
 def _largest_batch_that_fits(
@@ -441,7 +468,7 @@ def calibrate_batch_size(
             probe, below=int(cand_list[0]), budget=budget, repeats=repeats
         )
 
-    torch.cuda.empty_cache()
+    empty_cache()
     print(f"Selected {label}: {chosen}", flush=True)
     return chosen
 
@@ -462,13 +489,13 @@ def resolve_batch_size(
     """Return `value` as an int, calibrating on this GPU when it is "auto"."""
     if not is_auto(value):
         return int(value)
-    if not torch.cuda.is_available():
-        logger.warning("auto %s requires CUDA; using %d.", label, default)
+    if _accelerator() is None:
+        logger.warning("auto %s requires a GPU (CUDA or MPS); using %d.", label, default)
         return default
 
     fields = {
         **dict(cache_fields),
-        "gpu": torch.cuda.get_device_name(),
+        "gpu": device_name(),
         "torch": torch.__version__,
         "memory_fraction": memory_fraction,
         "candidates": list(candidates),

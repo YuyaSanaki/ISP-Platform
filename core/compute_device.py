@@ -12,7 +12,7 @@ import torch
 
 
 def _mps_available() -> bool:
-    backend = getattr(torch.backends, "mps", None)
+    backend = getattr(getattr(torch, "backends", None), "mps", None)
     return bool(backend is not None and backend.is_available())
 
 

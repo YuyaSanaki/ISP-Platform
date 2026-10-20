@@ -31,7 +31,7 @@ import torch
 import yaml
 from accelerate import Accelerator
 from compute_device import device_name
-from platform_paths import localize, localize_path
+from platform_paths import local_path, localize, localize_path
 import postprocess_switch as pps
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
 from geneformer.auto_batch_size import coerce_batch_size
@@ -264,7 +264,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Run Geneformer in-silico perturbation + stats.")
     p.add_argument(
         "--config",
-        type=Path,
+        type=local_path,
         default=Path(default_cfg),
         help="YAML config path (default: ISP_CONFIG or /app/core/config/isp.yaml).",
     )

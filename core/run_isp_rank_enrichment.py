@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT / "core"))
 import enrichment_plot as ep  # noqa: E402
 import gene_set_enrichment as gse  # noqa: E402
 import postprocess_switch as pps  # noqa: E402
-from platform_paths import localize  # noqa: E402
+from platform_paths import local_path, localize  # noqa: E402
 from state_feedback import closeness as cl  # noqa: E402
 from state_feedback import gene_ranks as gr  # noqa: E402
 
@@ -557,9 +557,9 @@ def run(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run-dir", type=Path, required=True,
+    parser.add_argument("--run-dir", type=local_path, required=True,
                         help="State-feedback stability run or normal ISP run directory.")
-    parser.add_argument("--out-dir", type=Path, default=None,
+    parser.add_argument("--out-dir", type=local_path, default=None,
                         help="Default: <run-dir>/rank_enrichment (overwrites tables and figures).")
     parser.add_argument("--top-fraction", type=float, default=None)
     parser.add_argument("--background", choices=["both", "either"], default=None)
