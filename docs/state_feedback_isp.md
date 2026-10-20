@@ -235,6 +235,7 @@ Both modes share the source run, the steps, max_ncells, the GPU batch size and t
 | Comparison placebo chains (per draw) | 30 | Placebo chains run through the whole simulation; τ is the feedback gain minus their mean gain (`stability.n_random_chains`, at least 3) |
 | Comparison draw seeds | `0` | One independent draw of comparison chains per seed (`stability.random_seeds`) |
 | Idle reranks after the last step | 5 | Extra reranks with no new perturbation, for criterion S2 (`stability.idle_events`) |
+| Cluster / cell-type / enrichment analysis | Off | Rank enrichment of the Start, Goal and ISP top genes for one-step ISP: top genes (%), background (`postprocess.enabled`, 3.4) |
 
 Placebo genes are matched to each query gene by detection rate and median position in the start cells (`stability.*` in 3.1, `core/state_feedback/random_chains.py`). With the defaults the run simulates 31 chains without feedback and then with feedback for each of 3 decoder seeds, and every feedback event also runs the 10 correction placebos, so it takes hours. Lower the counts for a quick check, and use the defaults for results you report. Works with a single step (simultaneous perturbation).
 
@@ -316,7 +317,7 @@ Steps are read from `state_feedback.steps`. Older configs that list them under `
 | `stability_verdict.json`, `seed_agreement.csv`, `events.csv`, `endpoints.csv` | Criteria S1–S4 and the data behind them |
 | `run_manifest.json` | Settings, including the placebo counts and draw seeds |
 
-The Web UI Outputs panel shows τ per seed, S1–S4 and the two placebo gene tables, each with a CSV download.
+The Web UI Outputs panel shows τ per seed, S1–S4 and the two placebo gene tables, each with a CSV download. With rank enrichment on, it also shows the enrichment figures, closeness and top gene lists (3.4).
 
 **Decoder diagnostics mode.** Written under `{pipeline_run}/state_feedback_isp/state_feedback_isp_<time>/`.
 
@@ -342,6 +343,44 @@ For results you report, use the Placebo-corrected mode with its defaults (the pa
 3. Check that `null_feedback` has a shift of 0 and an unchanged order.
 4. Before a biological claim, run the Placebo-corrected mode (or `core/run_state_feedback_stability.py`) and report the specific gain over matched placebo chains.
 5. To save time, reuse a decoder trained on the same Pipeline run with the same step list (for example to add conditions or specificity). Using it on a different step list than it was trained on is a transfer test; train a new decoder for results you report (see the Δrank decoder row in 3).
+
+### 3.4 Rank enrichment of Start, Goal and ISP (one step)
+
+Placebo-corrected mode, **Cluster / cell-type / enrichment analysis** (YAML `postprocess.enabled: true`, CLI `--enable-postprocess`; settings under `state_feedback.rank_enrichment`). This is the switch that runs cluster / cell-type analysis after ISP UMAP and rank enrichment after normal ISP ([pipeline.md](pipeline.md)); `postprocess.rank_enrichment: false` or `--no-rank-enrichment` leaves rank enrichment out. Configs without a `postprocess` block still read the older `state_feedback.rank_enrichment.enabled`. Meant for one step, for example all factors overexpressed at once (one-step ISP). It predicts each gene's rank after ISP and compares the top genes of the start cells, the goal-state cells and ISP by enrichment.
+
+1. **Pseudobulk rank.** In each cell, a gene's normalized rank is its position / (length − 1) in the rank-value encoding (0 = top), and 1 if the gene is not in the encoding. The pseudobulk rank is the mean over all cells. Start uses the start cells, Goal the observed-state cells (the teacher state, truncated to the model input size).
+2. **Δspec per gene.** For each chain with feedback, the displacement of a gene is its pseudobulk rank in the final encodings minus its Start rank. Δspec = displacement of the query chain (the placebo-corrected rerank) minus the mean displacement over the comparison placebo chains. Chains that perturb the gene are left out of its mean. Δspec is averaged over decoder seeds.
+3. **ISP rank** = Start rank + Δspec.
+4. **Top genes.** The background is the genes detected in at least `min_detection` (5) cells of both Start and Goal (`background: both`), or of either (`either`). Perturbed genes are excluded from the background and the lists. Each list is the top `top_fraction` (10%) of the background by its rank, so all lists have the same length and the same background. A fourth list, **Δspec**, takes the genes with the lowest Δspec (moved furthest toward the front beyond the placebo chains). Δspec is small next to the spread of Start ranks, so the ISP list stays close to the Start list, and the Δspec list shows the change ISP adds.
+5. **Enrichment.** One-sided Fisher's exact test (hypergeometric upper tail) against the background, BH correction over terms with at least one gene in the list. Libraries: Enrichr's Reactome Pathways 2024, GO Biological Process 2025, GO Molecular Function 2025, GO Cellular Component 2025 and KEGG (2021 Human or 2019 Mouse, by model vocabulary), read from `core/geneformer/dicts/gene_sets/` (pinned SHA256, `scripts/download_gene_sets.sh`). Gene symbols are upper-cased as in Enrichr. Nothing is sent to a web service.
+6. **Closeness to Goal.** How far ISP moves the Start ranks toward the Goal ranks, with `d` = Δspec (ISP rank − Start rank) and `G` = Goal rank − Start rank on the background genes. At gene-set level each term (at least 10 background genes) is scored by the mean rank of its genes, so `d` and `G` become vectors over terms, one per library.
+
+| Metric | Meaning |
+|---|---|
+| Progress | Share of the Start-to-Goal change that ISP covers: the projection `⟨d, G⟩ / ⟨G, G⟩`. 0 = no move toward Goal, 100% = at Goal |
+| Moved toward Goal | Among the 20% of genes (terms) with the largest `abs(G)`, the share that ISP moves in Goal's direction. 50% = chance |
+| Cosine, Spearman | Agreement of `d` with `G` in direction (cosine) and in rank order (Spearman), independent of scale |
+| Distance closed | `1 − ‖ISP − Goal‖ / ‖Start − Goal‖`. Change in other directions lowers it, so it is at most Progress and can be negative |
+| Goal-gain AUC (genes) | Probability that a gene among the 10% moving most toward the front from Start to Goal moves further toward the front under ISP than a gene among the 10% moving most toward the back. 0.5 = chance |
+| Enrichment profile similarity | Per library, cosine of −log10 p over all terms between the Start, ISP or Δspec list and the Goal list, and the Jaccard of their FDR < 0.05 terms |
+
+Each metric is compared with the same metric for every comparison placebo chain, computed in the same way: the chain's displacement minus the mean displacement of the other placebo chains, with the chain's own genes set to 0. The output gives the placebo mean and SD, z, and the empirical p `(1 + number of placebos ≥ ISP) / (1 + number of placebos)`, which cannot go below 1/31 with 30 chains. Gene-level and gene-set metrics are also given per decoder seed. Progress does not say how close the cells are to Goal in absolute terms: Start and Goal ranks differ by much more than any one-step perturbation changes them.
+
+Needs `placebo_contrast.enabled` and at least one comparison placebo chain (two for closeness). Idle reranks are not used. Output under `rank_enrichment/` in the run folder:
+
+| Path | Contents |
+|---|---|
+| `gene_ranks.csv` | Per background gene: Start, Goal and ISP rank, Δspec (mean and per seed), configured and placebo displacement |
+| `top_genes.csv` | The top lists (`list` = start, goal, isp, dspec) with their scores (rank, or Δspec for `dspec`) |
+| `enrichment/{start,goal,isp,dspec}/<library>.csv` | Term, overlap, p, FDR, odds ratio and genes |
+| `figures/enrich_<library>.png/.pdf` | Top terms of Start, Goal and ISP (the Δspec list), −log10(FDR) bars (navy FDR < 0.05, grey otherwise, dashed line at 0.05, overlap count after each bar). Terms with the same genes and FDR are merged into one row, marked (+n). The ISP panel is titled with the step name |
+| `figures/closeness.png/.pdf` | Progress toward Goal and the share moved toward Goal, at gene level and per library. Navy diamond, ISP. Grey dots, placebo chains |
+| `closeness/closeness_summary.csv` | Every closeness metric with placebo mean, SD, z and empirical p |
+| `closeness/closeness_values.csv`, `closeness/placebo_pseudo_delta_spec.csv.gz` | The value of every metric for ISP and each placebo chain, and the placebo chains' per-gene contrasts |
+| `summary.json` | Settings, background size, Jaccard between the lists (and of the ISP list per seed), terms with FDR < 0.05, library SHA256, closeness metrics (with per-seed values) |
+| `start_positions.csv.gz`, `goal_positions.csv.gz`, `chains.json`, `seed<N>/rank_enrichment_positions.csv.gz` | Position sums the ranks are computed from (`chains.json` names the configured and placebo chains) |
+
+To recompute with other settings without rerunning ISP: `python core/run_isp_rank_enrichment.py --run-dir <run> --out-dir <dir> --top-fraction 0.05 --background either`.
 
 ---
 

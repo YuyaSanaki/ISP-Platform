@@ -36,6 +36,7 @@ from geneformer.species_context import (  # noqa: E402
     species_from_config,
 )
 from run_finetune import resolve_train_batch_size  # noqa: E402
+from platform_paths import localize, localize_path  # noqa: E402
 
 RESULT_FILENAME = "recommended_train_batch_size.json"
 RESULT_MARKER = "RECOMMENDED_TRAIN_BATCH_SIZE"
@@ -48,7 +49,7 @@ def load_config(path: Path) -> dict[str, Any]:
         cfg = yaml.safe_load(f) or {}
     if not isinstance(cfg, dict):
         raise ValueError(f"Config root must be a mapping: {path}")
-    return cfg
+    return localize(cfg)
 
 
 def resolve_model_dir(cfg: dict[str, Any]) -> Path:
@@ -181,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     next_to_config = config_path.parent / RESULT_FILENAME
     write_result(next_to_config, payload)
 
-    out_root = Path(str((cfg.get("paths") or {}).get("output_root") or "/app/output"))
+    out_root = Path(str((cfg.get("paths") or {}).get("output_root") or localize_path("/app/output")))
     date_dir = out_root / datetime.now(timezone.utc).strftime("%Y%m%d")
     run_dir = date_dir / (
         "ft_batch_calibrate_" + datetime.now(timezone.utc).strftime("%H%M%S_%f")[:-3] + "Z"

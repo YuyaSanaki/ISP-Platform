@@ -24,6 +24,11 @@ OUT_DIR="${ROOT}/core/geneformer/dicts/orthologs"
 OUT="${OUT_DIR}/mouse_to_human.tsv"
 mkdir -p "${OUT_DIR}"
 
+# GNU coreutils sha256sum on Linux; shasum (Perl) on macOS.
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
+
 if [[ "${ORTHOLOG_REFRESH:-0}" != "1" ]]; then
   for f in SHA256SUMS ensembl_release.json mouse_to_human.tsv human_to_mouse.tsv; do
     if [[ ! -f "${PINNED_DIR}/${f}" ]]; then
@@ -35,7 +40,7 @@ if [[ "${ORTHOLOG_REFRESH:-0}" != "1" ]]; then
       cp -f "${PINNED_DIR}/${f}" "${OUT_DIR}/${f}"
     fi
   done
-  if ! (cd "${OUT_DIR}" && sha256sum --check --strict SHA256SUMS); then
+  if ! (cd "${OUT_DIR}" && sha256 --check --strict SHA256SUMS); then
     echo "ERROR: ortholog tables in ${OUT_DIR} do not match SHA256SUMS." >&2
     echo "Restore them with: git checkout -- core/geneformer/dicts/orthologs/" >&2
     exit 1
@@ -138,12 +143,12 @@ echo "Curated reverse aliases: ${ROOT}/core/geneformer/dicts/orthologs/human_to_
 echo "Note: species.ortholog_policy filters many-to-many at load (default: one2one)."
 
 if [[ -f "${PINNED_DIR}/SHA256SUMS" ]]; then
-  if (cd "${OUT_DIR}" && sha256sum --check --status SHA256SUMS 2>/dev/null); then
+  if (cd "${OUT_DIR}" && sha256 --check --status SHA256SUMS 2>/dev/null); then
     echo "Live tables are identical to the pinned release."
   else
     echo "WARNING: live tables differ from the pinned release (SHA256SUMS)." >&2
     echo "  New hashes:" >&2
-    (cd "${OUT_DIR}" && sha256sum mouse_to_human.tsv human_to_mouse.tsv) >&2
+    (cd "${OUT_DIR}" && sha256 mouse_to_human.tsv human_to_mouse.tsv) >&2
     echo "  To adopt them, update SHA256SUMS and ensembl_release.json and commit both tables." >&2
   fi
 fi

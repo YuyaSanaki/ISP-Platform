@@ -40,13 +40,15 @@ from transformers import (
     set_seed,
 )
 
-# Resolved once at import so CPU-only hosts do not hard-crash on `.to("cuda")`.
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from compute_device import device_name, empty_cache, get_device
+from platform_paths import localize, localize_path
+
+# Resolved once at import: CUDA, Apple silicon MPS, or CPU (compute_device).
+DEVICE = get_device()
 
 
 def _empty_device_cache() -> None:
-    if DEVICE.type == "cuda":
-        torch.cuda.empty_cache()
+    empty_cache()
 
 sys.path.append(os.getcwd())
 from geneformer.auto_batch_size import (
@@ -92,7 +94,7 @@ def load_finetune_config(path: Path) -> dict[str, Any]:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError(f"Fine-tune config must be a mapping at root: {path}")
-    return data
+    return localize(data)
 
 
 def _utc_run_folder_name(now_utc: datetime) -> str:
@@ -491,7 +493,7 @@ def main() -> None:
         category=UserWarning,
     )
 
-    default_cfg = os.environ.get("FINETUNE_CONFIG", "/app/core/config/finetune.yaml")
+    default_cfg = localize_path(os.environ.get("FINETUNE_CONFIG", "/app/core/config/finetune.yaml"))
     p = argparse.ArgumentParser(
         description="Fine-tune Geneformer for cell/disease classification."
     )
@@ -563,10 +565,9 @@ def main() -> None:
     )
     print(f"  run log (rotating): {log_path}")
 
-    # ── CUDA check ──
+    # ── Device check ──
     print("Checking CUDA...", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        print("Device:", torch.cuda.get_device_name(0))
+    print("Device:", device_name())
 
     # ── Provenance ──
     prov_cfg = cfg.get("provenance") or {}
@@ -648,6 +649,9 @@ def main() -> None:
     epochs = int(tr_cfg.get("epochs", 10))
     weight_decay = float(tr_cfg.get("weight_decay", 0.001))
     fp16 = tr_cfg.get("fp16", True)
+    if fp16 and DEVICE.type != "cuda":
+        print(f"  fp16 needs CUDA; training in fp32 on {DEVICE.type}.")
+        fp16 = False
     base_seed = int(tr_cfg.get("seed", 42))
     num_runs = int(tr_cfg.get("num_runs", 1))
     nproc = int(rt_cfg.get("nproc", 16))
@@ -835,7 +839,7 @@ def main() -> None:
                     logging_steps=log_steps,
                     fp16=fp16,
                     dataloader_num_workers=dataloader_workers,
-                    dataloader_pin_memory=True,
+                    dataloader_pin_memory=DEVICE.type == "cuda",
                     group_by_length=True,
                     length_column_name="length",
                     disable_tqdm=False,

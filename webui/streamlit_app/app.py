@@ -158,6 +158,7 @@ from ortholog_approval_ui import (  # noqa: E402
 from dropped_genes_ui import (  # noqa: E402
     load_dropped_gene_table as _load_dropped_gene_table,
 )
+from platform_paths import localize as _localize_cfg, localize_path, localize_text  # noqa: E402
 from geneformer.gene_converter import (  # noqa: E402
     conversion_pair as _ortholog_conversion_pair,
     resolve_curated_overlay_path as _resolve_curated_overlay_tsv,
@@ -288,7 +289,7 @@ def _load_default_yaml() -> None:
     name = st.session_state.get("run_type_sel", RUN_TYPE_PIPELINE)
     path = _default_config_path(name)
     if path.is_file():
-        st.session_state["yaml_editor"] = path.read_text(encoding="utf-8")
+        st.session_state["yaml_editor"] = localize_text(path.read_text(encoding="utf-8"))
     else:
         st.session_state["yaml_editor"] = f"# Missing file: {path}\n"
     if name in _STUDY_RUN_TYPES:
@@ -586,7 +587,7 @@ def _guess_output_roots(run_label: str, cfg: dict) -> list[Path]:
         if out_root:
             roots.append(Path(str(out_root)))
         if run_label == RUN_TYPE_PIPELINE:
-            roots.extend(_latest_pipeline_run_dirs(paths.get("output_root") or "/app/output"))
+            roots.extend(_latest_pipeline_run_dirs(paths.get("output_root") or localize_path("/app/output")))
     return roots
 
 _FIGURE_SUFFIXES = frozenset({".png", ".pdf", ".svg", ".jpg", ".jpeg", ".webp"})
@@ -738,7 +739,7 @@ def _load_isp_stage_cfg(run_dir: Path) -> dict:
     if not path.is_file():
         return {}
     try:
-        cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        cfg = _localize_cfg(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     except (OSError, yaml.YAMLError):
         return {}
     if not isinstance(cfg, dict):
@@ -1285,10 +1286,20 @@ def _parse_sf_specificity_sets(text: str | None, ptype: str) -> tuple[dict, str 
 def _sf_isp_template_block() -> dict:
     """``state_feedback`` defaults (eval / decoder hyperparameters) from the core template."""
     try:
-        tpl = yaml.safe_load(_default_config_path(RUN_TYPE_STATE_FEEDBACK_ISP).read_text()) or {}
+        tpl = _localize_cfg(yaml.safe_load(_default_config_path(RUN_TYPE_STATE_FEEDBACK_ISP).read_text()) or {})
     except (OSError, yaml.YAMLError):
         return {}
     block = tpl.get("state_feedback") if isinstance(tpl, dict) else None
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _sf_isp_postprocess_template() -> dict:
+    """Top-level ``postprocess`` of the State-feedback ISP template (the shared switch)."""
+    try:
+        tpl = yaml.safe_load(_default_config_path(RUN_TYPE_STATE_FEEDBACK_ISP).read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    block = tpl.get("postprocess") if isinstance(tpl, dict) else None
     return dict(block) if isinstance(block, dict) else {}
 
 
@@ -1302,6 +1313,8 @@ def _sf_placebo_defaults() -> dict:
     tpl = _sf_isp_template_block()
     stab = tpl.get("stability") or {}
     pc = tpl.get("placebo_contrast") or {}
+    rank = tpl.get("rank_enrichment") or {}
+    post = _sf_isp_postprocess_template()
     return {
         "sf_isp_seeds": " ".join(str(s) for s in stab.get("seeds") or [0, 1, 2]),
         "sf_isp_n_comparison": int(stab.get("n_random_chains", 30)),
@@ -1309,6 +1322,10 @@ def _sf_placebo_defaults() -> dict:
         "sf_isp_n_correction": int(pc.get("n_estimation", 10)),
         "sf_isp_correction_seed": int(pc.get("estimation_draw_seed", 1)),
         "sf_isp_idle_events": int(stab.get("idle_events", 5)),
+        "sf_isp_postprocess_enabled": bool(post.get("enabled", False)),
+        "sf_isp_rank_enrich": bool(post.get("rank_enrichment", True)),
+        "sf_isp_rank_top_pct": float(rank.get("top_fraction", 0.1)) * 100,
+        "sf_isp_rank_background": str(rank.get("background", "both")),
     }
 
 
@@ -1365,6 +1382,12 @@ def _sf_placebo_block(template: dict) -> tuple[dict | None, str | None]:
         "enabled": True,
         "n_estimation": n_correction,
         "estimation_draw_seed": correction_seed,
+    }
+    rank = {k: v for k, v in (template.get("rank_enrichment") or {}).items() if k != "enabled"}
+    block["rank_enrichment"] = {
+        **rank,
+        "top_fraction": float(_get("sf_isp_rank_top_pct")) / 100.0,
+        "background": str(_get("sf_isp_rank_background")),
     }
     return block, None
 
@@ -1432,6 +1455,11 @@ def _build_state_feedback_isp_yaml_from_pipeline_run(
         "steps": steps,
         **block,
         "observed_state": observed or out["perturbation"]["end_state"],
+    }
+    placebo = _sf_isp_mode() == _SF_MODE_PLACEBO
+    out["postprocess"] = {
+        "enabled": placebo and bool(st.session_state.get("sf_isp_postprocess_enabled")),
+        "rank_enrichment": bool(st.session_state.get("sf_isp_rank_enrich", True)),
     }
     return _dump_run_yaml(out), None
 
@@ -1853,6 +1881,64 @@ def _render_sf_placebo_controls() -> None:
             f"runs the {int(st.session_state.get('sf_isp_n_correction') or 0)} correction "
             "placebos, so expect hours at the paper's settings."
         )
+    _render_sf_rank_enrichment_controls()
+
+
+def _render_sf_rank_enrichment_controls() -> None:
+    """Placebo-corrected mode: the shared after-ISP switch (here: rank enrichment)."""
+    with st.expander("Cluster / cell-type / enrichment analysis", expanded=False):
+        st.caption(
+            "The same switch as `postprocess` in Pipeline (E2E). For State-feedback ISP it runs "
+            "rank enrichment of the final encodings (cluster / cell-type analysis follows ISP "
+            "UMAP and does not apply here). Default **off**."
+        )
+        st.checkbox("Enable analyses after ISP", key="sf_isp_postprocess_enabled")
+        if not st.session_state.get("sf_isp_postprocess_enabled"):
+            return
+        st.checkbox(
+            "Rank enrichment (Start / Goal / ISP top genes)",
+            key="sf_isp_rank_enrich",
+            help=(
+                "Use with one step (e.g. all factors overexpressed at once). The ISP list ranks "
+                "genes by Δspec: the rank change after the placebo-corrected rerank minus the "
+                "mean change under the comparison placebo chains, averaged over decoder seeds."
+            ),
+        )
+        if not st.session_state.get("sf_isp_rank_enrich"):
+            return
+        c_top, c_bg = st.columns(2)
+        with c_top:
+            st.number_input(
+                "Top genes (%)",
+                min_value=1.0,
+                max_value=50.0,
+                step=1.0,
+                key="sf_isp_rank_top_pct",
+                help="Top fraction of the background genes by pseudobulk rank. Default 10%.",
+            )
+        with c_bg:
+            st.selectbox(
+                "Background genes",
+                ["both", "either"],
+                key="sf_isp_rank_background",
+                format_func=lambda v: {
+                    "both": "detected in Start and Goal (≥5 cells each)",
+                    "either": "detected in Start or Goal (≥5 cells)",
+                }[v],
+                help=(
+                    "Genes not in a cell's encoding cannot move up by reranking, so `both` "
+                    "compares the lists on genes ISP can reorder. Perturbed genes are always "
+                    "excluded."
+                ),
+            )
+        st.caption(
+            "Pseudobulk rank = mean over cells of position / (length − 1), with 1 where the gene "
+            "is not in the encoding. Enrichment runs on this machine against Reactome 2024, "
+            "GO Biological Process, Molecular Function and Cellular Component 2025, and KEGG "
+            "(human 2021 or mouse 2019, by model vocabulary). Gene lists are not sent to any web "
+            "service. Closeness to Goal (how far ISP moves Start toward Goal) needs at least 2 "
+            "comparison placebo chains. Output: `rank_enrichment/` in the run folder."
+        )
 
 
 def _render_sf_diagnostic_controls(source: str) -> None:
@@ -2109,12 +2195,131 @@ def _render_sf_placebo_results(summary: dict, pd) -> None:
             "Full records: `estimation_placebos.json` (correction) and `random_chains.json` "
             "(comparison, with matching strata and balance) in the run folder."
         )
+    _render_rank_enrichment_results(run / "rank_enrichment", run.name, pd, "sf")
+
+
+def _closeness_rows(close: dict, labels: dict) -> list[dict]:
+    rows = []
+    for level, m in close.items():
+        if level.startswith("ora:") or "progress" not in m:
+            continue
+        p = m["progress"]
+        rows.append({
+            "Level": "Genes" if level == "gene" else f"{labels.get(level, level)} ({m.get('n_terms')} terms)",
+            "Progress (%)": round(p["value"] * 100, 2),
+            "Placebo (%)": f"{p['placebo_mean'] * 100:+.2f} ± {p['placebo_sd'] * 100:.2f}",
+            "z": round(p["z"], 1),
+            "Moved toward Goal (%)": round(m["toward_goal"]["value"] * 100, 1),
+            "Cosine": round(m["cosine"]["value"], 3),
+            "Spearman": round(m["spearman"]["value"], 3),
+            "Distance closed (%)": round(m["distance_closed"]["value"] * 100, 2),
+        })
+    return rows
+
+
+def _render_rank_enrichment_results(out: Path, run_name: str, pd, key: str) -> None:
+    """Rank enrichment outputs (normal ISP or State-feedback ISP): figures and tables."""
+    summary = _read_json(out / "summary.json")
+    if not summary:
+        if (out / "chains.json").is_file():
+            st.caption("Rank enrichment: waiting for the run to finish.")
+        return
+    sf = summary.get("mode", "state_feedback") == "state_feedback"
+    settings = summary.get("settings") or {}
+    jac = summary.get("jaccard") or {}
+    n_top = summary.get("n_top") or {}
+    labels = {lib: (info or {}).get("label", lib)
+              for lib, info in (summary.get("libraries") or {}).items()}
+    st.markdown("**Rank enrichment** (top genes of Start, Goal and ISP)")
+    if sf:
+        query = summary.get("configured_label") or "ISP"
+        st.caption(
+            f"{query}: background {summary.get('n_background')} genes, top {n_top.get('dspec')} "
+            f"per list ({float(settings.get('top_fraction', 0.1)) * 100:.0f}%). The ISP list "
+            "ranks genes by their predicted rank change beyond the placebo chains. "
+            f"Jaccard with the Goal list: ISP {jac.get('dspec_goal', float('nan')):.3f}, "
+            f"Start {jac.get('start_goal', float('nan')):.3f}. "
+            f"Decoder seeds {summary.get('decoder_seeds')}, "
+            f"{summary.get('n_placebo_chains')} comparison placebo chains."
+        )
+    else:
+        st.caption(
+            f"ISP ({summary.get('perturbation_type')}) toward {summary.get('goal_state')}: "
+            f"background {summary.get('n_background')} genes "
+            f"({summary.get('n_tested_in_background')} tested by ISP, "
+            f"{summary.get('n_isp_hits_in_background')} shifted toward Goal with FDR < "
+            f"{settings.get('fdr', 0.05)}). Start and Goal lists: top {n_top.get('start')} "
+            f"({float(settings.get('top_fraction', 0.1)) * 100:.0f}%) by pseudobulk rank of "
+            f"{summary.get('n_start_cells')} and {summary.get('n_goal_cells')} cells. ISP list: "
+            f"top {n_top.get('isp')} hits by shift. Jaccard with the Goal list: ISP "
+            f"{jac.get('isp_goal', float('nan')):.3f}, Start {jac.get('start_goal', float('nan')):.3f}."
+        )
+    figures = [out / rel for rel in summary.get("figures") or []]
+    close = summary.get("closeness") or {}
+    if close:
+        st.markdown("**Closeness to Goal** (ISP change vs Goal − Start, against placebo chains)")
+        st.dataframe(pd.DataFrame(_closeness_rows(close, labels)),
+                     use_container_width=True, hide_index=True)
+        ora_rows = []
+        for level, m in close.items():
+            if not level.startswith("ora:"):
+                continue
+            lib = level.removeprefix("ora:")
+            e = m.get("dspec_neglog10p_cosine") or {}
+            z = e.get("z")
+            ora_rows.append({
+                "Library": labels.get(lib, lib),
+                "ISP vs Goal": f"{e.get('value', float('nan')):.3f}"
+                + (f" (z {z:.1f})" if isinstance(z, float) and z == z else ""),
+            })
+        if ora_rows:
+            st.caption("Enrichment profile similarity to the Goal list (cosine of −log10 p over all terms)")
+            st.dataframe(pd.DataFrame(ora_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Progress: share of the Start-to-Goal rank change that ISP covers (projection, 100% = "
+            "Goal). Moved toward Goal: among the 20% of genes (terms) changing most from Start to "
+            "Goal, the share ISP moves in Goal's direction (50% = chance). z against leave-one-out "
+            "placebo chains. Tables: `rank_enrichment/closeness/`."
+        )
+    for path in figures:
+        if path.is_file():
+            st.image(str(path), use_container_width=True)
+    top_csv = out / "top_genes.csv"
+    if top_csv.is_file():
+        top = pd.read_csv(top_csv)
+        titles = {"start": "Start", "goal": "Goal", ("dspec" if sf else "isp"): "ISP"}
+        wide = {
+            title: top.loc[top["list"] == name, "symbol"].reset_index(drop=True)
+            for name, title in titles.items()
+            if (top["list"] == name).any()
+        }
+        st.dataframe(pd.DataFrame(wide), use_container_width=True, height=240)
+        st.download_button(
+            "Download top genes (.csv)",
+            data=top_csv.read_bytes(),
+            file_name=f"{run_name}_rank_enrichment_top_genes.csv",
+            mime="text/csv",
+            key=f"{key}_dl_rank_top_genes",
+        )
+    ranks_csv = out / "gene_ranks.csv"
+    if ranks_csv.is_file():
+        st.download_button(
+            "Download gene ranks (.csv)",
+            data=ranks_csv.read_bytes(),
+            file_name=f"{run_name}_rank_enrichment_gene_ranks.csv",
+            mime="text/csv",
+            key=f"{key}_dl_rank_gene_ranks",
+        )
+    st.caption(
+        "Figures (PNG and PDF): `rank_enrichment/figures/`. Enrichment tables per list and "
+        "library: `rank_enrichment/enrichment/`."
+    )
 
 
 def _read_pipeline_yaml() -> dict:
     text = st.session_state.get("yaml_editor", "")
     try:
-        cfg = yaml.safe_load(text) or {}
+        cfg = _localize_cfg(yaml.safe_load(text) or {})
     except yaml.YAMLError:
         return {}
     return cfg if isinstance(cfg, dict) else {}
@@ -2274,7 +2479,7 @@ def _display_output_root_line() -> str:
     paths = _read_pipeline_yaml().get("paths") or {}
     raw = paths.get("output_root")
     if raw is None or str(raw).strip().lower() in ("", "null"):
-        return "/app/output"
+        return localize_path("/app/output")
     return str(raw).strip()
 
 
@@ -2672,6 +2877,7 @@ def _build_patched_pipeline_yaml(
     isp_postprocess_enabled: bool | None = None,
     isp_postprocess_n_clusters: int | str | None = None,
     isp_postprocess_celltype: bool | None = None,
+    isp_postprocess_rank_enrichment: bool | None = None,
     pert_type: str | None = None,
     pert_state_key: str | None = None,
     pert_genes_to_perturb: list[str] | None = None,
@@ -2810,6 +3016,7 @@ def _build_patched_pipeline_yaml(
         or isp_postprocess_enabled is not None
         or isp_postprocess_n_clusters is not None
         or isp_postprocess_celltype is not None
+        or isp_postprocess_rank_enrichment is not None
     ):
         stages = cfg.setdefault("stages", {})
         isp_stage = stages.setdefault("isp", {})
@@ -2823,6 +3030,7 @@ def _build_patched_pipeline_yaml(
             isp_postprocess_enabled is not None
             or isp_postprocess_n_clusters is not None
             or isp_postprocess_celltype is not None
+            or isp_postprocess_rank_enrichment is not None
         ):
             post = isp_stage.setdefault("postprocess", {})
             if isp_postprocess_enabled is not None:
@@ -2831,6 +3039,8 @@ def _build_patched_pipeline_yaml(
                 post["n_clusters"] = _normalize_n_clusters_value(isp_postprocess_n_clusters)
             if isp_postprocess_celltype is not None:
                 post["celltype_prediction"] = bool(isp_postprocess_celltype)
+            if isp_postprocess_rank_enrichment is not None:
+                post["rank_enrichment"] = bool(isp_postprocess_rank_enrichment)
 
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
@@ -2862,6 +3072,7 @@ def _patch_pipeline_yaml(
     isp_postprocess_enabled: bool | None = None,
     isp_postprocess_n_clusters: int | str | None = None,
     isp_postprocess_celltype: bool | None = None,
+    isp_postprocess_rank_enrichment: bool | None = None,
     pert_type: str | None = None,
     pert_state_key: str | None = None,
     pert_genes_to_perturb: list[str] | None = None,
@@ -2896,6 +3107,7 @@ def _patch_pipeline_yaml(
         isp_postprocess_enabled=isp_postprocess_enabled,
         isp_postprocess_n_clusters=isp_postprocess_n_clusters,
         isp_postprocess_celltype=isp_postprocess_celltype,
+        isp_postprocess_rank_enrichment=isp_postprocess_rank_enrichment,
         pert_type=pert_type,
         pert_state_key=pert_state_key,
         pert_genes_to_perturb=pert_genes_to_perturb,
@@ -3123,6 +3335,9 @@ def _ft_isp_advanced_kwargs_from_session() -> dict:
         "isp_postprocess_celltype": st.session_state.get(
             "pipeline_isp_postprocess_celltype"
         ),
+        "isp_postprocess_rank_enrichment": st.session_state.get(
+            "pipeline_isp_postprocess_rank_enrichment"
+        ),
         "ft_task_type": st.session_state.get("pipeline_ft_task_type"),
         "ft_label_column": st.session_state.get("pipeline_ft_label_column"),
         "runtime_max_cells": st.session_state.get("pipeline_max_cells"),
@@ -3182,6 +3397,9 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
         "celltype_prediction",
         default=_DEFAULT_ISP_POSTPROCESS_CELLTYPE,
     )
+    postprocess_rank_enrichment = _nested_get(
+        isp_stage, "postprocess", "rank_enrichment", default=True
+    )
     task_type = ft_block.get("task_type", _DEFAULT_FT_TASK_TYPE)
     label_column = ft_block.get("label_column", _DEFAULT_FT_LABEL_COLUMN)
     max_cells = runtime.get("max_cells", _DEFAULT_MAX_CELLS)
@@ -3211,6 +3429,9 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
     )
     st.session_state.setdefault(
         "pipeline_isp_postprocess_celltype", bool(postprocess_celltype)
+    )
+    st.session_state.setdefault(
+        "pipeline_isp_postprocess_rank_enrichment", bool(postprocess_rank_enrichment)
     )
     task = str(task_type) if task_type in _FT_TASK_TYPE_LABELS else _DEFAULT_FT_TASK_TYPE
     st.session_state.setdefault("pipeline_ft_task_type", task)
@@ -3427,13 +3648,14 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 "Fine-tune UMAP is controlled by `stages.finetune.umap.enabled`."
             )
 
-        with st.expander("Cluster / cell-type analysis", expanded=False):
+        with st.expander("Cluster / cell-type / enrichment analysis", expanded=False):
             st.caption(
-                "After ISP UMAP (including E2E TOP1), optionally write "
-                "`cluster_coexpr_analysis/` (`stages.isp.postprocess.*`). Default **off**."
+                "After ISP, optionally write `cluster_coexpr_analysis/` after ISP UMAP "
+                "(including E2E TOP1) and `rank_enrichment/` (enrichment of the top Start, "
+                "Goal and ISP genes) (`stages.isp.postprocess.*`). Default **off**."
             )
             st.checkbox(
-                "Enable cluster_coexpr_analysis",
+                "Enable analyses after ISP",
                 key="pipeline_isp_postprocess_enabled",
                 on_change=_apply_ft_isp_advanced_to_yaml,
                 help="`stages.isp.postprocess.enabled`",
@@ -3472,6 +3694,17 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                     on_change=_apply_ft_isp_advanced_to_yaml,
                     help="`stages.isp.postprocess.celltype_prediction`",
                 )
+                st.checkbox(
+                    "Rank enrichment (Start / Goal / ISP top genes)",
+                    key="pipeline_isp_postprocess_rank_enrichment",
+                    on_change=_apply_ft_isp_advanced_to_yaml,
+                    help=(
+                        "`stages.isp.postprocess.rank_enrichment`. Per-gene ISP screens: ORA of "
+                        "the top 10% background genes by Start and Goal pseudobulk rank and of "
+                        "the top ISP hits shifted toward Goal, on local gene set libraries "
+                        "(Reactome, GO, KEGG). Output: `rank_enrichment/` in the run folder."
+                    ),
+                )
 
     with st.expander("What do these options mean?", expanded=False):
         st.markdown(
@@ -3487,6 +3720,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 | **stats.mode** | How cosine shifts are scored. Keep **goal_state_shift** for Disease→WT. |
 | **analysis plots** | Post-stats figures (top genes barplot, volcano, etc.). |
 | **cluster_coexpr_analysis** | Optional joint UMAP + L2-by-group after ISP UMAP / E2E TOP1 (`stages.isp.postprocess`). |
+| **rank_enrichment** | Optional enrichment of the top Start, Goal and ISP genes after ISP (`stages.isp.postprocess.rank_enrichment`). |
 | **Trajectory UMAP** | Run type **ISP UMAP** (per-cell arrows), after E2E. E2E also runs **TOP1 significant ISP UMAP** automatically; Fine-tune UMAP comes from `stages.finetune.umap.enabled`. |
 """
         )
@@ -4390,6 +4624,14 @@ def _render_output_browser() -> None:
             st.divider()
             _render_figure_gallery(f"ISP UMAP — {sub.name}", sub, f"output_browser_umap_{i}")
 
+    if (run_dir / "rank_enrichment" / "summary.json").is_file():
+        import pandas as pd
+
+        st.divider()
+        _render_rank_enrichment_results(
+            run_dir / "rank_enrichment", run_dir.name, pd, "output_browser"
+        )
+
     csvs = _list_run_csv_previews(run_dir)
     if csvs:
         st.divider()
@@ -4994,7 +5236,7 @@ def _render_analysis_panel() -> None:
 
         if not prep_failed:
             try:
-                cfg_obj = yaml.safe_load(yaml_text) or {}
+                cfg_obj = _localize_cfg(yaml.safe_load(yaml_text) or {})
             except yaml.YAMLError as e:
                 st.error(f"Invalid YAML: {e}")
                 cfg_obj = None

@@ -198,7 +198,9 @@ def model_init():
             for param in module.parameters():
                 param.requires_grad = False
 
-    model = model.to("cuda")
+    from compute_device import get_device
+
+    model = model.to(get_device())
     return model
 
 # define metrics

@@ -59,7 +59,9 @@ def extract_embeddings(model, dataset, device, batch_size=50):
 
 def main():
     print("Loading model and dataset...")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from compute_device import get_device
+
+    device = get_device()
     
     # Replace with your fine-tuned checkpoint and tokenized dataset paths.
     geneformer_model_path = "/app/output/<run>/finetune/all_run1"

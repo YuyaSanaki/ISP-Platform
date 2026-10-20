@@ -164,6 +164,25 @@ stages:
       max_ncells: 50000
 ```
 
+Example: analyses after ISP (Web UI **Cluster / cell-type / enrichment analysis**, default off). One switch turns on the cluster / cell-type analysis after ISP UMAP (`isp_umap/.../cluster_coexpr_analysis/`, [isp_umap.md](isp_umap.md)) and rank enrichment (`rank_enrichment/`). Either can be left out on its own:
+
+```yaml
+stages:
+  isp:
+    postprocess:
+      enabled: true
+      celltype_prediction: true
+      rank_enrichment: true
+    rank_enrichment:          # optional, defaults shown
+      top_fraction: 0.1
+      background: both        # detected in >= min_detection cells of Start and Goal (either: of one)
+      min_detection: 5
+      fdr: 0.05
+      max_cells_per_state: 3000
+```
+
+**Rank enrichment** needs per-gene ISP statistics (genome-wide, or a gene list scored per gene). The top `top_fraction` of the background genes by Start pseudobulk rank, by Goal pseudobulk rank, and the ISP hits shifted toward Goal with FDR < `fdr` (ranked by shift, at most as many as the Start list) go into an over-representation test on local Reactome 2024, GO BP, MF and CC 2025, and KEGG libraries (no web service). The ISP list is tested against the background genes ISP scored. Pseudobulk rank = mean over cells of position / (length − 1), 1 where the gene is not encoded, from up to `max_cells_per_state` Start and Goal cells of the ISP dataset. Figures: `rank_enrichment/figures/enrich_<library>.png` (and `.pdf`), one panel each for Start, Goal and ISP. Recompute with other settings: `python core/run_isp_rank_enrichment.py --run-dir <run> --out-dir <dir> --top-fraction 0.05`. `core/run_isp.py` takes `--enable-postprocess`, `--skip-postprocess` and `--no-rank-enrichment`.
+
 ### What you do not set manually
 
 The pipeline resolves these per run:
@@ -176,6 +195,7 @@ The pipeline resolves these per run:
 | ISP results | `{run}/isp_results/`, `ispstats_results/`, `figures/` |
 | Fine-tune UMAP (when enabled) | `{run}/finetune/figures/*_umap.pdf` |
 | ISP UMAP (TOP1 significant, E2E standard) | `{run}/isp_umap/` — `umap_*.png`, `per_cell_isp_shift.csv` |
+| Rank enrichment (when `postprocess` is on) | `{run}/rank_enrichment/` — `figures/enrich_<library>.png`, `top_genes.csv`, `gene_ranks.csv`, `enrichment/` |
 
 Inspect resolved values after a run in `pipeline_resolved_paths.yaml`.
 
@@ -203,6 +223,7 @@ Each run creates:
   isp_results/
   ispstats_results/
   figures/
+  rank_enrichment/               # only with postprocess.enabled
 ```
 
 The tokenizer starts a new shard once the cells read so far reach `max_cells`, so large studies give several shards. Fine-tune and ISP use every shard.

@@ -30,6 +30,9 @@ from typing import Any, Mapping
 import torch
 import yaml
 from accelerate import Accelerator
+from compute_device import device_name
+from platform_paths import localize, localize_path
+import postprocess_switch as pps
 from geneformer import InSilicoPerturber, InSilicoPerturberStats
 from geneformer.auto_batch_size import coerce_batch_size
 from geneformer.in_silico_perturber import check_perturb_type_implemented
@@ -182,7 +185,7 @@ def load_isp_config(path: Path) -> dict[str, Any]:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError(f"ISP config must be a mapping at root: {path}")
-    return data
+    return localize(data)
 
 
 def _write_run_provenance(
@@ -257,7 +260,7 @@ def _merge_isp_run_metadata(run_root: Path, updates: dict[str, Any]) -> None:
 
 def main() -> None:
     accelerator = Accelerator()
-    default_cfg = os.environ.get("ISP_CONFIG", "/app/core/config/isp.yaml")
+    default_cfg = localize_path(os.environ.get("ISP_CONFIG", "/app/core/config/isp.yaml"))
     p = argparse.ArgumentParser(description="Run Geneformer in-silico perturbation + stats.")
     p.add_argument(
         "--config",
@@ -309,9 +312,10 @@ def main() -> None:
         action="store_true",
         help="Skip ISP UMAP trajectories (normally auto-runs for targeted genes).",
     )
+    pps.add_postprocess_args(p)
     args = p.parse_args()
 
-    cfg = load_isp_config(args.config)
+    cfg = pps.apply_postprocess_args(load_isp_config(args.config), args)
 
     species = species_from_config(cfg)
     backend = backend_from_config(cfg)
@@ -525,8 +529,7 @@ def main() -> None:
         print(f"  run log (rotating): {log_path}")
 
     print("Checking CUDA...", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        print("Device:", torch.cuda.get_device_name(0))
+    print("Device:", device_name())
 
     token_dict_path = backend.token_dictionary
 
@@ -661,6 +664,19 @@ def main() -> None:
                     output_root=umap_root,
                 )
                 print(f"ISP UMAP outputs: {umap_dirs[0].parent if umap_dirs else umap_root}")
+
+            if pps.rank_enrichment_enabled(cfg):
+                import run_isp_rank_enrichment
+
+                print("Running rank enrichment (postprocess.rank_enrichment)...")
+                try:
+                    run_isp_rank_enrichment.run(
+                        run_root if run_root is not None else stats_parent.parent,
+                        pps.rank_enrichment_settings(cfg),
+                        isp_config=cfg,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(f"WARNING: rank enrichment failed: {exc}", flush=True)
 
             main_pipeline_ok = True
     finally:

@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 import torch
 
+from compute_device import empty_cache, has_accelerator, is_oom
 from geneformer import in_silico_perturber as isp
 from rank_edit import (
     PERTURB_OVEREXPRESS,
@@ -37,21 +38,17 @@ def gpu_resident_map_workers(nproc: int) -> int:
     boxes (GB10 / Grace-Blackwell) that RAM is the same pool as VRAM, so a
     4-worker map during dual-forward scoring is a common OOM trigger.
     """
-    if torch.cuda.is_available():
+    if has_accelerator():
         return 1
     return max(1, min(int(nproc), 4))
 
 
 def is_cuda_oom(exc: BaseException) -> bool:
-    oom_type = getattr(torch.cuda, "OutOfMemoryError", None)
-    if oom_type is not None and isinstance(exc, oom_type):
-        return True
-    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+    return is_oom(exc)
 
 
 def empty_cuda_cache() -> None:
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    empty_cache()
 
 
 def centroid_dataset(dataset, state_key: str, states: Sequence[str], max_ncells: int | None, nproc: int):

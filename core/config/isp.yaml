@@ -76,8 +76,11 @@ umap:
   sample_key: sample_id
   batch_size: 100
 
-# Optional ISP UMAP postprocess → cluster_coexpr_analysis/ (default OFF).
-# Also applies to E2E TOP1 UMAP via stage_configs/isp.yaml → build_isp_umap_config.
+# Analyses after ISP (default OFF). One switch for both:
+#   - cluster / cell-type analysis after ISP UMAP → isp_umap/.../cluster_coexpr_analysis/
+#     (also E2E TOP1 UMAP via stage_configs/isp.yaml → build_isp_umap_config)
+#   - rank enrichment of the top ISP genes (per-gene screens) → rank_enrichment/
+# CLI: --enable-postprocess / --skip-postprocess, --no-rank-enrichment.
 postprocess:
   enabled: false
   # Integer (>=2) or "auto" (silhouette over k=2..15).
@@ -85,6 +88,18 @@ postprocess:
   celltype_prediction: true
   # auto = use pre-ISP platform cell_type (celltype_annotator=isp_expression*).
   prefer_metadata_celltype: auto
+  rank_enrichment: true
+
+# Rank enrichment settings (core/run_isp_rank_enrichment.py). Lists: top fraction of the
+# background genes by Start rank, Goal rank, and ISP shift toward Goal (FDR < fdr).
+rank_enrichment:
+  top_fraction: 0.1
+  background: both          # both | either (detected in Start and Goal, or in either)
+  min_detection: 5
+  libraries: null           # null = species defaults (core/geneformer/dicts/gene_sets)
+  fdr: 0.05
+  top_terms: 10
+  max_cells_per_state: 3000
 
 # Provenance and reproducibility settings
 provenance:

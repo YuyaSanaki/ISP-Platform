@@ -6,8 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-20
+
 ### Added
 
+- **Rank enrichment of Start, Goal and ISP, under one switch with cluster / cell-type analysis.** `postprocess.enabled` (CLI `--enable-postprocess` / `--skip-postprocess`, Web UI **Cluster / cell-type / enrichment analysis**) now turns on both the cluster / cell-type analysis after ISP UMAP and rank enrichment. `postprocess.rank_enrichment: false` (CLI `--no-rank-enrichment`) leaves rank enrichment out, as `celltype_prediction: false` leaves out cell-type prediction. Off by default, so existing runs, ISP scores and τ are unchanged (`core/postprocess_switch.py`).
+  - **What it compares.** The top 10% of a shared background (genes detected in ≥5 cells of both Start and Goal, perturbed genes excluded) by Start pseudobulk rank, by Goal pseudobulk rank and by ISP go into an over-representation test (one-sided Fisher, BH) on Enrichr's Reactome Pathways 2024, GO Biological Process 2025, GO Molecular Function 2025, GO Cellular Component 2025 and KEGG (2021 Human or 2019 Mouse). The libraries are run locally from files downloaded once with pinned SHA256 (`scripts/download_gene_sets.sh`, also called by `download_build_assets.sh` and the Docker build), so gene lists are not sent to any web service. Pseudobulk rank = mean normalized position over cells (1 where the gene is not encoded).
+  - **Normal ISP** (`core/run_isp.py`, Pipeline (E2E) stage `stages.isp.postprocess`): for per-gene screens (genome-wide or a gene list scored per gene), the ISP list holds the genes shifted toward Goal with FDR < 0.05, ranked by shift and capped at the size of the Start list. Its ORA universe is the background genes ISP tested. Start and Goal ranks come from the ISP dataset (`filter_data` applied, up to `rank_enrichment.max_cells_per_state` cells per state, default 3000). Group and per-cell outputs are skipped with a message.
+  - **State-feedback ISP** (placebo-corrected mode, `core/run_state_feedback_stability.py`, meant for one step such as all factors overexpressed at once): the ISP list ranks genes by Δspec, the rank displacement after the placebo-corrected rerank minus the mean displacement under the comparison placebo chains, averaged over decoder seeds. **Closeness to Goal** (`core/state_feedback/closeness.py`) quantifies how far ISP moves Start toward Goal, per gene and per gene set of each library (progress, share of the most-changing genes or terms moved toward Goal, cosine, Spearman, distance closed, goal-gain AUC, similarity of enrichment profiles), compared with leave-one-out values from the comparison placebo chains (z, empirical p) and given per decoder seed.
+  - **Figures** (paper style, PNG and PDF, `rank_enrichment/figures/`): one figure per library with −log10 FDR bars for Start, Goal and ISP (`enrich_<library>`), terms with the same genes and FDR merged into one row, and `closeness` for State-feedback ISP. Output: `rank_enrichment/` in the run folder. `core/run_isp_rank_enrichment.py --run-dir <run>` recomputes it with other settings for either kind of run. Guides: `docs/state_feedback_isp.md` 3.4, `docs/pipeline.md`. Test: `tests/test_rank_enrichment.py`.
+- **Apple silicon (macOS, native).** ISP Platform runs on Apple silicon Macs without Docker (Docker on macOS has no GPU access): `scripts/macos/setup.sh` builds a uv virtual environment with PyTorch on the Metal GPU (MPS) and downloads the models, `scripts/macos/env.sh` sets the environment, and `scripts/macos/webui.sh` starts the Web UI on http://localhost:8502. Device selection (`core/compute_device.py`) picks CUDA, then MPS, then CPU (`ISP_DEVICE` overrides). fp16 fine-tuning stays CUDA-only. Configs and saved runs that point to `/app/...` are mapped to the checkout when `/app` does not exist (`core/platform_paths.py`). On NVIDIA hosts nothing changes. Test: `tests/test_platform_portability.py`.
 - Web UI **Stop job** under **Logs & status**: stops the running job and its child processes (SIGTERM to the job's process group, SIGKILL after 15 s). The run folder keeps the files written so far.
 
 ### Changed
@@ -38,6 +46,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - Compose services no longer mount the Docker socket (`/var/run/docker.sock`). Access to it from inside a container amounts to root on the host, and nothing in the image uses it (`scripts/run_smoke_matrix.py` calls `docker compose` from the host). No results change.
+
+### Notes
+
+- Docker image / Compose default tag is `isp-platform:v1.4.0`.
 
 ## [1.3.3] - 2026-10-10
 

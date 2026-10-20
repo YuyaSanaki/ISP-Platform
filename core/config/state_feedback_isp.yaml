@@ -157,6 +157,28 @@ state_feedback:
   # (Web UI mode "Placebo-corrected (paper method)", the default);
   # core/run_state_feedback_isp.py (Web UI mode "Decoder diagnostics") trains and
   # reranks with delta_h itself.
+  # Rank enrichment settings (core/run_isp_rank_enrichment.py). Switched on with
+  # postprocess.enabled below (Web UI "Cluster / cell-type / enrichment analysis" in the
+  # placebo-corrected mode). Meant for one step (e.g. all factors overexpressed at once).
+  # Pseudobulk rank of a gene = mean over cells of position / (length - 1), 1 where the gene
+  # is not in the encoding. Delta-spec = rank change after the placebo-corrected rerank minus
+  # the mean change under the comparison placebo chains, averaged over decoder seeds. The top
+  # `top_fraction` of the background by Start rank, `observed_state` rank and Delta-spec goes
+  # into an ORA on local gene set libraries (core/geneformer/dicts/gene_sets; no web
+  # service). background: both = detected in >= min_detection cells of Start and Goal,
+  # either = of Start or Goal; perturbed genes are excluded.
+  # libraries: null = Reactome 2024, GO BP, MF and CC 2025, and KEGG (by model vocabulary).
+  # Closeness to Goal (progress toward Goal per gene and gene set, against the placebo
+  # chains) needs at least 2 comparison placebo chains.
+  # Needs placebo_contrast.enabled and n_random_chains >= 1.
+  rank_enrichment:
+    top_fraction: 0.1
+    background: both
+    min_detection: 5
+    libraries: null
+    fdr: 0.05
+    top_terms: 10
+
   placebo_contrast:
     enabled: true
     n_estimation: 10
@@ -178,6 +200,13 @@ state_feedback:
     # null-drift and displacement columns when a big shift wins.
     max_shift_grid: [0.05, 0.1, 0.2, 0.3, 0.5]
     seed: 0
+
+# Analyses after ISP (default OFF), the same switch as normal ISP. Here it runs rank
+# enrichment (state_feedback.rank_enrichment) after the placebo-corrected stability run.
+# CLI: --enable-postprocess / --skip-postprocess, --no-rank-enrichment.
+postprocess:
+  enabled: false
+  rank_enrichment: true
 
 runtime:
   nproc: 1

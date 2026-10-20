@@ -7,7 +7,7 @@
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.3.3 (includes the peer-reviewed v1.0.1) · Docker image `isp-platform:v1.3.3`
+**Release:** v1.4.0 (includes the peer-reviewed v1.0.1) · Docker image `isp-platform:v1.4.0`
 
 
 Run tokenize, fine-tune, ISP, UMAP, and multi-step multi-gene ISP from the **CLI** or **Web UI**, both on Docker Compose and Streamlit. Multi-step ISP is **State-feedback ISP**: OE/KD steps are applied in order on the gene-rank tokens, and after each step the model output reorders the genes before the next step.
@@ -136,7 +136,9 @@ Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported.
 
 **H100 / bare-metal (no Docker):** for native conda + Slurm/PBS on an **H100 (x86_64)** node, see [`H100/README.md`](H100/README.md).
 
-**Not supported:** CPU-only, non-NVIDIA GPUs, or macOS GPU.
+**Apple silicon (M-series Mac, macOS):** native install with the Metal GPU (MPS), no Docker. See [macOS (Apple silicon)](#macos-apple-silicon-native-no-docker).
+
+**Not supported:** CPU-only, non-NVIDIA GPUs other than Apple silicon, or Intel Macs.
 
 ## Install
 
@@ -179,6 +181,19 @@ Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported.
 ### H100 native (conda, no Docker)
 
 On an **H100 (x86_64)** HPC / cloud / bare-metal host without containers, follow [`H100/README.md`](H100/README.md) (`setup_env.sh` → `download_models.sh` → host-path YAML → `run_pipeline.sh` or Slurm/PBS).
+
+### macOS (Apple silicon, native, no Docker)
+
+Docker on macOS cannot use the GPU, so on an Apple silicon Mac ISP Platform runs natively on the Metal GPU (MPS). Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`) and about 5 GB of disk.
+
+```bash
+git clone https://github.com/YuyaSanaki/ISP-Platform.git
+cd ISP-Platform
+bash scripts/macos/setup.sh        # .venv-macos (Python 3.12, PyTorch with MPS) + models, dictionaries, gene sets
+bash scripts/macos/webui.sh        # Web UI at http://localhost:8502
+```
+
+For the CLI, `source scripts/macos/env.sh` and run the scripts in `core/` with `python` (for example `python core/run_pipeline.py --config core/config/pipeline.yaml`). Paths written as `/app/...` in configs are mapped to the checkout. Operations without a Metal kernel fall back to the CPU (`PYTORCH_ENABLE_MPS_FALLBACK=1`). Fine-tuning runs in fp32 on MPS. Unified memory is shared with macOS. Batch-size calibration needs CUDA, so on a Mac `auto` uses the default batch size. If a run runs out of memory, set a smaller batch size.
 
 ## Quick start (Web UI — Pipeline E2E)
 

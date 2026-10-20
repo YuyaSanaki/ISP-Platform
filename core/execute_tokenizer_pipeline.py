@@ -32,6 +32,7 @@ from geneformer.ortholog_loss_gate import (
 )
 from geneformer.species_context import log_species_banner, species_from_config
 from loom_write import write_loom_safe
+from platform_paths import localize, localize_path
 from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_tee
 from run_provenance import write_service_provenance, update_service_provenance
 
@@ -168,9 +169,9 @@ def parse_args():
 
 def main():
     cli = parse_args()
-    config_path = Path(os.getenv("TOKENIZE_CONFIG", "/app/core/config/tokenize.yaml")).expanduser()
+    config_path = Path(localize_path(os.getenv("TOKENIZE_CONFIG", "/app/core/config/tokenize.yaml"))).expanduser()
     with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+        config = localize(yaml.safe_load(f))
 
     if cli.ortholog_curated_overlay:
         os.environ["GENEFORMER_ORTHOLOG_CURATED_OVERLAY"] = str(

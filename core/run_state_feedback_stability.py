@@ -27,6 +27,12 @@ chain is reranked with, the placebo contrast of ``state_feedback.placebo_contras
 ``estimation_placebos.json``). The configured schedule's decoder is used for its random
 chains.
 
+With rank enrichment on (``postprocess.enabled`` with ``postprocess.rank_enrichment``,
+``core/postprocess_switch.py``) the run also writes the gene positions of the Start and Goal
+cells and of every chain's final encoding, and ends with the rank enrichment of
+``core/run_isp_rank_enrichment.py`` (top genes of Start, Goal and the ISP change, ORA on local
+gene set libraries) under ``rank_enrichment/``.
+
 Usage:
   python3 core/run_state_feedback_stability.py --config core/config/state_feedback_isp.yaml
   python3 core/run_state_feedback_stability.py --config ... --max-ncells 5 --seeds 0 \
@@ -59,9 +65,12 @@ from geneformer.species_context import (
     species_from_config,
 )
 from rank_edit import PERTURB_OVEREXPRESS, legacy_steps_block, normalize_step_type, parse_steps
+from platform_paths import localize
+import postprocess_switch as pps
 import run_state_feedback_isp as rsf
 
 from state_feedback import feedback as fb
+from state_feedback import gene_ranks as gr
 from state_feedback import gene_states as gs
 from state_feedback import placebo_contrast as pc
 from state_feedback import random_chains
@@ -136,6 +145,7 @@ def main() -> int:
         help="Combine finished run directories (e.g. one per seed) into one verdict, "
         "written to --output-root.",
     )
+    pps.add_postprocess_args(parser)
     args = parser.parse_args()
 
     if args.aggregate:
@@ -147,7 +157,7 @@ def main() -> int:
         parser.error("--config is required")
 
     t0 = time.time()
-    cfg = yaml.safe_load(args.config.read_text())
+    cfg = pps.apply_postprocess_args(localize(yaml.safe_load(args.config.read_text())), args)
     paths = cfg.get("paths") or {}
     pert = cfg.get("perturbation") or {}
     mdl = cfg.get("model") or {}
@@ -156,6 +166,8 @@ def main() -> int:
     sf_cfg = cfg.get("state_feedback") or {}
     dec_cfg = sf_cfg.get("decoder") or {}
     st_cfg = sf_cfg.get("stability") or {}
+    rank_enrichment = pps.rank_enrichment_enabled(cfg)
+    re_cfg = pps.rank_enrichment_settings(cfg)
 
     seeds = [int(s) for s in (args.seeds or st_cfg.get("seeds") or [0, 1, 2])]
     idle_events = int(
@@ -344,7 +356,23 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "random_chains.json").write_text(json.dumps(draws, indent=2) + "\n")
     (output_root / "random_strata.json").write_text(json.dumps(strata_pools) + "\n")
+    placebo_chains = [c for c in chains if c != CONFIGURED]
 
+    re_dir = output_root / "rank_enrichment"
+    state_positions: dict[str, tuple[pd.DataFrame, int]] = {}
+    if rank_enrichment:
+        if not use_contrast:
+            raise ValueError(
+                "rank enrichment needs state_feedback.placebo_contrast.enabled: true "
+                "(ISP ranks use the potential-outcome decoder)"
+            )
+        if n_random < 1:
+            raise ValueError("rank enrichment needs n_random_chains >= 1 (Delta-spec)")
+        state_positions = {
+            "start": gr.position_sums(gs.raw_input_ids(start_ds, 0, len(start_ds), model_input_size)),
+            "goal": gr.position_sums([[int(t) for t in r][:model_input_size]
+                                      for r in obs_ds["input_ids"]]),
+        }
     chain_subs: dict[str, list[Any]] = {}
     if use_contrast:
         est_placebos, _ = pc.draw_estimation_placebos(
@@ -392,6 +420,26 @@ def main() -> int:
                if use_contrast else ""),
             flush=True,
         )
+
+    if rank_enrichment:
+        re_dir.mkdir(parents=True, exist_ok=True)
+        for name, (pos, n) in state_positions.items():
+            pos.to_csv(re_dir / f"{name}_positions.csv.gz", index=False)
+            print(f"Rank enrichment: {name} positions from {n} cells", flush=True)
+        pd.DataFrame(
+            {"token": population, "symbol": [tok_names.get(t, str(t)) for t in population]}
+        ).to_csv(re_dir / "genes.csv.gz", index=False)
+        (re_dir / "chains.json").write_text(json.dumps({
+            "n_start_cells": len(start_ds),
+            "n_goal_cells": len(obs_ds),
+            "goal_state": observed_state,
+            "species_model": species_from_config(cfg)["model"],
+            "configured": CONFIGURED,
+            "configured_label": " → ".join(str(s["name"]) for s in steps),
+            "placebos": placebo_chains,
+            "chain_tokens": {c: sorted({int(t) for ts in tbs for t in ts})
+                             for c, (_sl, tbs) in chains.items()},
+        }, indent=2) + "\n")
 
     split_seed = int(dec_cfg.get("seed", 0))
     train_tokens, val_tokens = split_tokens(
@@ -494,6 +542,7 @@ def main() -> int:
             )
 
         gains: dict[str, float] = {}
+        final_positions: list[pd.DataFrame] = []
         for chain, (step_list, tbs) in chains.items():
             tc = time.time()
             print(f"=== seed {seed} / multi-step / {chain} ===", flush=True)
@@ -504,6 +553,9 @@ def main() -> int:
             )
             end = _endpoint(rows)
             gains[chain] = end - ref_endpoint[chain]
+            if rank_enrichment:
+                pos, _n = gr.position_sums(tracker.last)
+                final_positions.append(pos.assign(chain=chain))
             endpoint_rows.append({
                 "seed": seed, "chain": chain, "mode": "multi_step",
                 "endpoint_median": end, "no_feedback_endpoint": ref_endpoint[chain],
@@ -546,6 +598,10 @@ def main() -> int:
             timings[f"seed{seed}_multi_{chain}_s"] = time.time() - tc
 
         _flush()
+        if final_positions:
+            pd.concat(final_positions, ignore_index=True).to_csv(
+                seed_dir / "rank_enrichment_positions.csv.gz", index=False
+            )
         del decoder
         rt.empty_cuda_cache()
 
@@ -582,12 +638,17 @@ def main() -> int:
             "estimation_draw_seed": estimation_seed if use_contrast else None,
         },
         "decoders": decoders,
+        "rank_enrichment": re_cfg if rank_enrichment else None,
         "forward_batch_size": forward_batch_size,
         "timings": timings,
     }
     (output_root / "run_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps({"timings": timings}, indent=2), flush=True)
     aggregate([output_root], output_root)
+    if rank_enrichment:
+        import run_isp_rank_enrichment
+
+        run_isp_rank_enrichment.run(output_root, re_cfg)
     return 0
 
 

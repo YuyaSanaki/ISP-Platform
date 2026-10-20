@@ -1,0 +1,19 @@
+{
+  "source": "Enrichr gene set libraries (https://maayanlab.cloud/Enrichr/#libraries)",
+  "download_url": "https://maayanlab.cloud/Enrichr/geneSetLibrary?mode=text&libraryName={library}",
+  "retrieved_at": "2026-10-14",
+  "script": "scripts/download_gene_sets.sh",
+  "symbols": "Uppercase gene symbols. Mouse model genes are matched after upper-casing, as Enrichr does.",
+  "libraries": {
+    "GO_Biological_Process_2025": {"label": "GO Biological Process 2025", "species": ["human", "mouse"], "terms": 5342},
+    "GO_Molecular_Function_2025": {"label": "GO Molecular Function 2025", "species": ["human", "mouse"], "terms": 1173},
+    "GO_Cellular_Component_2025": {"label": "GO Cellular Component 2025", "species": ["human", "mouse"], "terms": 467},
+    "Reactome_Pathways_2024": {"label": "Reactome Pathways 2024", "species": ["human", "mouse"], "terms": 2104},
+    "KEGG_2021_Human": {"label": "KEGG 2021 Human", "species": ["human"], "terms": 320},
+    "KEGG_2019_Mouse": {"label": "KEGG 2019 Mouse", "species": ["mouse"], "terms": 303}
+  },
+  "default_by_species": {
+    "human": ["Reactome_Pathways_2024", "GO_Biological_Process_2025", "GO_Molecular_Function_2025", "GO_Cellular_Component_2025", "KEGG_2021_Human"],
+    "mouse": ["Reactome_Pathways_2024", "GO_Biological_Process_2025", "GO_Molecular_Function_2025", "GO_Cellular_Component_2025", "KEGG_2019_Mouse"]
+  }
+}

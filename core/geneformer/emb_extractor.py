@@ -56,6 +56,7 @@ from .in_silico_perturber import downsample_and_sort, \
                                  _force_tensor
 
 from .in_silico_perturber import ISP_device
+from compute_device import empty_cache
 
 logger = logging.getLogger(__name__)
 
@@ -121,8 +122,7 @@ def get_embs(model,
         del input_data_minibatch
         del embs_i
         del mean_embs
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        empty_cache()
     
     if summary_stat is None:
         embs_stack = torch.cat(embs_list)

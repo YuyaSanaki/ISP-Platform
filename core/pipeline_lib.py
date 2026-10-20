@@ -19,9 +19,10 @@ from data_input_layout import resolve_single_cell_input_dir
 from geneformer.auto_batch_size import is_auto
 from geneformer.backends import get_backend, parse_species_config, resolve_pretrained_path
 from geneformer.species_context import default_isp_forward_batch_size, should_convert
+from platform_paths import localize, localize_path
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_OUTPUT_ROOT = "/app/output"
+DEFAULT_OUTPUT_ROOT = localize_path("/app/output")
 
 
 def _batch_size_value(value: Any) -> int | str:
@@ -42,7 +43,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError(f"YAML root must be a mapping: {path}")
-    return data
+    return localize(data)
 
 
 def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:

@@ -76,6 +76,7 @@ from .auto_batch_size import is_auto, resolve_batch_size
 from .species_context import default_isp_forward_batch_size
 from .tokenizer import TOKEN_DICTIONARY_FILE, USE_GPU
 from accelerate import Accelerator
+from compute_device import empty_cache
 
 import sys
 
@@ -100,8 +101,7 @@ def _forward_with_oom_retry(forward_callable):
         if "out of memory" not in str(e).lower():
             raise
         logger.warning("CUDA OOM during forward; emptying cache and retrying once: %s", e)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        empty_cache()
         try:
             return forward_callable()
         except RuntimeError:
@@ -679,16 +679,14 @@ def get_cell_state_avg_embs(model,
             del input_ids
             if b_i == 1 or b_i == n_batches or b_i % 20 == 0:
                 print(f"  {possible_state} centroid batch {b_i}/{n_batches}", flush=True)
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                empty_cache()
 
         if running_sum is None or n_seen == 0:
             raise RuntimeError(f"No embeddings for centroid state {possible_state!r}")
         avg_state_emb = (running_sum / float(n_seen)).unsqueeze(0).to(ISP_device)
         state_embs_dict[possible_state] = avg_state_emb
         del running_sum
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        empty_cache()
     return state_embs_dict
 
 def resolve_legacy_padding_mean(value=None):

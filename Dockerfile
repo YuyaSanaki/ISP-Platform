@@ -34,7 +34,8 @@ RUN chmod +x /app/scripts/container-entrypoint.sh \
              /app/scripts/download_mouse_geneformer.sh \
              /app/scripts/download_human_geneformer_v2_104m.sh \
              /app/scripts/download_mouse_human_orthologs.sh \
-             /app/scripts/download_drosophila_orthologs.sh
+             /app/scripts/download_drosophila_orthologs.sh \
+             /app/scripts/download_gene_sets.sh
 
 # ---------------------------------------------------------------------------
 # Build-time model / dictionary download

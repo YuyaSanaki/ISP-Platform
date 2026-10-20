@@ -46,6 +46,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "core"))
 
+from compute_device import get_device
 from geneformer import in_silico_perturber as isp
 from geneformer.auto_batch_size import coerce_batch_size
 from geneformer.species_context import (
@@ -55,6 +56,7 @@ from geneformer.species_context import (
     species_from_config,
 )
 from rank_edit import PERTURB_OVEREXPRESS, legacy_steps_block, normalize_step_type, parse_steps
+from platform_paths import localize
 
 from state_feedback import controls
 from state_feedback import runtime as rt
@@ -832,7 +834,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    cfg = yaml.safe_load(args.config.read_text())
+    cfg = localize(yaml.safe_load(args.config.read_text()))
     paths = cfg.get("paths") or {}
     pert = cfg.get("perturbation") or {}
     mdl = cfg.get("model") or {}
@@ -992,7 +994,7 @@ def main() -> int:
         if args.decoder_checkpoint is not None:
             decoder = load_decoder(
                 args.decoder_checkpoint,
-                device="cuda" if torch.cuda.is_available() else "cpu",
+                device=get_device(),
             )
             decoder_info = {"loaded_from": str(args.decoder_checkpoint)}
             print(f"Loaded decoder: {args.decoder_checkpoint}", flush=True)

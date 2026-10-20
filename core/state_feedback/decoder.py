@@ -19,6 +19,8 @@ from typing import Any, Sequence
 import torch
 import torch.nn as nn
 
+from compute_device import get_device
+
 
 INPUTS = "delta_h"
 
@@ -123,9 +125,7 @@ def train_delta_rank_decoder(
     penalty against extreme displacements. There is no identity term: zero
     perturbation gives zero displacement by construction.
     """
-    dev = torch.device(device) if device is not None else (
-        torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    )
+    dev = torch.device(device) if device is not None else get_device()
     decoder = DeltaRankDecoder(d_model, max_shift=max_shift).to(dev)
     if len(data) == 0:
         return decoder, {"epochs": 0, "n_samples": 0, "final_loss": float("nan")}

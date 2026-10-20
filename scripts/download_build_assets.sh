@@ -18,6 +18,8 @@
 #
 # Optional:
 #   HF_TOKEN / HUGGING_FACE_HUB_TOKEN — if HF rate-limits anonymous downloads.
+#   SKIP_GENE_SETS=1 — do not download the Enrichr gene set libraries used by ISP
+#                      rank enrichment (scripts/download_gene_sets.sh).
 #   SKIP_ORTHOLOGS=1 — skip the SHA-256 check of the pinned tables and the fly
 #                      BioMart fetch in all.
 #   ORTHOLOG_REFRESH=1 — replace the pinned mouse↔human tables with a live
@@ -101,6 +103,9 @@ case "$PROFILE" in
     else
       echo "SKIP_ORTHOLOGS=1 — pinned ortholog tables copied without SHA-256 check; fly tables not fetched."
     fi
+    if [[ "${SKIP_GENE_SETS:-0}" != "1" ]]; then
+      bash "$SCRIPT_DIR/download_gene_sets.sh"
+    fi
     ;;
 esac
 
@@ -134,6 +139,11 @@ if [[ "$PROFILE" != "minimal" ]]; then
   verify "$GENEFORMER_ROOT/core/geneformer/dicts/human/gene_median_dictionary_gc104M.pkl"
   verify "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs/mouse_to_human.tsv"
   verify "$GENEFORMER_ROOT/core/geneformer/dicts/orthologs/human_to_mouse.tsv"
+fi
+
+if [[ "$PROFILE" != "minimal" && "${SKIP_GENE_SETS:-0}" != "1" ]]; then
+  verify "$GENEFORMER_ROOT/core/geneformer/dicts/gene_sets/Reactome_Pathways_2024.gmt"
+  verify "$GENEFORMER_ROOT/core/geneformer/dicts/gene_sets/GO_Biological_Process_2025.gmt"
 fi
 
 if [[ "$PROFILE" == "all" && "${SKIP_ORTHOLOGS:-0}" != "1" ]]; then

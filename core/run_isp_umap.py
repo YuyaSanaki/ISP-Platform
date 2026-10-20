@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import torch
 from umap_plot_style import plot_isp_umap_scatter
+from platform_paths import localize, localize_path
 import yaml
 from datasets import load_from_disk
 from transformers import AutoModelForSequenceClassification
@@ -377,7 +378,7 @@ def load_isp_cfg_from_pipeline_run(run_dir: Path) -> dict[str, Any]:
             f"Missing {isp_cfg_path}. Run the pipeline ISP stage first, or pass --config with explicit paths."
         )
     with open(isp_cfg_path, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        cfg = localize(yaml.safe_load(f))
     if not isinstance(cfg, dict):
         raise ValueError(f"Invalid ISP config at {isp_cfg_path}")
     cfg = remap_isp_cfg_paths_to_run_dir(cfg, run_dir)
@@ -779,7 +780,9 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from compute_device import get_device
+
+    device = get_device()
     logger.info("ISP UMAP using device: %s", device)
 
     geneformer_model_path = cfg["paths"]["geneformer_model"]
@@ -991,7 +994,7 @@ def run_isp_umap_for_targeted_genes(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ISP UMAP Plotter")
-    default_cfg = os.environ.get("ISP_UMAP_CONFIG", "/app/core/config/isp_umap.yaml")
+    default_cfg = localize_path(os.environ.get("ISP_UMAP_CONFIG", "/app/core/config/isp_umap.yaml"))
     parser.add_argument(
         "--config",
         type=str,
@@ -1173,7 +1176,7 @@ def main() -> None:
         raise FileNotFoundError(f"Config not found: {cfg_path}")
 
     with open(cfg_path, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        cfg = localize(yaml.safe_load(f))
 
     if args.output_dir is not None:
         out_dir = args.output_dir
@@ -1185,7 +1188,7 @@ def main() -> None:
             out_dir = Path(explicit) / now.strftime("%Y%m%d") / f"isp_umap_{now.strftime('%H%M%S')}"
         else:
             now = datetime.now(timezone.utc)
-            out_dir = Path("/app/output") / now.strftime("%Y%m%d") / f"isp_umap_{now.strftime('%H%M%S')}"
+            out_dir = Path(localize_path("/app/output")) / now.strftime("%Y%m%d") / f"isp_umap_{now.strftime('%H%M%S')}"
 
     pert = cfg.get("perturbation") or {}
     genes = perturbation_genes_from_cfg(pert)

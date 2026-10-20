@@ -66,7 +66,7 @@ python3 core/run_isp_umap.py --run-dir /app/output/.../pipeline_... \
 
 ### Downstream plots (`cluster_coexpr_analysis/`, optional)
 
-After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis**, or `--enable-postprocess`.
+After the main UMAP finishes, `run_isp_umap.py` can write joint overlays and L2-by-group figures under `{run-dir}/cluster_coexpr_analysis/`. This is **off by default** (`postprocess.enabled: false`). Enable via YAML, Web UI **Cluster / cell-type analysis** (Pipeline (E2E): **Cluster / cell-type / enrichment analysis**), or `--enable-postprocess`. In ISP and Pipeline (E2E) runs the same switch also runs rank enrichment of the top ISP genes ([pipeline.md](pipeline.md)).
 
 1. **Cell-type prediction** — when postprocess cell-type is on, **pre-ISP platform labels** (`cell_type` written at tokenize with `celltype_annotator=isp_expression_v2`, or an existing `isp_expression_v1` dataset) are used (`prefer_metadata_celltype: auto`). Brain token-rank marker panels were removed in v1.3.0; without platform labels cells stay `Unknown`. Raw user-filled `cell_type` without platform provenance is still ignored unless `prefer_metadata_celltype: true`.
 2. **Joint UMAP overlays** — `umap_joint_l2_cluster_celltype.png` (+ enriched CSV, `joint_umap_coords.npy`).

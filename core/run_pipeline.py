@@ -39,6 +39,7 @@ from pipeline_lib import (
 )
 from data_input_layout import unique_states_from_samples
 from run_pipeline_log import install_rotating_stdio_tee
+from platform_paths import localize_path
 from run_provenance import update_service_provenance, write_service_provenance
 
 
@@ -304,7 +305,7 @@ def main() -> None:
 
     date_used = datetime.now().strftime("%Y%m%d")
     paths_cfg = pipeline.get("paths") or {}
-    output_root = Path(str(paths_cfg.get("output_root") or "/app/output"))
+    output_root = Path(str(paths_cfg.get("output_root") or localize_path("/app/output")))
     explicit_run_dir = args.run_dir or paths_cfg.get("run_dir") or paths_cfg.get("pipeline_run_dir")
     if args.skip_tokenize and not explicit_run_dir:
         p.error(

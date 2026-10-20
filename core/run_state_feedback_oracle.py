@@ -43,6 +43,7 @@ from geneformer.species_context import (
     species_from_config,
 )
 from rank_edit import apply_single_step_overexpress
+from platform_paths import localize
 from state_feedback.oracle_rerank import (
     build_pseudobulk_rank_priority,
     rerank_fixed_gene_set,
@@ -409,7 +410,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    cfg = yaml.safe_load(args.config.read_text())
+    cfg = localize(yaml.safe_load(args.config.read_text()))
     paths = cfg.get("paths") or {}
     pert = cfg.get("perturbation") or {}
     mdl = cfg.get("model") or {}
