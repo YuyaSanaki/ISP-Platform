@@ -718,6 +718,13 @@ def group_goal_state_mean_lengths(perturb_type, n_perturbed, original_lengths, p
     return original_lengths, perturbed_lengths
 
 
+def remaining_gene_ids(original_ids, perturb_index):
+    """Genes of an encoding without the positions in ``perturb_index`` ([-100]: none), in order."""
+    removed = set() if perturb_index == [-100] else set(flatten_list(
+        perturb_index) if any(isinstance(el, list) for el in perturb_index) else perturb_index)
+    return [int(g) for i, g in enumerate(original_ids) if i not in removed]
+
+
 def group_compared_genes(original_ids, perturb_index, n_perturbed):
     """Genes behind the leading positions of a group cos-sim row, in order.
 
@@ -725,10 +732,7 @@ def group_compared_genes(original_ids, perturb_index, n_perturbed):
     lowest-ranked gene per absent OE gene, so the first L - k positions hold the same genes in
     the original and perturbed context, and the rest is padding or genes of one context only.
     """
-    removed = set() if perturb_index == [-100] else set(flatten_list(
-        perturb_index) if any(isinstance(el, list) for el in perturb_index) else perturb_index)
-    kept = [int(g) for i, g in enumerate(original_ids) if i not in removed]
-    return kept[:len(original_ids) - n_perturbed]
+    return remaining_gene_ids(original_ids, perturb_index)[:len(original_ids) - n_perturbed]
 
 
 def add_group_cos_sims(cos_sims_dict, cos_sims_data, original_ids_list, indices_to_perturb,
@@ -1810,9 +1814,9 @@ class InSilicoPerturber:
                                     # not_j_index = list(set(i for i in range(gene_list.shape[0])).difference(j_index))
                                     # gene_list_j = torch.index_select(gene_list, 0, j_index)
                                     if self.emb_mode == "cell_and_gene":
-                                        for k in range(cos_sims_data.shape[1]):
-                                            cos_sim_value = cos_sims_data[j][k]
-                                            affected_gene = gene_list[k].item()
+                                        # the original side lost the perturbed position (make_comparison_batch)
+                                        compared_genes = remaining_gene_ids(gene_list, indices_to_perturb[j])
+                                        for affected_gene, cos_sim_value in zip(compared_genes, cos_sims_data[j]):
                                             cos_sims_dict[(perturbed_gene, affected_gene)] += [cos_sim_value.item()]
                             else:
                                 # update cos sims dict
