@@ -718,6 +718,33 @@ def group_goal_state_mean_lengths(perturb_type, n_perturbed, original_lengths, p
     return original_lengths, perturbed_lengths
 
 
+def group_compared_genes(original_ids, perturb_index, n_perturbed):
+    """Genes behind the leading positions of a group cos-sim row, in order.
+
+    Both encodings lose the perturbed genes present in the cell. Overexpression also drops one
+    lowest-ranked gene per absent OE gene, so the first L - k positions hold the same genes in
+    the original and perturbed context, and the rest is padding or genes of one context only.
+    """
+    removed = set() if perturb_index == [-100] else set(flatten_list(
+        perturb_index) if any(isinstance(el, list) for el in perturb_index) else perturb_index)
+    kept = [int(g) for i, g in enumerate(original_ids) if i not in removed]
+    return kept[:len(original_ids) - n_perturbed]
+
+
+def add_group_cos_sims(cos_sims_dict, cos_sims_data, original_ids_list, indices_to_perturb,
+                       tokens_to_perturb, emb_mode):
+    """Add group scores without goal states: (genes, "cell_emb") and, per gene, (genes, gene)."""
+    perturbed_genes = tuple(tokens_to_perturb)
+    for j in range(cos_sims_data.shape[0]):
+        genes = group_compared_genes(original_ids_list[j], indices_to_perturb[j],
+                                     len(tokens_to_perturb))
+        row = cos_sims_data[j][:len(genes)]
+        cos_sims_dict[(perturbed_genes, "cell_emb")] += [torch.mean(row).item()]
+        if emb_mode == "cell_and_gene":
+            for gene, value in zip(genes, row.tolist()):
+                cos_sims_dict[(perturbed_genes, gene)] += [value]
+
+
 # quantify cosine similarity of perturbed vs original or alternate states
 def quant_cos_sims(model, 
                    perturb_type,
@@ -953,6 +980,9 @@ def quant_cos_sims(model,
         if perturb_group == True:
             del original_minibatch_emb
     if cell_states_to_model is None:
+        # Minibatches are padded to their own longest cell.
+        width = max(c.shape[1] for c in cos_sims)
+        cos_sims = [torch.nn.functional.pad(c, (0, width - c.shape[1])) for c in cos_sims]
         cos_sims_stack = torch.cat(cos_sims)
         return cos_sims_stack
     else:
@@ -1667,32 +1697,12 @@ class InSilicoPerturber:
                                            legacy_padding_mean=self.legacy_padding_mean)
 
             perturbed_genes = tuple(self.tokens_to_perturb)
-            original_lengths = filtered_input_data["length"]
             if self.cell_states_to_model is None:
-                # update cos sims dict
-                # key is tuple of (perturbed_gene, affected_gene)
+                # key is tuple of (perturbed_genes, affected_gene)
                 # or (perturbed_genes, "cell_emb") for avg cell emb change
-                
-                #cos_sims_data = cos_sims_data.to("cuda")
-                cos_sims_data = _tensor_to_device(cos_sims_data)
-                max_padded_len = cos_sims_data.shape[1]
-                for j in range(cos_sims_data.shape[0]):
-                    # remove padding before mean pooling cell embedding
-                    original_length = original_lengths[j]
-                    gene_list = filtered_input_data[j]["input_ids"]
-                    indices_removed = indices_to_perturb[j]
-                    padding_to_remove = max_padded_len - (original_length \
-                                                          - len(self.tokens_to_perturb) \
-                                                          - len(indices_removed))
-                    nonpadding_cos_sims_data = cos_sims_data[j][:-padding_to_remove]
-                    cell_cos_sim = torch.mean(nonpadding_cos_sims_data).item()
-                    cos_sims_dict[(perturbed_genes, "cell_emb")] += [cell_cos_sim]
-
-                    if self.emb_mode == "cell_and_gene":
-                        for k in range(cos_sims_data.shape[1]):
-                            cos_sim_value = nonpadding_cos_sims_data[k]
-                            affected_gene = gene_list[k].item()
-                            cos_sims_dict[(perturbed_genes, affected_gene)] += [cos_sim_value.item()]
+                add_group_cos_sims(cos_sims_dict, cos_sims_data,
+                                   filtered_input_data["input_ids"], indices_to_perturb,
+                                   self.tokens_to_perturb, self.emb_mode)
             else:
                 # update cos sims dict
                 # key is tuple of (perturbed_genes, "cell_emb")
