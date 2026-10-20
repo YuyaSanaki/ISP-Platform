@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.4.0] - 2026-10-20
 
+Adds **gene set enrichment after ISP** (rank enrichment of the top Start, Goal and ISP genes on Reactome, GO and KEGG, computed locally) for normal ISP and State-feedback ISP, switched on together with cluster / cell-type analysis (`postprocess.enabled`, Web UI **Cluster / cell-type / enrichment analysis**). Also adds Apple silicon support. ISP scores and τ are unchanged.
+
 ### Added
 
 - **Rank enrichment of Start, Goal and ISP, under one switch with cluster / cell-type analysis.** `postprocess.enabled` (CLI `--enable-postprocess` / `--skip-postprocess`, Web UI **Cluster / cell-type / enrichment analysis**) now turns on both the cluster / cell-type analysis after ISP UMAP and rank enrichment. `postprocess.rank_enrichment: false` (CLI `--no-rank-enrichment`) leaves rank enrichment out, as `celltype_prediction: false` leaves out cell-type prediction. Off by default, so existing runs, ISP scores and τ are unchanged (`core/postprocess_switch.py`).
