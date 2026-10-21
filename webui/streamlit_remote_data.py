@@ -8,15 +8,18 @@ and rewrites common share-page URLs (Google Drive, Dropbox).
 from __future__ import annotations
 
 import html as html_lib
+import ipaddress
 import json
+import os
 import re
+import socket
 import tarfile
 import tempfile
 from pathlib import Path
 from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlencode, urlparse, urlunparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from streamlit_upload import (
     import_study_zip_path,
@@ -33,6 +36,57 @@ _USER_AGENT = "ISP-Platform/1.0 (+streamlit-remote-data)"
 
 class RemoteDataError(ValueError):
     """User-facing download / import error."""
+
+
+# The server fetches the URL, so a URL pointing at the server's own network (localhost,
+# cloud metadata, LAN hosts) would let a Web UI user reach it. Only public addresses are
+# fetched unless the operator sets ISP_URL_IMPORT_ALLOW_PRIVATE=1.
+ALLOW_PRIVATE_ENV = "ISP_URL_IMPORT_ALLOW_PRIVATE"
+
+
+def _private_hosts_allowed() -> bool:
+    return os.environ.get(ALLOW_PRIVATE_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def check_public_host(url: str) -> None:
+    """Raise RemoteDataError unless every address the URL's host resolves to is public."""
+    if _private_hosts_allowed():
+        return
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        raise RemoteDataError("URL is missing a host name.")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as e:
+        raise RemoteDataError(f"Could not resolve host `{host}`: {e}") from e
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        if not addr.is_global or addr.is_multicast:
+            raise RemoteDataError(
+                f"Refusing to fetch `{host}`: it resolves to a non-public address ({addr}). "
+                f"Only public URLs can be imported (operators can set {ALLOW_PRIVATE_ENV}=1)."
+            )
+
+
+class _PublicRedirectHandler(HTTPRedirectHandler):
+    """Apply the same scheme and public-address checks to every redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlparse(newurl).scheme not in ("http", "https"):
+            raise RemoteDataError(f"Refusing redirect to a non-http(s) URL: `{newurl}`")
+        check_public_host(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = build_opener(_PublicRedirectHandler)
+
+
+def urlopen(req: Request, timeout: float):
+    """``urllib.request.urlopen`` restricted to public http(s) hosts, redirects included."""
+    check_public_host(req.full_url)
+    return _OPENER.open(req, timeout=timeout)
 
 
 def validate_data_url(url: str) -> str:

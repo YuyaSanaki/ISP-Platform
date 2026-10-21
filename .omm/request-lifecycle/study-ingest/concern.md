@@ -1,7 +1,7 @@
 ### English
 
-The URL importer can fetch any http(s) URL from the server (SSRF risk). Uploaded zips and download zips are held fully in memory. Upload de-duplication uses only `name:size`.
+Residual limits after the fixes: `st.file_uploader` itself keeps an uploaded zip in server memory (Streamlit behaviour; the app now copies it to disk in blocks without a second copy), so very large studies are better imported with **Download from URL**. The public-address check resolves the host before urllib connects, so a DNS answer that changes between the two lookups (rebinding) is not excluded.
 
 ### 日本語
 
-URL 取り込みはサーバーから任意の http(s) URL を取得できます（SSRF の危険）。アップロードした zip とダウンロード用の zip はすべてメモリ上に置かれます。アップロードの重複判定は `name:size` だけです。
+修正後に残る制限: `st.file_uploader` 自体がアップロードされた zip をサーバーのメモリに置きます（Streamlit の仕様。アプリはそれを2つ目のコピーを作らずにブロック単位でディスクに写すようになりました）。とても大きな study は **Download from URL** で取り込むほうが安全です。公開アドレスの確認は urllib が接続する前にホスト名を引くので、2回の名前解決の間に DNS の答えが変わる場合（DNS rebinding）は防げません。
