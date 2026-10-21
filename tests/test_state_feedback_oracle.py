@@ -50,5 +50,32 @@ class TestOracleRerank(unittest.TestCase):
         self.assertAlmostEqual(spearman_rank_correlation(a, b), -1.0)
 
 
+try:
+    import run_state_feedback_oracle as sfo
+
+    ORACLE_DEPS_MISSING = None
+except Exception as exc:  # pragma: no cover
+    ORACLE_DEPS_MISSING = str(exc)
+
+
+@unittest.skipIf(ORACLE_DEPS_MISSING is not None, f"deps missing: {ORACLE_DEPS_MISSING}")
+class TestOraclePermuteKeepsOverexpressedFront(unittest.TestCase):
+    def test_pinned_oe_genes_stay_first_in_their_order(self):
+        # OE genes 7 and 9 lead the cell; the oracle prefers 30 and 40, then the OE genes.
+        ex = {"input_ids": [9, 7, 10, 20, 30, 40]}
+        priority = {30: 0.0, 40: 1.0, 7: 2.0, 9: 3.0, 10: 4.0, 20: 5.0}
+        out = sfo._apply_oracle(ex, priority, (7, 9))["input_ids"]
+        self.assertEqual(out[:2], [9, 7])
+        self.assertEqual(out[2:], [30, 40, 10, 20])
+        self.assertEqual(sorted(out), sorted(ex["input_ids"]))
+
+    def test_unpinned_permute_matches_earlier_behaviour(self):
+        ex = {"input_ids": [9, 7, 10, 20, 30, 40]}
+        priority = {30: 0.0, 40: 1.0, 7: 2.0, 9: 3.0, 10: 4.0, 20: 5.0}
+        out = sfo._apply_oracle(ex, priority)["input_ids"]
+        self.assertEqual(out, rerank_fixed_gene_set(ex["input_ids"], priority))
+        self.assertNotEqual(out[:2], [9, 7])
+
+
 if __name__ == "__main__":
     unittest.main()
