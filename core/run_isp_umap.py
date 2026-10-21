@@ -8,6 +8,7 @@ Pipeline / run_isp.py: invoked automatically when perturbation.genes_to_perturb 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import pickle
@@ -33,6 +34,7 @@ DEFAULT_UMAP_CFG: dict[str, Any] = {
     "n_neighbors": 15,
     "min_dist": 0.1,
     "pca_components": 0,
+    "readout": "default",
     "show_trajectory_arrows": True,
     "num_trajectory_arrows": 100,
     "max_cells_per_state": 2000,
@@ -85,8 +87,10 @@ def postprocess_wants_celltype(cfg: Mapping[str, Any]) -> bool:
     return bool(post.get("celltype_prediction", True))
 
 
-def run_downstream_plots(run_dir: Path, gene: str, cfg: Mapping[str, Any]) -> None:
+def run_downstream_plots(run_dir: Path, gene: str | None, cfg: Mapping[str, Any]) -> None:
     """Generate joint overlays + L2-by-group figures under cluster_coexpr_analysis/.
+
+    ``gene`` is the label in ``<start>_ISP_<gene>_embs.npy``; None detects it from the files.
 
     Failures are logged as warnings; core UMAP outputs stay intact.
     """
@@ -112,12 +116,13 @@ def run_downstream_plots(run_dir: Path, gene: str, cfg: Mapping[str, Any]) -> No
         logger.info("Post-process: joint UMAP overlays ...")
         run_joint_overlays(
             run_dir=Path(run_dir),
-            gene=str(gene),
+            gene=str(gene) if gene else None,
             n_neighbors=n_neighbors,
             min_dist=min_dist,
             seed=seed,
             num_trajectory_arrows=num_arrows,
             n_clusters=n_clusters,
+            pca_components=int(umap_cfg.get("pca_components", 0) or 0),
         )
     except Exception as exc:
         logger.warning(
@@ -439,6 +444,9 @@ def build_isp_umap_config(
     batch_size = umap_overrides.pop("batch_size", runtime.get("batch_size", DEFAULT_UMAP_CFG["batch_size"]))
 
     umap_cfg = {**DEFAULT_UMAP_CFG, **umap_overrides}
+    isp_section = isp_cfg.get("isp") or {}
+    umap_cfg.setdefault("isp_emb_layer", int(isp_section.get("emb_layer", -1)))
+    umap_cfg.setdefault("isp_max_ncells", isp_section.get("max_ncells"))
     gene_list = _normalize_genes_list(genes)
     label = perturbation_display_label(gene_list, gene_labels, fallback=gene_label)
 
@@ -681,8 +689,8 @@ def compute_mean_embs(hidden_state, length, max_len):
     return mean_embs
 
 
-def extract_embeddings(model, dataset, device, batch_size, pad_token_id):
-    """Run model forward passes to extract sequence embeddings."""
+def extract_embeddings(model, dataset, device, batch_size, pad_token_id, hidden_index=-1):
+    """Run model forward passes to extract sequence embeddings from ``hidden_states[hidden_index]``."""
     all_embs = []
     model.eval()
 
@@ -703,9 +711,9 @@ def extract_embeddings(model, dataset, device, batch_size, pad_token_id):
 
         with torch.no_grad():
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
-            hidden_states = outputs.hidden_states[-1]
+            hidden_states = outputs.hidden_states[hidden_index]
             embs = compute_mean_embs(hidden_states, lengths, max_len=input_ids.shape[1])
-            all_embs.append(embs.cpu().numpy())
+            all_embs.append(embs.float().cpu().numpy())
 
     if not all_embs:
         return np.array([])
@@ -723,6 +731,74 @@ def compute_per_cell_shifts(start_embs, pert_embs, end_embs):
     dist_after = np.linalg.norm(pert_embs - end_centroid, axis=1)
     shift_toward_end = dist_before - dist_after
     return shift_l2, shift_toward_end
+
+
+def compute_cosine_shift_toward_end(start_embs, pert_embs, end_embs):
+    """Change in cosine similarity to the end-state centroid (the quantity ISP's goal-state shift uses)."""
+    end_centroid = end_embs.mean(axis=0)
+    end_norm = np.linalg.norm(end_centroid) or 1.0
+
+    def _cos(x):
+        return (x @ end_centroid) / (np.maximum(np.linalg.norm(x, axis=1), 1e-12) * end_norm)
+
+    return _cos(pert_embs) - _cos(start_embs)
+
+
+def write_umap_readout(
+    out_dir: Path, readout: Mapping[str, Any], umap_cfg: Mapping[str, Any], *, n_start: int, n_end: int
+) -> Path:
+    """Record how the UMAP embeddings were read out, next to the ISP readout they may be compared with."""
+    from run_provenance import environment_versions
+
+    isp_layer = umap_cfg.get("isp_emb_layer")
+    record = {
+        **dict(readout),
+        "pooling": "mean over non-padding tokens",
+        "shift_metrics": {
+            "shift_l2": "L2 distance between perturbed and original embedding",
+            "shift_toward_<end>": "reduction in L2 distance to the end-state centroid",
+            "cos_shift_toward_<end>": "change in cosine similarity to the end-state centroid",
+        },
+        "cells": {
+            "start": int(n_start),
+            "end": int(n_end),
+            "max_cells_per_state": umap_cfg.get("max_cells_per_state"),
+            "sample_key": umap_cfg.get("sample_key"),
+        },
+        "isp_stage": {
+            "emb_layer": isp_layer,
+            "dtype": "bfloat16",
+            "goal_state_shift": "cosine similarity, centroids from isp.max_ncells",
+            "max_ncells": umap_cfg.get("isp_max_ncells"),
+        },
+        "same_layer_and_dtype_as_isp": bool(
+            isp_layer is not None
+            and int(isp_layer) == int(readout["emb_layer"])
+            and readout["dtype"] == "bfloat16"
+        ),
+        "environment": environment_versions(),
+    }
+    path = Path(out_dir) / "umap_readout.json"
+    path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+UMAP_READOUTS = ("default", "isp")
+
+
+def resolve_umap_readout(umap_cfg: Mapping[str, Any]) -> dict[str, Any]:
+    """Layer and precision for the UMAP embeddings.
+
+    ``default`` keeps the earlier readout (last layer, fp32). ``isp`` uses the ISP stage's
+    ``emb_layer`` (0 = last, -1 = second to last) in bf16, as the perturber does.
+    """
+    readout = str(umap_cfg.get("readout", "default") or "default").lower()
+    if readout not in UMAP_READOUTS:
+        raise ValueError(f"umap.readout must be one of {UMAP_READOUTS}, got {readout!r}")
+    if readout == "isp":
+        emb_layer = int(umap_cfg.get("isp_emb_layer", 0) or 0)
+        return {"readout": readout, "emb_layer": emb_layer, "hidden_index": -1 + emb_layer, "dtype": "bfloat16"}
+    return {"readout": readout, "emb_layer": 0, "hidden_index": -1, "dtype": "float32"}
 
 
 def build_per_cell_shift_table(
@@ -746,6 +822,9 @@ def build_per_cell_shift_table(
     meta["cell_index"] = list(range(len(start_dataset)))
     meta["shift_l2"] = shift_l2
     meta[toward_col] = shift_toward_end
+    meta[f"cos_shift_toward_{end_state}"] = compute_cosine_shift_toward_end(
+        start_embs, pert_embs, end_embs
+    )
 
     if umap_coords is not None:
         n = len(start_embs)
@@ -788,12 +867,21 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
     geneformer_model_path = cfg["paths"]["geneformer_model"]
     num_classes = cfg["runtime"].get("num_classes", 2)
     model_path = _validate_local_model_path(geneformer_model_path)
-    logger.info("Loading sequence classification model: %s", model_path)
+    readout = resolve_umap_readout(cfg.get("umap") or {})
+    logger.info(
+        "Loading sequence classification model: %s (readout=%s, hidden_states[%d], %s)",
+        model_path,
+        readout["readout"],
+        readout["hidden_index"],
+        readout["dtype"],
+    )
+    model_kwargs = {"dtype": torch.bfloat16} if readout["dtype"] == "bfloat16" else {}
     model = AutoModelForSequenceClassification.from_pretrained(
         str(model_path),
         num_labels=num_classes,
         output_hidden_states=True,
         local_files_only=True,
+        **model_kwargs,
     ).to(device)
 
     from geneformer.species_context import (
@@ -868,9 +956,19 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
     )
 
     logger.info("Extracting embeddings...")
-    end_embs = extract_embeddings(model, end_dataset, device, batch_size, pad_token_id)
-    start_embs = extract_embeddings(model, start_dataset, device, batch_size, pad_token_id)
-    pert_start_embs = extract_embeddings(model, pert_start_dataset, device, batch_size, pad_token_id)
+    hidden_index = readout["hidden_index"]
+    end_embs = extract_embeddings(model, end_dataset, device, batch_size, pad_token_id, hidden_index)
+    start_embs = extract_embeddings(model, start_dataset, device, batch_size, pad_token_id, hidden_index)
+    pert_start_embs = extract_embeddings(
+        model, pert_start_dataset, device, batch_size, pad_token_id, hidden_index
+    )
+    write_umap_readout(
+        out_dir,
+        readout,
+        umap_cfg,
+        n_start=len(start_dataset),
+        n_end=len(end_dataset),
+    )
 
     safe_label = str(gene_label).replace("/", "_").replace("+", "_")
     np.save(str(out_dir / f"{end_state}_embs.npy"), end_embs)

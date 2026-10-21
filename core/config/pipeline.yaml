@@ -102,6 +102,7 @@ stages:
     # Per-cell trajectory UMAP is a separate Web UI run type (ISP UMAP), not E2E.
     umap:
       enabled: false
+      # readout: isp  # read UMAP embeddings at isp.emb_layer in bf16 like ISP (default: last layer, fp32)
     # Analyses after ISP, one switch (default OFF): cluster / cell-type analysis after ISP
     # UMAP (including E2E TOP1) and rank enrichment of the top ISP genes.
     postprocess:

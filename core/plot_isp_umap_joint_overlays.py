@@ -105,7 +105,29 @@ def _auto_n_clusters(
     return int(best_k)
 
 
-def fit_umap(embs: np.ndarray, n_neighbors: int = 15, min_dist: float = 0.1, seed: int = 42):
+def fit_umap(
+    embs: np.ndarray,
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    seed: int = 42,
+    pca_components: int = 0,
+):
+    """Same projection as ``run_isp_umap.fit_umap_projection`` for a given ``pca_components``."""
+    n_neighbors = min(int(n_neighbors), max(2, int(embs.shape[0]) - 1))
+    if pca_components and pca_components > 0:
+        import umap
+        from sklearn.decomposition import PCA
+
+        n_pca = min(int(pca_components), embs.shape[0], embs.shape[1])
+        reduced = PCA(n_components=n_pca, random_state=seed).fit_transform(embs)
+        reducer = umap.UMAP(
+            n_components=2,
+            random_state=seed,
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            low_memory=True,
+        )
+        return reducer.fit_transform(reduced), f"PCA({n_pca})→umap-learn"
     try:
         import cuml
 
@@ -259,8 +281,12 @@ def run_joint_overlays(
     seed: int = 42,
     num_trajectory_arrows: int = 100,
     n_clusters: int | str = 4,
+    pca_components: int = 0,
 ) -> Path:
-    """Build joint UMAP overlays for an ISP UMAP run directory. Returns the PNG path."""
+    """Build joint UMAP overlays for an ISP UMAP run directory. Returns the PNG path.
+
+    Pass the run's ``umap.pca_components`` so the overlay uses the same projection as the main plot.
+    """
     run_dir = Path(run_dir)
     if not run_dir.is_absolute():
         run_dir = Path.cwd() / run_dir
@@ -290,7 +316,7 @@ def run_joint_overlays(
 
     all_embs = np.vstack([end_embs, start_embs, isp_embs])
     print(f"Fitting joint UMAP on {all_embs.shape} ...")
-    xy, backend = fit_umap(all_embs, n_neighbors, min_dist, seed)
+    xy, backend = fit_umap(all_embs, n_neighbors, min_dist, seed, pca_components)
     print(f"UMAP backend: {backend}")
 
     n_end, n_start = len(end_embs), len(start_embs)
@@ -482,6 +508,12 @@ def main() -> None:
         default=4,
         help="KMeans cluster count, or 'auto' (silhouette over k=2..15).",
     )
+    parser.add_argument(
+        "--pca-components",
+        type=int,
+        default=0,
+        help="PCA components before UMAP; use the run's umap.pca_components (0 = direct UMAP).",
+    )
     args = parser.parse_args()
     run_joint_overlays(
         run_dir=args.run_dir,
@@ -492,6 +524,7 @@ def main() -> None:
         seed=args.seed,
         num_trajectory_arrows=args.num_trajectory_arrows,
         n_clusters=args.n_clusters,
+        pca_components=args.pca_components,
     )
 
 
