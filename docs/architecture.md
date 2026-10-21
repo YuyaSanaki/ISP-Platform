@@ -40,9 +40,18 @@ Allowed entrypoints (Compose services use the same scripts):
 | Fine-tune (CLI) | `python3 core/run_finetune.py --config …` | `core/config/finetune.yaml` |
 | ISP (CLI) | `accelerate launch … core/run_isp.py --config …` | `core/config/isp.yaml` |
 
-**Allowed shared import:** `contracts.data_input_layout` (10x study/sample discovery). That module must stay free of geneformer / GPU / runner imports.
+**Allowed shared imports** (display, path mapping and record writing only; none of them runs a job):
 
-**Not allowed:** WebUI importing `pipeline_lib`, `run_pipeline`, `geneformer`, etc. to drive training or ISP.
+| Module | Used for |
+|--------|----------|
+| `contracts.data_input_layout` | 10x study/sample discovery |
+| `core/platform_paths.py` | Mapping `/app/...` paths in templates, saved runs and logs on macOS |
+| `geneformer.gene_converter` | Ortholog pair and curated-overlay resolution for display |
+| `geneformer.ortholog_loss_gate` | Writing the approval record; the CLI gate stays authoritative |
+
+These modules must stay free of GPU, model and runner imports. `geneformer/__init__.py` loads its heavy submodules (tokenizer, perturber, pretrainer; torch, transformers, datasets) lazily, so these imports do not pull in the ML stack. `tests/test_webui_core_boundary.py` enforces both the list and the lightness.
+
+**Not allowed:** WebUI importing `pipeline_lib`, `run_pipeline`, other `geneformer` modules, etc. to drive training or ISP.
 
 ---
 
