@@ -82,7 +82,7 @@ Adds **gene set enrichment after ISP** (rank enrichment of the top Start, Goal a
 
 ## [1.3.2] - 2026-10-10
 
-Includes the peer-reviewed v1.0.1 (tag `v1.0.1`, review response for *Genes to Cells*); the full list is under [1.0.1] below. All v1.1.0–v1.3.1 features are kept (500-step warmup default, ISP UMAP postprocess, pre-ISP cell-type annotation and panels).
+Includes the peer-reviewing v1.0.1 (tag `v1.0.1`, review response for *Genes to Cells*); the full list is under [1.0.1] below. All v1.1.0–v1.3.1 features are kept (500-step warmup default, ISP UMAP postprocess, pre-ISP cell-type annotation and panels).
 
 ### Changed
 
@@ -160,7 +160,7 @@ Includes the peer-reviewed v1.0.1 (tag `v1.0.1`, review response for *Genes to C
 
 ## [1.0.1] - 2026-10-09
 
-Peer-reviewed version (review response, *Genes to Cells*). Tag `v1.0.1` was moved on 2026-10-09 from `3b8616f` (first release, 2026-09-28, now tag `v1.0.1-initial`) to include the peer-review changes. Clones made before the move keep the old tag until `git fetch --tags --force`.
+Peer-reviewing version (review response, *Genes to Cells*). Tag `v1.0.1` was moved on 2026-10-09 from `3b8616f` (first release, 2026-09-28, now tag `v1.0.1-initial`) to include the peer-review changes. Clones made before the move keep the old tag until `git fetch --tags --force`.
 
 ### Changed
 
@@ -199,7 +199,7 @@ Peer-reviewed version (review response, *Genes to Cells*). Tag `v1.0.1` was move
 
 ## [1.0.1-initial] - 2026-09-28
 
-First release of v1.0.1 (tag `v1.0.1-initial`, `3b8616f`). Superseded by the peer-reviewed v1.0.1 above.
+First release of v1.0.1 (tag `v1.0.1-initial`, `3b8616f`). Superseded by the peer-reviewing v1.0.1 above.
 
 ### Added
 
