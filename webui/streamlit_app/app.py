@@ -151,6 +151,7 @@ for _p in (CORE, CONTRACTS, WEBUI_DIR):
 
 # Ortholog Block → approval_record UI (CLI gate remains authoritative).
 from ortholog_approval_ui import (  # noqa: E402
+    DEFAULT_PROJECT_OVERLAY as _ORTHOLOG_DEFAULT_OVERLAY,
     OrthologApprovalError as _OrthologApprovalError,
     card_rows_from_request as _ortholog_card_rows,
     create_approval_record_from_ui as _create_ortholog_approval_record,
@@ -4139,12 +4140,20 @@ def _render_ortholog_approval_card(upload_dir: Path) -> None:
         session_overlay=st.session_state.get("pipeline_ortholog_curated_overlay"),
     )
     if action.startswith("Approve"):
-        st.caption(
-            f"Bridge overlay (no free-form gene IDs): `{overlay}`"
-            if overlay
-            else "No curated overlay found — place `analysis/ortholog_policy/v1` or set "
-            "`species.ortholog_curated_overlay`."
-        )
+        if overlay is None:
+            st.caption(
+                "No curated overlay found. The repository ships none, because a bridge is a "
+                "curation decision for each analysis. Set `species.ortholog_curated_overlay` "
+                "(Species / conversion) to a reviewed `curated_bridge_<pair>.tsv` or its folder, "
+                f"or place it at the project default `{_ORTHOLOG_DEFAULT_OVERLAY}`."
+            )
+        else:
+            source = (
+                "project default, not part of the repository"
+                if overlay == _ORTHOLOG_DEFAULT_OVERLAY.resolve()
+                else "species.ortholog_curated_overlay"
+            )
+            st.caption(f"Bridge overlay (no free-form gene IDs): `{overlay}` ({source})")
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -4204,7 +4213,12 @@ def _render_ortholog_approval_card(upload_dir: Path) -> None:
     if audit is not None:
         st.session_state["pipeline_ortholog_audit"] = str(audit)
     st.session_state["ortholog_auto_rerun"] = True
-    st.info("Starting a **new** Pipeline run with `--ortholog-approval-record` + curated overlay…")
+    st.info(
+        "Starting a **new** Pipeline run with "
+        "`stages.tokenize.tokenizer.ortholog_approval_record` and "
+        "`species.ortholog_curated_overlay` in its config "
+        "(the CLI equivalents are `--ortholog-approval-record` and `--ortholog-curated-overlay`)…"
+    )
     st.rerun()
 
 
