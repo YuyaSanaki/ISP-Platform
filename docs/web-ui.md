@@ -52,6 +52,12 @@ Then open **[http://localhost:8502](http://localhost:8502)** on your laptop. See
 | `WEBUI_ROOT`                       | Repository root (Compose sets `/app`)                                         |
 | `WEBUI_WORKSPACE`                  | Uploads and per-run folders (default `{WEBUI_ROOT}/data/streamlit_workspace`) |
 | `STREAMLIT_SERVER_MAX_UPLOAD_SIZE` | Upload cap in megabytes (see `.streamlit/config.toml`)                        |
+| `ISP_WEBUI_USERS_FILE`             | Optional login: YAML `users: {name: hash}`; see below                         |
+| `ISP_URL_IMPORT_ALLOW_PRIVATE`     | `1` lets **Download from URL** fetch localhost / LAN hosts (default: public only) |
+
+**Login.** The Web UI has no login unless `ISP_WEBUI_USERS_FILE` is set. Without it, run it for one trusted user on localhost or behind a proxy that controls access. To turn login on, create entries with `python webui/webui_auth.py hash <user>` (prompts for the password; stores a PBKDF2 hash), put them in one YAML file and point `ISP_WEBUI_USERS_FILE` at it. Every page then asks for a user name and password, and the ortholog approval card records the logged-in user as `approved_by` and `authenticated_user` instead of a free-text name.
+
+**Download from URL** fetches only public addresses. URLs whose host resolves to localhost, a private LAN range, link-local (cloud metadata) or another non-public address are refused, also after redirects, because the server makes the request. Prepared run zips are written to `{WEBUI_WORKSPACE}/downloads/`; zips over 2 GiB are shown as a server path instead of a download button.
 
 
 Per **Run job**:

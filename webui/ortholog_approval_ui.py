@@ -155,6 +155,7 @@ def create_approval_record_from_ui(
     reason: str,
     overlay_path: str | Path | None = None,
     ui_session_id: str | None = None,
+    authenticated_user: str | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """
     Validate pending request and write ``approval_record.yaml`` beside it.
@@ -175,6 +176,7 @@ def create_approval_record_from_ui(
         reason=reason,
         curated_overlay_path=overlay_path if action_norm == "curated_bridge" else None,
         ui_session_id=ui_session_id,
+        authenticated_user=authenticated_user,
     )
     out_path = artifacts.run_dir / "approval_record.yaml"
     written = write_approval_record(out_path, record, overwrite=False)

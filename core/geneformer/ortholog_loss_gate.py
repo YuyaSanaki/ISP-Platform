@@ -525,6 +525,7 @@ def build_approved_record(
     approved_bridge: Mapping[str, Any] | None = None,
     explicitly_excluded: Sequence[str] | None = None,
     ui_session_id: str | None = None,
+    authenticated_user: str | None = None,
 ) -> dict[str, Any]:
     """
     Build an immutable approval / rejection record from a pending request.
@@ -553,6 +554,11 @@ def build_approved_record(
         raise OrthologApprovalError("approved_by is required.")
     if not why:
         raise OrthologApprovalError("reason is required.")
+    login = str(authenticated_user or "").strip()
+    if login and who != login:
+        raise OrthologApprovalError(
+            f"approved_by {who!r} must be the logged-in user {login!r}."
+        )
 
     norm = normalize_decision(decision) or str(decision).strip().lower()
     if norm == "reject":
@@ -568,6 +574,8 @@ def build_approved_record(
         }
         if ui_session_id:
             record["ui_session_id"] = str(ui_session_id)
+        if login:
+            record["authenticated_user"] = login
         return record
 
     if norm not in (
@@ -593,6 +601,8 @@ def build_approved_record(
     }
     if ui_session_id:
         record["ui_session_id"] = str(ui_session_id)
+    if login:
+        record["authenticated_user"] = login
 
     if norm == "curated_bridge":
         if curated_overlay_path is None:
