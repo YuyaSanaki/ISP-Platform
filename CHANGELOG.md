@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-21
+
+### Fixed
+
+- The automatic ISP UMAP of Pipeline (E2E) on genome-wide runs could project a gene seen in only a few cells. It took the largest shift toward goal among all Sig == 1 genes, so a gene detected in a handful of cells could outrank one detected in most cells. It now takes the largest shift among Sig == 1 genes detected in at least 20 cells (`N_Detections` ≥ 20), the same cut as the significant-genes lollipop, and skips the UMAP with a message when no gene passes (`pick_e2e_top1_significant_gene` in `core/run_pipeline.py`). **No ISP results change**: only the gene drawn in `isp_umap/` and its cluster / cell-type analysis can differ. Gene-list runs are unchanged. Test: `tests/test_e2e_top1_significant_umap.py`.
+
+### Notes
+
+- Docker image / Compose default tag is `isp-platform:v1.4.1`.
+
 ## [1.4.0] - 2026-10-20
 
 Adds **gene set enrichment after ISP** (rank enrichment of the top Start, Goal and ISP genes on Reactome, GO and KEGG, computed locally) for normal ISP and State-feedback ISP, switched on together with cluster / cell-type analysis (`postprocess.enabled`, Web UI **Cluster / cell-type / enrichment analysis**). Also adds Apple silicon support. ISP scores and τ are unchanged.

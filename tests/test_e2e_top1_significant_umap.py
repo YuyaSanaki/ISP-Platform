@@ -92,6 +92,47 @@ class TestPickE2ETop1SignificantGene(unittest.TestCase):
                 )
             self.assertIsNone(self.rp.pick_e2e_top1_significant_gene(stats))
 
+    def test_skips_significant_genes_detected_in_fewer_than_20_cells(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = Path(tmp)
+            with open(stats / "significant_genes.csv", "w", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=["Gene_name", "Ensembl_ID", "Shift_to_goal_end", "N_Detections", "Sig"],
+                )
+                w.writeheader()
+                w.writerow(
+                    {
+                        "Gene_name": "RareHit",
+                        "Ensembl_ID": "ENSG_RARE",
+                        "Shift_to_goal_end": "0.50",
+                        "N_Detections": "5",
+                        "Sig": "1",
+                    }
+                )
+                w.writerow(
+                    {
+                        "Gene_name": "EdgeCase",
+                        "Ensembl_ID": "ENSG_EDGE",
+                        "Shift_to_goal_end": "0.40",
+                        "N_Detections": "19",
+                        "Sig": "1",
+                    }
+                )
+                w.writerow(
+                    {
+                        "Gene_name": "Robust",
+                        "Ensembl_ID": "ENSG_ROBUST",
+                        "Shift_to_goal_end": "0.10",
+                        "N_Detections": "20",
+                        "Sig": "1",
+                    }
+                )
+            self.assertEqual(self.rp.pick_e2e_top1_significant_gene(stats), "ENSG_ROBUST")
+            self.assertIsNone(
+                self.rp.pick_e2e_top1_significant_gene(stats, min_n_detections=21)
+            )
+
     def test_parquet_sig_filter_fallback(self):
         class _FakeDF:
             def __init__(self, rows):

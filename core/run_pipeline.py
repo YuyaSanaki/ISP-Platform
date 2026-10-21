@@ -150,8 +150,24 @@ def _gene_token_from_row(row: dict) -> str:
     return str(row.get("Ensembl_ID") or row.get("Gene_name") or "").strip()
 
 
-def pick_e2e_top1_significant_gene(ispstats_dir: Path) -> str | None:
+E2E_TOP1_MIN_DETECTIONS = 20
+
+
+def _n_detections(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def pick_e2e_top1_significant_gene(
+    ispstats_dir: Path, min_n_detections: int = E2E_TOP1_MIN_DETECTIONS
+) -> str | None:
     """Pick TOP1 significant gene (max Shift_to_goal_end among Sig==1) for E2E UMAP.
+
+    Only genes detected in at least ``min_n_detections`` cells (``N_Detections``)
+    are eligible, the same cut as the significant-genes lollipop. Tables without
+    ``N_Detections`` are not filtered.
 
     Uses ``significant_genes.csv`` when present. Falls back to the ISP stats
     parquet filtered to ``Sig==1``. Does **not** use ``top100_positive_shifters.csv``
@@ -163,6 +179,13 @@ def pick_e2e_top1_significant_gene(ispstats_dir: Path) -> str | None:
             with open(sig_csv, "r", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
             if rows and "Shift_to_goal_end" in rows[0]:
+                if "N_Detections" in rows[0]:
+                    rows = [
+                        r for r in rows
+                        if _n_detections(r.get("N_Detections")) >= min_n_detections
+                    ]
+                if not rows:
+                    return None
                 best_row = max(
                     rows,
                     key=lambda r: float(r.get("Shift_to_goal_end") or "-inf"),
@@ -186,6 +209,8 @@ def pick_e2e_top1_significant_gene(ispstats_dir: Path) -> str | None:
             df = df[df["Sig"] == 1]
         else:
             return None
+        if "N_Detections" in df.columns:
+            df = df[pd.to_numeric(df["N_Detections"], errors="coerce").fillna(0) >= min_n_detections]
         if df.empty:
             return None
         row = df.sort_values("Shift_to_goal_end", ascending=False).iloc[0]
@@ -485,7 +510,8 @@ def main() -> None:
         # We intentionally disable auto ISP UMAP in stages.isp.umap (handled via
         # Web UI "ISP UMAP" run type), but for Pipeline (E2E) we still want a
         # quick "top hit" per run. Genome-wide runs project the TOP1 significant
-        # gene (largest shift toward goal among Sig == 1); gene-list runs project
+        # gene (largest shift toward goal among Sig == 1 with N_Detections >= 20);
+        # gene-list runs project
         # the listed genes perturbed together, since group stats have no per-gene
         # ranking to pick from.
         if not args.skip_isp:
@@ -553,7 +579,8 @@ def main() -> None:
                     )
                 else:
                     print(
-                        "E2E TOP1 ISP UMAP: no significant gene found; skipping."
+                        "E2E TOP1 ISP UMAP: no significant gene detected in "
+                        f">= {E2E_TOP1_MIN_DETECTIONS} cells; skipping."
                     )
 
         pipeline_ok = True
