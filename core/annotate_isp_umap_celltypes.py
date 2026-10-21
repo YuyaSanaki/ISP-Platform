@@ -22,6 +22,18 @@ if str(_CORE) not in sys.path:
 from isp_umap_celltype import annotate_dataframe_with_cell_types  # noqa: E402
 
 
+def _single_isp_gene(run_dir: Path) -> str:
+    genes = sorted(
+        {p.name.split("_ISP_", 1)[1][: -len("_embs.npy")] for p in run_dir.glob("*_ISP_*_embs.npy")}
+    )
+    if len(genes) != 1:
+        raise SystemExit(
+            f"--refresh-overlays: found ISP embeddings for {genes or 'no genes'} in {run_dir}; "
+            "pass --gene"
+        )
+    return genes[0]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -37,6 +49,12 @@ def main() -> None:
         "--refresh-overlays",
         action="store_true",
         help="Also regenerate joint overlays + L2-by-group + trajectory plots",
+    )
+    parser.add_argument(
+        "--gene",
+        default=None,
+        help="Perturbed gene label in <start>_ISP_<gene>_embs.npy for --refresh-overlays "
+        "(default: detected from the run folder; required when it holds several genes)",
     )
     args = parser.parse_args()
 
@@ -85,7 +103,7 @@ def main() -> None:
         cfg = {"postprocess": {"enabled": True, "prefer_metadata_celltype": prefer}}
         if args.config is not None:
             cfg = yaml.safe_load(args.config.read_text(encoding="utf-8"))
-        run_downstream_plots(run_dir, "Igfbp2", cfg)
+        run_downstream_plots(run_dir, args.gene or _single_isp_gene(run_dir), cfg)
 
 
 if __name__ == "__main__":
