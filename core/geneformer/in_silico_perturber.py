@@ -34,7 +34,7 @@ import pickle
 import re
 import seaborn as sns; sns.set()
 import torch
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datasets import Dataset, load_from_disk
 
 try:
@@ -263,6 +263,36 @@ def downsample_and_sort(data_shuffled, max_ncells):
     # sort dataset with largest cell first to encounter any memory errors earlier
     data_sorted = data_subset.sort("length",reverse=True)
     return data_sorted
+
+CENTROID_IMBALANCE_RATIO = 0.1
+
+
+def centroid_sample(data, cell_states_to_model, max_ncells, max_ncells_per_state, nproc):
+    """Cells used for the state centroids, with a warning when one state is badly underrepresented."""
+    state_key = cell_states_to_model["state_key"]
+    states = get_possible_states(cell_states_to_model)
+    if max_ncells_per_state is None:
+        sample = downsample_and_sort(data, max_ncells)
+    else:
+        cap = int(max_ncells_per_state)
+        values = data[state_key]
+        keep = []
+        for state in states:
+            keep.extend([i for i, v in enumerate(values) if v == state][:cap])
+        sample = data.select(sorted(keep)).sort("length", reverse=True)
+    counts = Counter(sample[state_key])
+    per_state = {state: int(counts.get(state, 0)) for state in states}
+    print(f"Centroid cells per state: {per_state}", flush=True)
+    largest = max(per_state.values())
+    small = [s for s, n in per_state.items() if n < CENTROID_IMBALANCE_RATIO * largest]
+    if max_ncells_per_state is None and small:
+        logger.warning(
+            "State centroids use the first max_ncells cells pooled over all states; "
+            f"{small} have under {CENTROID_IMBALANCE_RATIO:.0%} of the largest state's cells "
+            f"({per_state}). Set max_ncells_per_state to sample each state separately."
+        )
+    return sample
+
 
 def get_possible_states(cell_states_to_model):
     possible_states = []
@@ -1160,6 +1190,7 @@ class InSilicoPerturber:
         "filter_data": {None, dict},
         "cell_states_to_model": {None, dict},
         "max_ncells": {None, int},
+        "max_ncells_per_state": {None, int},
         "cell_inds_to_perturb": {"all", dict},
         "emb_layer": {-1, 0},
         "forward_batch_size": {int, "auto"},
@@ -1187,6 +1218,7 @@ class InSilicoPerturber:
         token_dictionary_file=TOKEN_DICTIONARY_FILE,
         model_input_size=2048,
         legacy_padding_mean=None,
+        max_ncells_per_state=None,
     ):
         """
         Initialize in silico perturber.
@@ -1272,6 +1304,11 @@ class InSilicoPerturber:
             both embeddings (padding-free). True restores the earlier pooling over L, which
             includes up to k padding positions for cells shorter than the longest cell of their
             forward minibatch. None reads the ISP_LEGACY_PADDING_MEAN environment variable.
+        max_ncells_per_state : None, int
+            Cells per state for the state centroids. None (default) keeps the original
+            behaviour: centroids use the first max_ncells cells pooled over all states, so a
+            small goal or alt state can contribute few cells. An int takes up to that many
+            cells from each state instead (as the State-feedback runners do).
         """
 
         self.perturb_type = perturb_type
@@ -1299,6 +1336,7 @@ class InSilicoPerturber:
         self.filter_data = filter_data
         self.cell_states_to_model = cell_states_to_model
         self.max_ncells = max_ncells
+        self.max_ncells_per_state = max_ncells_per_state
         self.cell_inds_to_perturb = cell_inds_to_perturb
         self.emb_layer = emb_layer
         self.forward_batch_size = forward_batch_size
@@ -1538,7 +1576,13 @@ class InSilicoPerturber:
                 "ISP phase 1/2: computing reference embeddings for cell states "
                 "(no overall ETA; typically shorter than phase 2)."
             )
-            downsampled_data = downsample_and_sort(filtered_input_data, self.max_ncells)
+            downsampled_data = centroid_sample(
+                filtered_input_data,
+                self.cell_states_to_model,
+                self.max_ncells,
+                self.max_ncells_per_state,
+                self.nproc,
+            )
             state_embs_dict = get_cell_state_avg_embs(model,
                                                       downsampled_data,
                                                       self.cell_states_to_model,

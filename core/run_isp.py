@@ -450,6 +450,9 @@ def main() -> None:
 
     isp_cfg = cfg.get("isp") or {}
     max_ncells = isp_cfg.get("max_ncells")
+    max_ncells_per_state = isp_cfg.get("max_ncells_per_state")
+    if max_ncells_per_state is not None:
+        max_ncells_per_state = int(max_ncells_per_state)
     emb_layer = int(isp_cfg.get("emb_layer", -1))
     emb_mode = isp_cfg.get("emb_mode", "cell")
     cell_emb_style = isp_cfg.get("cell_emb_style", "mean_pool")
@@ -561,6 +564,7 @@ def main() -> None:
         token_dictionary_file=token_dict_path,
         model_input_size=int(backend.max_input_size),
         legacy_padding_mean=legacy_padding_mean,
+        max_ncells_per_state=max_ncells_per_state,
     )
     if isp.legacy_padding_mean:
         print("  NOTE: legacy_padding_mean on: group goal-state means include padding "
