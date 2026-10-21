@@ -23,7 +23,33 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   exit 1
 fi
 if ! command -v uv >/dev/null 2>&1; then
-  echo "ERROR: uv not found. Install it first: https://docs.astral.sh/uv/getting-started/installation/" >&2
+  if command -v brew >/dev/null 2>&1; then
+    install_cmd="brew install uv"
+  else
+    install_cmd="curl -LsSf https://astral.sh/uv/install.sh | sh"
+  fi
+  cat >&2 <<EOF
+ERROR: uv is not installed.
+
+uv is a free tool that sets up Python and the packages ISP Platform needs.
+It is installed once per Mac; it does not change your other Python setups.
+
+  1. Install uv. Copy this line into the Terminal and press Enter:
+
+       $install_cmd
+
+  2. Close this Terminal window and open a new one (so the uv command is found),
+     then go back to this folder:
+
+       cd "$REPO_ROOT"
+
+  3. Run the setup again:
+
+       bash scripts/macos/setup.sh
+
+Check that uv works with:  uv --version
+More help: https://docs.astral.sh/uv/getting-started/installation/
+EOF
   exit 1
 fi
 
