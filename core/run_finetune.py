@@ -626,6 +626,8 @@ def main() -> None:
     ignore_mismatched = mdl_cfg.get("ignore_mismatched_sizes", True)
 
     lr = float(tr_cfg.get("learning_rate", 5e-5))
+    # Guidance (not enforced here): prefer train batch 4–8 around default 6 when
+    # comparing FT/ISP runs. Web UI clamps to that range; CLI YAML may set any int.
     default_bs = default_finetune_batch_size(int(backend.max_input_size))
     batch_size = coerce_batch_size(tr_cfg.get("batch_size", default_bs), default=default_bs)
     if "batch_size" not in tr_cfg and default_bs != 6:
