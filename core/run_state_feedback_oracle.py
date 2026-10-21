@@ -89,10 +89,22 @@ def _apply_oe(example: dict[str, Any], tokens: Sequence[int]) -> dict[str, Any]:
     return apply_single_step_overexpress(example, tokens)
 
 
-def _apply_oracle(example: dict[str, Any], priority: Mapping[int, float]) -> dict[str, Any]:
+def _apply_oracle(
+    example: dict[str, Any],
+    priority: Mapping[int, float],
+    pinned: Sequence[int] = (),
+) -> dict[str, Any]:
+    """Permute to observed ranks; ``pinned`` (OE) tokens stay at the front in their current order.
+
+    Overexpress scoring strips the first len(OE) positions, so OE genes must stay there.
+    """
     ex = dict(example)
     ids = list(ex["input_ids"])
     new_ids = rerank_fixed_gene_set(ids, priority)
+    if pinned:
+        keep = {int(t) for t in pinned}
+        head = [int(t) for t in ids if int(t) in keep]
+        new_ids = head + [t for t in new_ids if t not in keep]
     ex["input_ids"] = new_ids
     ex["length"] = len(new_ids)
     ex["attention_mask"] = [1] * len(new_ids)
@@ -232,8 +244,13 @@ def run_oracle_mid(
     forward_batch_size: int,
     nproc: int,
     oracle_after_step: int = 1,
+    pin_overexpressed: bool = True,
 ) -> list[dict[str, Any]]:
-    """OE chain with an oracle fixed-gene-set permute after ``oracle_after_step``."""
+    """OE chain with an oracle fixed-gene-set permute after ``oracle_after_step``.
+
+    ``pin_overexpressed`` keeps the OE genes so far at the front through the permute;
+    False reproduces earlier runs, where scoring then stripped the wrong leading genes.
+    """
     map_workers = rt.gpu_resident_map_workers(nproc)
     batch_state = [int(forward_batch_size)]
     working = start_ds
@@ -290,14 +307,15 @@ def run_oracle_mid(
             # Spearman vs pre-oracle on a few cells for diagnostics
             sample_n = min(32, len(working))
             rho_vals = []
+            pinned = tuple(cumulative) if pin_overexpressed else ()
             for i in range(sample_n):
                 before = list(working[i]["input_ids"])
-                after = rerank_fixed_gene_set(before, oracle_priority)
+                after = _apply_oracle({"input_ids": before}, oracle_priority, pinned)["input_ids"]
                 rho_vals.append(spearman_rank_correlation(before, after))
             mean_rho = float(sum(rho_vals) / len(rho_vals)) if rho_vals else float("nan")
 
             working = working.map(
-                lambda ex, p=dict(oracle_priority): _apply_oracle(ex, p),
+                lambda ex, p=dict(oracle_priority), k=pinned: _apply_oracle(ex, p, k),
                 num_proc=map_workers,
             )
             df_o = _score(
@@ -326,6 +344,7 @@ def run_oracle_mid(
                     "step": step_idx,
                     "factor": "ORACLE",
                     "event": "oracle_permute",
+                    "oracle_pinned_overexpressed": bool(pin_overexpressed),
                     "spearman_vs_pre_oracle_mean": mean_rho,
                     **stats_o,
                 }
@@ -431,6 +450,7 @@ def main() -> int:
     goal_state = str(pert["end_state"])
     observed_state = str(oracle_cfg.get("observed_state") or goal_state)
     oracle_after_step = int(oracle_cfg.get("oracle_after_step", 1))
+    pin_overexpressed = bool(oracle_cfg.get("pin_overexpressed", True))
 
     max_ncells = args.max_ncells if args.max_ncells is not None else isp_cfg.get("max_ncells")
     emb_layer = int(isp_cfg.get("emb_layer", 0))
@@ -565,6 +585,7 @@ def main() -> int:
                 forward_batch_size=forward_batch_size,
                 nproc=nproc,
                 oracle_after_step=oracle_after_step,
+                pin_overexpressed=pin_overexpressed,
             )
         )
 
@@ -617,6 +638,7 @@ def main() -> int:
         "n_start_cells": len(start_ds),
         "observed_state": observed_state,
         "oracle_after_step": oracle_after_step,
+        "oracle_pinned_overexpressed": pin_overexpressed,
         "orders": [order_label(o) for o in orders],
         "oracle_endpoint_median": ep_med,
         "gate": gate_rows,

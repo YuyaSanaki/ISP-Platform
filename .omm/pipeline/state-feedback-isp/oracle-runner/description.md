@@ -1,6 +1,6 @@
 ### English
 
-`run_state_feedback_oracle.py`: Phase 0 go/no-go for OSKM orders (`oracle.orders`, e.g. K-M-S-O). OE only, no decoder, one oracle permute mid-chain. Writes `phase0_summary.csv`, `phase0_go_nogo.csv`.
+`run_state_feedback_oracle.py`: Phase 0 go/no-go for OSKM orders (`oracle.orders`, e.g. K-M-S-O). OE only, no decoder, one oracle permute mid-chain that keeps the OE genes so far at the front (`oracle.pin_overexpressed`, default true; overexpress scoring strips the first len(OE) positions). Writes `phase0_summary.csv`, `phase0_go_nogo.csv`.
 
 ### 日本語
 

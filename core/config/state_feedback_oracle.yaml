@@ -35,6 +35,9 @@ oracle:
   observed_state: pluripotent
   observed_max_ncells: 3000
   oracle_after_step: 1
+  # Keep the OE genes so far at the front through the oracle permute (overexpress scoring
+  # strips the first len(OE) positions). false reproduces runs before v1.4.1, which did not pin.
+  pin_overexpressed: true
   # Paper best order + a weak order for contrast
   orders:
     - K-M-S-O
