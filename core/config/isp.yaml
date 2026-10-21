@@ -56,6 +56,9 @@ isp:
   # Group goal-state scoring mean-pools only real genes (L - k positions). true = earlier pooling
   # over L, which includes padding; use only to reproduce scores of earlier releases.
   legacy_padding_mean: false
+  # State centroids: null = first max_ncells cells pooled over all states (earlier releases;
+  # a small goal state can contribute few cells). An int = up to that many cells per state.
+  max_ncells_per_state: null
 
 stats:
   mode: goal_state_shift # goal_state_shift | vs_null | mixture_model | aggregate_data
