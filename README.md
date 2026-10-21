@@ -1,14 +1,12 @@
-<!-- Keep this logo. Source: docs/logo.png. Do not remove when editing README.md. -->
-<p align="center">
-  <img src="docs/logo.png" alt="ISP Platform" width="280">
-</p>
+
+
+![ISP Platform](docs/logo.png)
 
 # ISP Platform
 
 Unified platform for **mouse** and **human** Geneformer workflows with bi-directional species–model switching.
 
-**Release:** v1.4.1 (Apple silicon fixes for v1.4.0, which adds gene set enrichment after ISP; includes the peer-reviewed v1.0.1) · Docker image `isp-platform:v1.4.1`
-
+**Release:** v1.4.1 (Apple silicon fixes for v1.4.0, which adds gene set enrichment after ISP; includes the peer-reviewing v1.0.1) · Docker image `isp-platform:v1.4.1`
 
 Run tokenize, fine-tune, ISP, UMAP, and multi-step multi-gene ISP from the **CLI** or **Web UI**, both on Docker Compose and Streamlit. Multi-step ISP is **State-feedback ISP**: OE/KD steps are applied in order on the gene-rank tokens, and after each step the model output reorders the genes before the next step.
 
@@ -124,13 +122,11 @@ All services share one Docker image (`isp-platform`) and the same workflows via 
 
 ## Requirements
 
-
 | Component             | Requirement                                                                                                               |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | **GPU**               | NVIDIA GPU with drivers installed                                                                                         |
 | **Container runtime** | Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) |
 | **CPU / OS**          | Linux **x8664** or **aarch64 / ARM64** (e.g. DGX Spark)                                                                   |
-
 
 Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported. Docker selects the matching image architecture.
 
@@ -145,36 +141,37 @@ Primary testing is on **DGX Spark (aarch64)**; x8664 NVIDIA hosts are supported.
 ### Docker (recommended for most hosts)
 
 1. **Clone** and enter the repository:
-  ```bash
-   git clone https://github.com/YuyaSanaki/ISP-Platform.git
-   cd ISP-Platform
-  ```
+   ```bash
+    git clone https://github.com/YuyaSanaki/ISP-Platform.git
+    cd ISP-Platform
+   ```
 2. **Build the image** (downloads models + dictionaries during build — network required):
-  ```bash
-   docker compose build isp-platform　#will download models automatically
-  ```
-   After a successful build you can `docker compose up -d platform_webui` immediately; the entrypoint seeds baked weights into `./models` and `core/geneformer/dicts/` when those host paths are empty. Override the bake profile with an env var **before** `docker compose`, or with `--build-arg`:  Do **not** put `DOWNLOAD_MODELS=…` after the service name — Compose treats that as another service (`no such service: DOWNLOAD_MODELS=all`).
+   ```bash
+    docker compose build isp-platform　#will download models automatically
+   ```
 
-  | Build arg / `.env`        | Meaning                                                                      |
-  | ------------------------- | ---------------------------------------------------------------------------- |
-  | `DOWNLOAD_MODELS=default` | Mouse base + 12L-E20 + Human V2-104M + dicts + mouse↔human orthologs (~1 GB) |
-  | `DOWNLOAD_MODELS=minimal` | Mouse base + mouse dicts only                                                |
-  | `DOWNLOAD_MODELS=all`     | `default` + fly ortholog tables (BioMart; slower)                            |
-  | `DOWNLOAD_MODELS=none`    | Skip downloads (manual install below)                                        |
-  | `HF_TOKEN`                | Optional Hugging Face token if anonymous downloads are rate-limited          |
-  | `SKIP_ORTHOLOGS=1`        | Skip Ensembl BioMart during build                                            |
+    After a successful build you can `docker compose up -d platform_webui` immediately; the entrypoint seeds baked weights into `./models` and `core/geneformer/dicts/` when those host paths are empty. Override the bake profile with an env var **before** `docker compose`, or with `--build-arg`:  Do **not** put `DOWNLOAD_MODELS=…` after the service name — Compose treats that as another service (`no such service: DOWNLOAD_MODELS=all`).
+   | Build arg / `.env`        | Meaning                                                                      |
+   | ------------------------- | ---------------------------------------------------------------------------- |
+   | `DOWNLOAD_MODELS=default` | Mouse base + 12L-E20 + Human V2-104M + dicts + mouse↔human orthologs (~1 GB) |
+   | `DOWNLOAD_MODELS=minimal` | Mouse base + mouse dicts only                                                |
+   | `DOWNLOAD_MODELS=all`     | `default` + fly ortholog tables (BioMart; slower)                            |
+   | `DOWNLOAD_MODELS=none`    | Skip downloads (manual install below)                                        |
+   | `HF_TOKEN`                | Optional Hugging Face token if anonymous downloads are rate-limited          |
+   | `SKIP_ORTHOLOGS=1`        | Skip Ensembl BioMart during build                                            |
 
-   Re-run after `Dockerfile` or dependency changes. Disk: plan ~1 GB free for the default bake (weights + layer overhead).
+    Re-run after `Dockerfile` or dependency changes. Disk: plan ~1 GB free for the default bake (weights + layer overhead).
 3. **(Optional) Manual download** — only if you built with `DOWNLOAD_MODELS=none` or need to refresh host copies:
-  ```bash
-   bash scripts/download_build_assets.sh              # same as default bake
-   # or stage scripts:
-   bash scripts/download_mouse_geneformer.sh --prune-bin
-   bash scripts/download_human_geneformer_v2_104m.sh
-   bash scripts/download_mouse_human_orthologs.sh
-   bash scripts/download_drosophila_orthologs.sh      # optional fly
-  ```
-   See `[models/README.md](models/README.md)`.
+   ```bash
+    bash scripts/download_build_assets.sh              # same as default bake
+    # or stage scripts:
+    bash scripts/download_mouse_geneformer.sh --prune-bin
+    bash scripts/download_human_geneformer_v2_104m.sh
+    bash scripts/download_mouse_human_orthologs.sh
+    bash scripts/download_drosophila_orthologs.sh      # optional fly
+   ```
+
+    See `[models/README.md](models/README.md)`.
 
 **Compose volumes:** `.:/app` keeps code/data live on the host. Image-baked assets live under `/opt/geneformer-assets` and are copied into `/app/models` + `/app/core/geneformer/dicts` on start when missing. Host files always win; set `SKIP_MODEL_SEED=1` to disable copying.
 
@@ -225,9 +222,7 @@ Then open **[http://localhost:8502](http://localhost:8502)** locally. Or use the
 
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md).
 
-<p align="center">
-  <img src="docs/WebUI.png" alt="ISP Platform Web UI" width="900">
-</p>
+![ISP Platform Web UI](docs/WebUI.png)
 
 ### Fine-tune batch size (keep fixed)
 
@@ -236,8 +231,6 @@ Fine-tune `train_batch_size` changes the number of optimizer steps per epoch and
 More detail: [docs/web-ui.md](docs/web-ui.md).
 
 ## Usage
-
-
 
 #### Users choose:
 
@@ -276,7 +269,6 @@ IDs below match YAML (`species.*`) and the Web UI selectors. There is **no fly p
 
 ### Pretrained checkpoints
 
-
 | Model (`species.model`) | Variant id (YAML)   | Web UI label     | Native species | Size / architecture                                          | Checkpoint dir (`models/`)  | Docker bake                           |
 | ----------------------- | ------------------- | ---------------- | -------------- | ------------------------------------------------------------ | --------------------------- | ------------------------------------- |
 | `mouse_geneformer`      | `base` (default)    | Base (6L / ~33M) | mouse          | ~33M params; **6L** / 256 dim / seq **2048** / SiLU          | `mouse-Geneformer/`         | `minimal`, `default`, `all`           |
@@ -284,11 +276,9 @@ IDs below match YAML (`species.*`) and the Web UI selectors. There is **no fly p
 | `human_geneformer`      | `v2_104m` (default) | Base (V2-104M)   | human          | ~**104M** params; 12L / 768 dim / seq **4096**               | `human-Geneformer-V2-104M/` | `default`, `all`                      |
 | `human_geneformer`      | `v2_316m`           | Large (V2-316M)  | human          | ~**316M** params; 18L / 1152 dim / seq **4096**              | `human-Geneformer-V2-316M/` | not baked — download from HF manually |
 
-
 Default Compose bake (`DOWNLOAD_MODELS=default`) is ~0.6–0.8 GB of weights + dicts; plan ~1 GB free for layer overhead. See [Install](#install) and `[models/README.md](models/README.md)`.
 
 ### Dictionaries and ortholog tables (not checkpoints)
-
 
 | Asset                                              | Role                                       | Where                                                                     |
 | -------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------- |
@@ -297,7 +287,6 @@ Default Compose bake (`DOWNLOAD_MODELS=default`) is ~0.6–0.8 GB of weights +
 | Mouse ↔ human orthologs                            | Cross-species remap                        | BioMart TSVs under `core/geneformer/dicts/orthologs/` (`default` / `all`) |
 | Fly → human / mouse orthologs                      | Drosophila input → mammal model (**Beta**) | BioMart TSVs; profile `all` (or `download_drosophila_orthologs.sh`)       |
 | Curated `*_curated.tsv` + `fly_symbol_to_fbgn.tsv` | Small overrides / symbol helpers           | Tracked in git                                                            |
-
 
 ```yaml
 species:
@@ -308,8 +297,6 @@ species:
   ortholog_policy: one2one       # cross-species: one2one | best_of_n | legacy_sum
 ```
 
-
-
 ## CLI
 
 **End-to-end** — edit `[core/config/pipeline.yaml](core/config/pipeline.yaml)`, then:
@@ -317,7 +304,6 @@ species:
 ```bash
 docker compose run --rm pipeline
 ```
-
 
 | Step                          | Command                                                                                          | Doc                                                                             |
 | ----------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
@@ -331,11 +317,7 @@ docker compose run --rm pipeline
 | E2E pipeline                  | `docker compose run --rm pipeline`                                                               | [pipeline.md](docs/pipeline.md)                                                 |
 | Ad-hoc script (rare)          | `docker compose --profile build run --rm --no-deps isp-platform python3 /app/scripts/...` | —                                                                               |
 
-
-
-
 ## Interfaces (Compose services)
-
 
 | Service                                                         | Role                                                                                            |
 | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -344,11 +326,7 @@ docker compose run --rm pipeline
 | `tokenize` / `finetune` / `isp` / `isp_umap`                    | Stage-only jobs                                                                                 |
 | `isp-platform` (`profiles: [build]`)                     | Image build + rare ad-hoc CLI; **not** started by `compose up`                                  |
 
-
-
-
 ## Repository layout
-
 
 | Path                          | Role                                                           |
 | ----------------------------- | -------------------------------------------------------------- |
@@ -358,11 +336,9 @@ docker compose run --rm pipeline
 | `scripts/`, `tests/`, `docs/` | Ops helpers, unit tests, operator docs                         |
 | `models/`, `data/`, `output/` | Weights / inputs / run outputs                                 |
 
-
 See [docs/architecture.md](docs/architecture.md).
 
 ## Documentation
-
 
 | Topic                          | Guide                                                                                                        |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
@@ -374,9 +350,6 @@ See [docs/architecture.md](docs/architecture.md).
 | **ISP UMAP**                   | [docs/isp_umap.md](docs/isp_umap.md)                                                                         |
 | **State-feedback ISP** (v1.0.1) | [docs/state_feedback_isp.md](docs/state_feedback_isp.md) — how it works, conditions and Web UI settings · design and validation: [docs/state_feedback_decode_methods.md](docs/state_feedback_decode_methods.md) |
 | **Web UI (details)**           | [docs/web-ui.md](docs/web-ui.md)                                                                             |
-
-
-
 
 ## Upstream / related repos
 
