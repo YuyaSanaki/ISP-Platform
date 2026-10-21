@@ -7,11 +7,12 @@ graph LR
     config-templates["Config templates\ncore/config/"]
     model-assets["Model assets\nmodels/, core/geneformer/dicts/"]
     run-outputs["Run outputs\noutput/"]
-    deployment["Deployment\nDockerfile, docker-compose.yml, H100/"]
+    deployment["Deployment\nDockerfile, docker-compose.yml, H100/, scripts/macos/"]
     webui -->|"writes run YAML, spawns subprocess"| core-runners
     webui -->|"10x layout validation"| contracts
     webui -->|"loads YAML templates"| config-templates
     webui -->|"browses results"| run-outputs
+    webui -.->|"platform_paths only, /app mapping"| core-runners
     core-runners -->|"10x sample discovery"| contracts
     core-runners -->|"default YAML"| config-templates
     core-runners -->|"tokenizer, perturber, stats"| geneformer-lib

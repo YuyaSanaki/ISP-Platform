@@ -6,16 +6,19 @@ graph LR
     isp-stage["ISP\ncore/run_isp.py"]
     isp-umap["ISP UMAP\ncore/run_isp_umap.py"]
     state-feedback-isp["State-feedback ISP\nrun_state_feedback_stability.py, run_state_feedback_isp.py"]
+    rank-enrichment["Rank enrichment\ncore/run_isp_rank_enrichment.py"]
     orchestrator -->|"subprocess, TOKENIZE_CONFIG"| tokenize-stage
     orchestrator -->|"subprocess, stage_configs/finetune.yaml"| finetune-stage
     orchestrator -->|"accelerate launch, stage_configs/isp.yaml"| isp-stage
     orchestrator -->|"TOP1 significant gene or gene list, PCA 50, seed 0"| isp-umap
-    ft-batch-calibrate -.->|"train_batch_size pasted by user"| finetune-stage
+    ft-batch-calibrate -.->|"train_batch_size pasted by user, Web UI 4-8"| finetune-stage
     tokenize-stage -->|"tokenized_dataset, all shards"| finetune-stage
     tokenize-stage -->|"tokenized dataset"| isp-stage
     finetune-stage -->|"best finetune run + label_dict.json"| isp-stage
     isp-stage -->|"ispstats_results/significant_genes.csv"| isp-umap
     isp-stage -.->|"reuses run: dataset, model, start/end states"| state-feedback-isp
+    isp-stage -.->|"postprocess.enabled, per-gene screens"| rank-enrichment
+    state-feedback-isp -.->|"postprocess.enabled, gene positions, placebo chains"| rank-enrichment
     class orchestrator entry
     classDef external fill:#585b70,stroke:#585b70,color:#cdd6f4
     classDef concern fill:#f38ba8,stroke:#f38ba8,color:#1e1e2e
