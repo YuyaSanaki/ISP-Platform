@@ -239,6 +239,9 @@ def _write_run_provenance(
         meta["git_commit"] = git_sha
     if input_fingerprints:
         meta["input_content_fingerprints"] = input_fingerprints
+    from run_provenance import environment_versions
+
+    meta["environment"] = environment_versions()
 
     with open(run_root / "isp_run_metadata.yaml", "w", encoding="utf-8") as f:
         yaml.dump(meta, f, default_flow_style=False, sort_keys=False)

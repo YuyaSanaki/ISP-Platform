@@ -64,8 +64,7 @@ trap 'rm -f "$REQ"' EXIT
 grep -v -E '^(nvidia-|torch|tbb|triton|tensorflow|keras|deepspeed)' requirements.txt \
   | sed 's/==.*//' > "$REQ"
 uv pip install -r "$REQ"
-uv pip install "torch>=2.5" "transformers>=4.40,<5" gdown "huggingface_hub>=0.23" \
-  "typing-extensions>=4.13" "datasets==5.0.1"
+uv pip install "torch>=2.5" -r requirements-pins.txt
 
 python - <<'PY'
 import torch

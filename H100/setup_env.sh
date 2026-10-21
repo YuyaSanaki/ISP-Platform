@@ -15,7 +15,8 @@ H100_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${H100_DIR}/env.sh"
 
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
+# Same Python as the Docker image (NGC 25.03) and the macOS setup.
+PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 
 if [[ ! -f "${ISP_ROOT}/requirements.txt" ]]; then
   echo "ERROR: ${ISP_ROOT}/requirements.txt not found" >&2
@@ -43,6 +44,6 @@ trap 'rm -f "${REQ_FILTERED}"' EXIT
 grep -vE '^(nvidia-|torch|tbb|triton|tensorflow|keras)' "${ISP_ROOT}/requirements.txt" \
   | sed 's/==.*//' > "${REQ_FILTERED}"
 pip install -r "${REQ_FILTERED}"
-pip install "transformers>=4.40,<5" gdown "huggingface_hub>=0.23" "typing-extensions>=4.13"
+pip install -r "${ISP_ROOT}/requirements-pins.txt"
 
 echo "[H100] setup_env.sh done. Next: bash ${H100_DIR}/smoke_cuda.sh"
