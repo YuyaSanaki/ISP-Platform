@@ -339,11 +339,10 @@ class EmbExtractor:
     def validate_options(self):
         # first disallow options under development
         if self.emb_mode == "gene":
-            logger.error(
+            raise ValueError(
                 "Extraction and plotting of gene-level embeddings currently under development. " \
                 "Current valid option for 'emb_mode': 'cell'"
             )
-            raise
             
         # confirm arguments are within valid options and compatible with each other
         for attr_name,valid_options in self.valid_option_dict.items():
@@ -358,11 +357,10 @@ class EmbExtractor:
                     break
             if valid_type:
                 continue
-            logger.error(
+            raise ValueError(
                 f"Invalid option for {attr_name}. " \
                 f"Valid options for {attr_name}: {valid_options}"
             )
-            raise
         
         if self.filter_data is not None:
             for key,value in self.filter_data.items():
@@ -446,17 +444,15 @@ class EmbExtractor:
         """
         
         if plot_style not in ["heatmap","umap"]:
-            logger.error(
+            raise ValueError(
                 "Invalid option for 'plot_style'. " \
                 "Valid options: {'heatmap','umap'}"
             )
-            raise
         
         if (plot_style == "umap") and (self.labels_to_plot is None):
-            logger.error(
+            raise ValueError(
                 "Plotting UMAP requires 'labels_to_plot'. "
             )
-            raise
         
         if max_ncells_to_plot > self.max_ncells:
             max_ncells_to_plot = self.max_ncells

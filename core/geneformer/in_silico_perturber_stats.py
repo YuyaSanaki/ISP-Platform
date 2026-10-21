@@ -78,10 +78,9 @@ def read_dictionaries(input_data_directory, cell_or_gene_emb, anchor_token):
                                 v in cos_sims_dict.items() if v and anchor_token == k[0]}  
                 dict_list += [gene_emb_dict]
     if file_found == 0:
-        logger.error(
+        raise ValueError(
                     "No raw data for processing found within provided directory. " \
                     "Please ensure data files end with '_raw.pickle'.")
-        raise
     return dict_list
 
 # get complete gene list
@@ -522,11 +521,10 @@ class InSilicoPerturberStats:
                     break
             if valid_type:
                 continue
-            logger.error(
+            raise ValueError(
                 f"Invalid option for {attr_name}. " \
                 f"Valid options for {attr_name}: {valid_options}"
             )
-            raise
         
         if self.cell_states_to_model is not None:
             if len(self.cell_states_to_model.items()) == 1:
@@ -560,28 +558,24 @@ class InSilicoPerturberStats:
                 if (self.cell_states_to_model["state_key"] is None) \
                     or (self.cell_states_to_model["start_state"] is None) \
                     or (self.cell_states_to_model["goal_state"] is None):
-                    logger.error(
+                    raise ValueError(
                         "Please specify 'state_key', 'start_state', and 'goal_state' in cell_states_to_model.")
-                    raise
                 
                 if self.cell_states_to_model["start_state"] == self.cell_states_to_model["goal_state"]:
-                    logger.error(
+                    raise ValueError(
                         "All states must be unique.")
-                    raise
 
                 if self.cell_states_to_model["alt_states"] is not None:
                     if type(self.cell_states_to_model["alt_states"]) is not list:
-                        logger.error(
+                        raise ValueError(
                             "self.cell_states_to_model['alt_states'] must be a list (even if it is one element)."
                         )
-                        raise
                     if len(self.cell_states_to_model["alt_states"])!= len(set(self.cell_states_to_model["alt_states"])):
-                        logger.error(
+                        raise ValueError(
                             "All states must be unique.")
-                        raise
 
             else:
-                logger.error(
+                raise ValueError(
                     "cell_states_to_model must only have the following four keys: " \
                     "'state_key', 'start_state', 'goal_state', 'alt_states'." \
                     "For example, cell_states_to_model={" \
@@ -590,7 +584,6 @@ class InSilicoPerturberStats:
                             "'goal_state': 'nf', " \
                             "'alt_states': ['hcm', 'other1', 'other2']}"
                 )
-                raise
 
             if self.anchor_gene is not None:
                 self.anchor_gene = None
@@ -601,22 +594,19 @@ class InSilicoPerturberStats:
                 
         if self.combos > 0:
             if self.anchor_gene is None:
-                logger.error(
+                raise ValueError(
                     "Currently, stats are only supported for combination " \
                     "in silico perturbation run with anchor gene. Please add " \
                     "anchor gene when using with combos > 0. ")
-                raise
         
         if (self.mode == "mixture_model") and (self.genes_perturbed != "all"):
-            logger.error(
+            raise ValueError(
                     "Mixture model mode requires multiple gene perturbations to fit model " \
                     "so is incompatible with a single grouped perturbation.")
-            raise
         if (self.mode == "aggregate_data") and (self.genes_perturbed == "all"):
-            logger.error(
+            raise ValueError(
                     "Simple data aggregation mode is for single perturbation in multiple cells " \
                     "so is incompatible with a genes_perturbed being 'all'.")
-            raise            
 
     def get_stats(self,
                   input_data_directory,
@@ -682,11 +672,10 @@ class InSilicoPerturberStats:
         """
 
         if self.mode not in ["goal_state_shift", "vs_null", "mixture_model","aggregate_data"]:
-            logger.error(
+            raise ValueError(
                 "Currently, only modes available are stats for goal_state_shift, " \
                 "vs_null (comparing to null distribution), and " \
                 "mixture_model (fitting mixture model for perturbations with or without impact.")
-            raise
 
         self.gene_token_id_dict = invert_dict(self.gene_token_dict)
         self.gene_id_name_dict = invert_dict(self.gene_name_id_dict)

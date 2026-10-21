@@ -134,9 +134,8 @@ def load_and_filter(filter_data, nproc, input_data_file):
                 return example[key] in value
             data = data.filter(filter_data_by_criteria, num_proc=nproc)
         if len(data) == 0:
-            logger.error(
+            raise ValueError(
                     "No cells remain after filtering. Check filtering criteria.")
-            raise
     data_shuffled = data.shuffle(seed=42)
     return data_shuffled
 
@@ -1331,10 +1330,9 @@ class InSilicoPerturber:
         else:
             missing_genes = [gene for gene in self.genes_to_perturb if gene not in self.gene_token_dict.keys()]
             if len(missing_genes) == len(self.genes_to_perturb):
-                logger.error(
+                raise ValueError(
                     "None of the provided genes to perturb are in token dictionary."
                 )
-                raise
             elif len(missing_genes)>0:
                 logger.warning(
                     f"Genes to perturb {missing_genes} are not in token dictionary.")
@@ -1358,11 +1356,10 @@ class InSilicoPerturber:
                     break
             if valid_type:
                 continue
-            logger.error(
+            raise ValueError(
                 f"Invalid option for {attr_name}. " \
                 f"Valid options for {attr_name}: {valid_options}"
             )
-            raise
         
         if self.perturb_type in ["delete","overexpress"]:
             if self.perturb_rank_shift is not None:
@@ -1430,28 +1427,24 @@ class InSilicoPerturber:
                 if (self.cell_states_to_model["state_key"] is None) \
                     or (self.cell_states_to_model["start_state"] is None) \
                     or (self.cell_states_to_model["goal_state"] is None):
-                    logger.error(
+                    raise ValueError(
                         "Please specify 'state_key', 'start_state', and 'goal_state' in cell_states_to_model.")
-                    raise
                 
                 if self.cell_states_to_model["start_state"] == self.cell_states_to_model["goal_state"]:
-                    logger.error(
+                    raise ValueError(
                         "All states must be unique.")
-                    raise
 
                 if self.cell_states_to_model["alt_states"] is not None:
                     if type(self.cell_states_to_model["alt_states"]) is not list:
-                        logger.error(
+                        raise ValueError(
                             "self.cell_states_to_model['alt_states'] must be a list (even if it is one element)."
                         )
-                        raise
                     if len(self.cell_states_to_model["alt_states"])!= len(set(self.cell_states_to_model["alt_states"])):
-                        logger.error(
+                        raise ValueError(
                             "All states must be unique.")
-                        raise
 
             else:
-                logger.error(
+                raise ValueError(
                     "cell_states_to_model must only have the following four keys: " \
                     "'state_key', 'start_state', 'goal_state', 'alt_states'." \
                     "For example, cell_states_to_model={" \
@@ -1460,7 +1453,6 @@ class InSilicoPerturber:
                             "'goal_state': 'nf', " \
                             "'alt_states': ['hcm', 'other1', 'other2']}"
                 )
-                raise
 
             if self.anchor_gene is not None:
                 self.anchor_gene = None
@@ -1479,15 +1471,13 @@ class InSilicoPerturber:
                     
         if self.cell_inds_to_perturb != "all":
             if set(self.cell_inds_to_perturb.keys()) != {"start", "end"}:
-                logger.error(
+                raise ValueError(
                     "If cell_inds_to_perturb is a dictionary, keys must be 'start' and 'end'."
                 )
-                raise
             if self.cell_inds_to_perturb["start"] < 0 or self.cell_inds_to_perturb["end"] < 0:
-                logger.error(
+                raise ValueError(
                     'cell_inds_to_perturb must be positive.'
                 )
-                raise
 
     def perturb_data(self, 
                      model_directory,
@@ -1541,9 +1531,8 @@ class InSilicoPerturber:
             state_values = filtered_input_data[state_name]
             for value in get_possible_states(self.cell_states_to_model):
                 if value not in state_values:
-                    logger.error(
+                    raise ValueError(
                         f"{value} is not present in the dataset's {state_name} attribute.")
-                    raise
             # get dictionary of average cell state embeddings for comparison
             logger.info(
                 "ISP phase 1/2: computing reference embeddings for cell states "
@@ -1591,9 +1580,8 @@ class InSilicoPerturber:
                 return (len(set(example["input_ids"]).intersection(self.anchor_token))==len(self.anchor_token))
             filtered_input_data = filtered_input_data.filter(if_has_tokens_to_perturb, num_proc=self.nproc) 
             if len(filtered_input_data) == 0:
-                logger.error(
+                raise ValueError(
                         "No cells in dataset contain anchor gene.")
-                raise
             else:
                 logger.info(f"# cells with anchor gene: {len(filtered_input_data)}")
             
@@ -1605,9 +1593,8 @@ class InSilicoPerturber:
                 return (len(set(example["input_ids"]).intersection(self.tokens_to_perturb))>=min_genes)
             filtered_input_data = filtered_input_data.filter(if_has_tokens_to_perturb, num_proc=self.nproc)
             if len(filtered_input_data) == 0:
-                logger.error(
+                raise ValueError(
                         "No cells in dataset contain all genes to perturb as a group.")
-                raise
             
         cos_sims_dict = defaultdict(list)
         pickle_batch = -1
@@ -1625,8 +1612,7 @@ class InSilicoPerturber:
 
         if self.cell_inds_to_perturb != "all":
             if self.cell_inds_to_perturb["start"] >= len(filtered_input_data):
-                logger.error("cell_inds_to_perturb['start'] is larger than the filtered dataset.")
-                raise
+                raise ValueError("cell_inds_to_perturb['start'] is larger than the filtered dataset.")
             if self.cell_inds_to_perturb["end"] > len(filtered_input_data):
                 logger.warning("cell_inds_to_perturb['end'] is larger than the filtered dataset. \
                                Setting to the end of the filtered dataset.")
