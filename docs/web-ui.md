@@ -99,7 +99,7 @@ Conversion runs automatically at **tokenize** and **ISP**. After tokenize you ge
 
 **Dropped-gene table (Web UI):** **Output** (and Analysis → Outputs after a Pipeline run) shows whether ortholog conversion dropped genes, which IDs/symbols, why (e.g. one-to-many), and a **brief function** one-liner (curated note when we have one, otherwise NCBI official full name from `gene_brief_function.tsv.gz`). Same-species runs have no conversion report.
 
-There is **no free-form gene-ID field** for ortholog pairs in the UI. Project bridges use a curated overlay file on disk, entered in **Project curated overlay** (the approval card falls back to `analysis/ortholog_policy/v1` when present), not hand-typed Ensembl IDs. The **Critical genes** field of the loss gate lists genes to check, not ortholog pairs.
+There is **no free-form gene-ID field** for ortholog pairs in the UI. Project bridges use a curated overlay file on disk, entered in **Project curated overlay** (the approval card falls back to `analysis/ortholog_policy/v1` when present), not hand-typed Ensembl IDs. The repository ships no project overlay and no `analysis/analysis_manifest.yaml`: a curated bridge and an audit manifest are decisions for each analysis, so supply your own reviewed files. The card says which overlay it uses and where it came from. The **Critical genes** field of the loss gate lists genes to check, not ortholog pairs.
 
 ### Worked examples (species selectors)
 

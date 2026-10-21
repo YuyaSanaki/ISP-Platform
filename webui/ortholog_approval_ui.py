@@ -27,6 +27,8 @@ from geneformer.ortholog_loss_gate import (  # noqa: E402
     write_approval_record,
 )
 
+# Optional project files, used only when present. The repository ships neither: a curated
+# bridge and an audit manifest are decisions for each analysis, so the user supplies them.
 DEFAULT_PROJECT_OVERLAY = ROOT / "analysis" / "ortholog_policy" / "v1"
 DEFAULT_PROJECT_AUDIT = ROOT / "analysis" / "analysis_manifest.yaml"
 
