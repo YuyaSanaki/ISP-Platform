@@ -1,6 +1,7 @@
-
-
-![ISP Platform](docs/logo.png)
+<!-- Keep this logo. Source: docs/logo.png. Do not remove when editing README.md. -->
+<p align="center">
+  <img src="docs/logo.png" alt="ISP Platform" width="280">
+</p>
 
 # ISP Platform
 
