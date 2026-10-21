@@ -554,6 +554,7 @@ def _load_streamlit_app_helpers():
     su = types.ModuleType("streamlit_upload")
     for attr in (
         "import_study_zip",
+        "import_study_zip_path",
         "normalize_study_name",
         "resolve_study_tokenize_dir",
         "study_folder",
@@ -1201,16 +1202,19 @@ class TestPipelineRunZip(unittest.TestCase):
                 (run_dir / "loom_files" / "x.loom").parent.mkdir(parents=True, exist_ok=True)
                 (run_dir / "loom_files" / "x.loom").write_bytes(b"LOOM")
 
-                payload = app._build_pipeline_run_zip(run_dir)
+                workspace = Path(tmp) / "workspace"
+                with mock.patch.object(app, "WORKSPACE", workspace):
+                    payload = app._build_pipeline_run_zip(run_dir)
                 self.assertIsNotNone(payload)
-                data, name = payload
+                zip_path, name = payload
                 self.assertTrue(name.endswith(".zip"))
                 self.assertTrue(name.startswith("pipeline_"))
+                self.assertEqual(zip_path.parent, workspace / "downloads")
+                self.assertFalse(zip_path.with_suffix(".zip.part").exists())
 
-                import io
                 import zipfile
 
-                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                with zipfile.ZipFile(zip_path) as zf:
                     names = set(zf.namelist())
                 joined = "\n".join(names)
                 self.assertIn("pipeline_run.log", joined)
