@@ -68,6 +68,8 @@ model:
 # ── Training hyperparameters ────────────────────────────────────────
 training:
   learning_rate: 5e-5
+  # Prefer 4–8 around default 6 (result stability with fixed LR / epochs).
+  # CLI does not enforce this range; Web UI clamps train_batch_size to 4–8.
   batch_size: 6
   eval_batch_size: 2
   lr_scheduler_type: linear   # linear | cosine | polynomial
