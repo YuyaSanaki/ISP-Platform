@@ -327,5 +327,28 @@ class TestRunDirAndConfigRecord(unittest.TestCase):
             )
 
 
+class TestReportRunDir(unittest.TestCase):
+    """The Web UI reads the run folder from this file instead of guessing by mtime."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rp = _load_run_pipeline()
+
+    def test_writes_run_dir_when_env_names_a_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "pipeline_run_dir.txt"
+            run_dir = Path(tmp) / "pipeline_000000_000000Z"
+            run_dir.mkdir()
+            with mock.patch.dict("os.environ", {self.rp.RUN_DIR_FILE_ENV: str(marker)}):
+                self.rp._report_run_dir(run_dir)
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), str(run_dir.resolve()))
+
+    def test_no_env_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict("os.environ", {}, clear=True):
+                self.rp._report_run_dir(Path(tmp))
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

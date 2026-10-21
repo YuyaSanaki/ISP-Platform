@@ -51,6 +51,20 @@ def _utc_pipeline_folder_name(now_utc: datetime) -> str:
     return f"pipeline_{now_utc.strftime('%H%M%S')}_{now_utc.microsecond:06d}Z"
 
 
+RUN_DIR_FILE_ENV = "ISP_PIPELINE_RUN_DIR_FILE"
+
+
+def _report_run_dir(run_dir: Path) -> None:
+    """Write the run folder to the file named in ISP_PIPELINE_RUN_DIR_FILE (Web UI jobs)."""
+    target = os.environ.get(RUN_DIR_FILE_ENV, "").strip()
+    if not target:
+        return
+    try:
+        Path(target).write_text(f"{run_dir.resolve()}\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"WARNING: could not write {RUN_DIR_FILE_ENV}={target}: {exc}", flush=True)
+
+
 def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
     """Fail before tokenize/fine-tune when ISP states cannot exist or are not unique."""
     perturbation = pipeline.get("perturbation") or {}
@@ -346,6 +360,7 @@ def main() -> None:
         now_utc = datetime.now(timezone.utc)
         run_dir = output_root / date_used / _utc_pipeline_folder_name(now_utc)
         run_dir.mkdir(parents=True, exist_ok=True)
+    _report_run_dir(run_dir)
 
     resolved = resolve_pipeline_paths(pipeline, run_dir)
     # ISP is optional for some E2E workflows (UMAP-only preview), so avoid

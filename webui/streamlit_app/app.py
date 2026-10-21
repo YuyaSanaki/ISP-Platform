@@ -283,6 +283,9 @@ FT_BATCH_RESULT_MARKER = "RECOMMENDED_TRAIN_BATCH_SIZE="
 # and the selected checkpoint often diverge enough to change ISP results
 # (batch 2 vs 6 is a known failure mode). CLI YAML is not enforced — comments only.
 DEFAULT_FT_TRAIN_BATCH_SIZE = 6
+# run_pipeline.py writes its run folder to this file (path passed in the env var).
+PIPELINE_RUN_DIR_FILE_ENV = "ISP_PIPELINE_RUN_DIR_FILE"
+PIPELINE_RUN_DIR_FILENAME = "pipeline_run_dir.txt"
 MIN_FT_TRAIN_BATCH_SIZE = 4
 MAX_FT_TRAIN_BATCH_SIZE = 8
 
@@ -565,6 +568,7 @@ def _build_command_and_env(run_label: str, config_path: Path) -> tuple[list[str]
     elif run_label == RUN_TYPE_PIPELINE:
         cmd = ["python3", str(CORE / "run_pipeline.py"), "--config", cfg]
         env["PIPELINE_CONFIG"] = cfg
+        env[PIPELINE_RUN_DIR_FILE_ENV] = str(config_path.parent / PIPELINE_RUN_DIR_FILENAME)
         env.setdefault("ISP_NUM_GPUS", os.environ.get("ISP_NUM_GPUS", "1"))
     elif run_label == RUN_TYPE_FT_BATCH:
         cmd = ["python3", str(CORE / "run_ft_batch_calibrate.py"), "--config", cfg]
@@ -2519,12 +2523,28 @@ def _newest_pipeline_run_since(output_root: str | Path, since_ts: float) -> Path
     return None
 
 
+def _reported_pipeline_run_dir(web_run_dir: str | Path | None) -> Path | None:
+    """Run folder that run_pipeline.py wrote into the Web UI run folder, if any."""
+    if not web_run_dir:
+        return None
+    marker = Path(web_run_dir) / PIPELINE_RUN_DIR_FILENAME
+    try:
+        text = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    path = Path(localize_path(text)) if text else None
+    return path if path is not None and path.is_dir() else None
+
+
 def _sync_pipeline_output_run_dir() -> None:
     """Set pipeline_output_run_dir after Run job creates DATE/pipeline_<UTC>/."""
     started = st.session_state.get("pipeline_job_started_ts")
     if started is None or st.session_state.get("run_type_sel") != RUN_TYPE_PIPELINE:
         return
-    found = _newest_pipeline_run_since(_display_output_root_line(), float(started))
+    found = _reported_pipeline_run_dir(st.session_state.get("last_run_dir"))
+    if found is None:
+        # Jobs started before the run folder was reported (older runs folders).
+        found = _newest_pipeline_run_since(_display_output_root_line(), float(started))
     if found is not None:
         st.session_state["pipeline_output_run_dir"] = str(found.resolve())
 
