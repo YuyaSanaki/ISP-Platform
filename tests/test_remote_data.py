@@ -1,6 +1,7 @@
 """Tests for URL → study import (streamlit_remote_data)."""
 from __future__ import annotations
 
+import os
 import sys
 
 import http.server
@@ -9,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 for _p in (ROOT / "core", ROOT / "contracts", ROOT / "webui"):
@@ -48,6 +50,14 @@ class TestRemoteDataImport(unittest.TestCase):
         )
         if not cls.fixture.is_file():
             raise unittest.SkipTest(f"Missing fixture zip: {cls.fixture}")
+
+    def setUp(self) -> None:
+        # The fixture server listens on 127.0.0.1, which URL import refuses by default.
+        from streamlit_remote_data import ALLOW_PRIVATE_ENV
+
+        env = mock.patch.dict("os.environ", {ALLOW_PRIVATE_ENV: "1"})
+        env.start()
+        self.addCleanup(env.stop)
 
     def test_validate_rejects_non_http(self) -> None:
         from streamlit_remote_data import RemoteDataError, validate_data_url
@@ -196,6 +206,57 @@ class TestRemoteDataImport(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+
+class TestUrlImportRefusesPrivateHosts(unittest.TestCase):
+    """The server fetches the URL, so it must not reach its own network (SSRF)."""
+
+    def setUp(self) -> None:
+        from streamlit_remote_data import ALLOW_PRIVATE_ENV
+
+        env = mock.patch.dict("os.environ")
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop(ALLOW_PRIVATE_ENV, None)
+
+    def test_loopback_link_local_and_lan_are_refused(self) -> None:
+        from streamlit_remote_data import RemoteDataError, check_public_host
+
+        for url in (
+            "http://127.0.0.1:8502/",
+            "http://localhost/x.zip",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.5/data.zip",
+            "http://192.168.1.10/data.zip",
+            "http://[::1]/data.zip",
+        ):
+            with self.subTest(url=url), self.assertRaises(RemoteDataError):
+                check_public_host(url)
+
+    def test_public_address_is_allowed(self) -> None:
+        from streamlit_remote_data import check_public_host
+
+        check_public_host("https://93.184.215.14/data.zip")
+
+    def test_download_to_local_server_is_refused(self) -> None:
+        from streamlit_remote_data import RemoteDataError, download_url_to_file
+
+        base, _thread, server = _serve_directory(ROOT / "tests")
+        try:
+            with tempfile.TemporaryDirectory() as tmp, self.assertRaises(RemoteDataError):
+                download_url_to_file(f"{base}/test_remote_data.py", Path(tmp) / "out.bin")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_redirect_to_private_host_is_refused(self) -> None:
+        from streamlit_remote_data import RemoteDataError, _PublicRedirectHandler
+
+        handler = _PublicRedirectHandler()
+        with self.assertRaises(RemoteDataError):
+            handler.redirect_request(None, None, 302, "Found", {}, "http://127.0.0.1/secret")
+        with self.assertRaises(RemoteDataError):
+            handler.redirect_request(None, None, 302, "Found", {}, "file:///etc/passwd")
 
 
 if __name__ == "__main__":
