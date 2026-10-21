@@ -9,8 +9,8 @@ WORKDIR /app
 # Install uv directly from its official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Copy requirements file
-COPY requirements.txt .
+# Copy requirements files
+COPY requirements.txt requirements-pins.txt ./
 
 # Install Python dependencies via uv.
 # We strip out torch, torchvision, torchaudio, tbb, triton and nvidia-* because the NGC PyTorch image already provides highly-optimized versions.
@@ -21,10 +21,8 @@ RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
     grep -v "^nvidia-" requirements.txt | grep -v "^torch" | grep -v "^tbb" | grep -v "^triton" | grep -v "^tensorflow" | grep -v "^keras" | \
     sed 's/==.*//' > req_filtered.txt && \
     uv pip install --system -r req_filtered.txt && \
-    # anndata>=0.12 / scverse-misc need typing_extensions.Format (added in 4.13).
-    # NGC base may already ship 4.12.x; force upgrade so imports do not break.
-    # datasets >= 5.1 imports huggingface_hub >= 1.0 APIs, but transformers < 5 needs huggingface_hub < 1.0.
-    uv pip install --system "transformers>=4.40,<5" gdown "huggingface_hub>=0.23" "typing-extensions>=4.13" "datasets==5.0.1"
+    # Shared pins (same file as macOS and H100). NGC may ship typing_extensions 4.12.x; this upgrades it.
+    uv pip install --system -r requirements-pins.txt
 
 # Copy the rest of the project (models/ and *.pkl excluded via .dockerignore)
 COPY . .

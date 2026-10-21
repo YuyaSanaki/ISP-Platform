@@ -1,12 +1,47 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+RECORDED_PACKAGES = (
+    "torch",
+    "transformers",
+    "datasets",
+    "huggingface-hub",
+    "accelerate",
+    "numpy",
+    "scipy",
+    "pandas",
+    "scikit-learn",
+    "anndata",
+    "scanpy",
+    "loompy",
+    "umap-learn",
+)
+
+
+def environment_versions() -> dict[str, Any]:
+    """Python and key package versions; the setups do not pin every dependency."""
+    from importlib import metadata
+
+    packages: dict[str, str | None] = {}
+    for name in RECORDED_PACKAGES:
+        try:
+            packages[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            packages[name] = None
+    return {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "packages": packages,
+    }
 
 
 def _service_git_commit_env(service: str) -> str:
@@ -72,6 +107,7 @@ def write_service_provenance(
             pass
     if git_sha:
         meta["git_commit"] = git_sha
+    meta.setdefault("environment", environment_versions())
 
     if input_paths and os.environ.get("ENABLE_INPUT_FINGERPRINT", "").lower() in (
         "1",

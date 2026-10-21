@@ -1,0 +1,9 @@
+# Installed after requirements.txt (whose == pins are stripped) by the Dockerfile,
+# scripts/macos/setup.sh and H100/setup_env.sh, so all three resolve the same core stack.
+# datasets >= 5.1 imports huggingface_hub >= 1.0 APIs, but transformers < 5 needs huggingface_hub < 1.0.
+# anndata >= 0.12 needs typing_extensions.Format (added in 4.13).
+transformers>=4.40,<5
+huggingface_hub>=0.23
+typing-extensions>=4.13
+datasets==5.0.1
+gdown

@@ -1241,6 +1241,9 @@ def main() -> int:
             "Phase 3 (MLP / multi-step) only after the primary axis is settled."
         ),
     }
+    from run_provenance import environment_versions
+
+    manifest["environment"] = environment_versions()
     (output_root / "run_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Wrote {summary_path}", flush=True)
     print(f"Wrote {gate_path}", flush=True)
