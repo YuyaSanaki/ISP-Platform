@@ -1490,4 +1490,4 @@ def run_ortholog_loss_gate(
         return result
     except OrthologApprovalError as exc:
         print(f"  ortholog_loss_gate: approval rejected: {exc}")
-        raise SystemExit(2) from exc
+        raise
