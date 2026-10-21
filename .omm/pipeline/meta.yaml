@@ -1,15 +1,16 @@
 created: 2026-10-11T07:24:53.043Z
-updated: 2026-10-12T09:10:00.000Z
-update_count: 5
+updated: 2026-10-21T09:45:00.000Z
+update_count: 6
 last_field: diagram
-git_commit: 764100f
-git_branch: main
+git_commit: 462805a
+git_branch: v1.4.1
 children:
   - finetune-stage
   - ft-batch-calibrate
   - isp-stage
   - isp-umap
   - orchestrator
+  - rank-enrichment
   - state-feedback-isp
   - tokenize-stage
 prev_diagram: >
@@ -20,15 +21,15 @@ prev_diagram: >
       finetune-stage["Fine-tune\ncore/run_finetune.py"]
       isp-stage["ISP\ncore/run_isp.py"]
       isp-umap["ISP UMAP\ncore/run_isp_umap.py"]
-      state-feedback-isp["State-feedback ISP\ncore/run_state_feedback_isp.py"]
+      state-feedback-isp["State-feedback ISP\nrun_state_feedback_stability.py, run_state_feedback_isp.py"]
       orchestrator -->|"subprocess, TOKENIZE_CONFIG"| tokenize-stage
       orchestrator -->|"subprocess, stage_configs/finetune.yaml"| finetune-stage
       orchestrator -->|"accelerate launch, stage_configs/isp.yaml"| isp-stage
-      orchestrator -->|"TOP1 significant gene, PCA 50, seed 0"| isp-umap
+      orchestrator -->|"TOP1 significant gene or gene list, PCA 50, seed 0"| isp-umap
       ft-batch-calibrate -.->|"train_batch_size pasted by user"| finetune-stage
-      tokenize-stage -->|"tokenized_dataset/study_0.dataset"| finetune-stage
+      tokenize-stage -->|"tokenized_dataset, all shards"| finetune-stage
       tokenize-stage -->|"tokenized dataset"| isp-stage
-      finetune-stage -->|"finetune/all_run1 + label_dict.json"| isp-stage
+      finetune-stage -->|"best finetune run + label_dict.json"| isp-stage
       isp-stage -->|"ispstats_results/significant_genes.csv"| isp-umap
       isp-stage -.->|"reuses run: dataset, model, start/end states"| state-feedback-isp
       class orchestrator entry
