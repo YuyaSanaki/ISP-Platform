@@ -7,11 +7,14 @@ Layout: data upload | run type | YAML configuration | execute + live log + outpu
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import zipfile
@@ -199,8 +202,10 @@ resolve_single_cell_input_dir = _dil.resolve_single_cell_input_dir
 unique_states_from_samples = _dil.unique_states_from_samples
 label_column_candidates_from_study = _dil.label_column_candidates_from_study
 
+from webui_auth import require_login
+
 from streamlit_upload import (
-    import_study_zip,
+    import_study_zip_path,
     normalize_study_name,
     resolve_study_tokenize_dir,
     study_folder,
@@ -377,8 +382,11 @@ def _pipeline_zip_skip(rel: Path) -> bool:
     return False
 
 
-def _build_pipeline_run_zip(run_dir: Path) -> tuple[bytes, str] | None:
-    """Zip one pipeline_* run for download (skips tokenized data and training checkpoints)."""
+def _build_pipeline_run_zip(run_dir: Path) -> tuple[Path, str] | None:
+    """Zip one pipeline_* run for download (skips tokenized data and training checkpoints).
+
+    The zip is written to ``{workspace}/downloads/`` so it is not kept in session memory.
+    """
     run_dir = run_dir.resolve()
     if not run_dir.is_dir() or not run_dir.name.startswith("pipeline_"):
         return None
@@ -395,11 +403,50 @@ def _build_pipeline_run_zip(run_dir: Path) -> tuple[bytes, str] | None:
     if not entries:
         return None
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    out_dir = _ensure_workspace() / "downloads"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = out_dir / f"{run_dir.name}.zip"
+    tmp_path = zip_path.with_suffix(".zip.part")
+    with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for fp, arcname in entries:
             zf.write(fp, arcname=arcname)
-    return buf.getvalue(), f"{run_dir.name}.zip"
+    tmp_path.replace(zip_path)
+    return zip_path, zip_path.name
+
+
+# Streamlit serves a download button's data from memory, so very large zips are offered as
+# a server path instead of a button.
+MAX_BROWSER_ZIP_BYTES = 2 * 1024**3
+
+
+def _render_prepared_run_zip(state_prefix: str, label: str, key: str, help_text: str) -> None:
+    zip_path = Path(st.session_state[f"{state_prefix}_path"])
+    if not zip_path.is_file():
+        st.warning(f"Prepared zip is gone: `{zip_path}`. Prepare it again.")
+        return
+    size = zip_path.stat().st_size
+    if size > MAX_BROWSER_ZIP_BYTES:
+        st.info(
+            f"The zip is {size / 1024**3:.1f} GiB, too large to serve through the browser. "
+            f"Copy it from the server: `{zip_path}`"
+        )
+        return
+    with zip_path.open("rb") as fh:
+        st.download_button(
+            label=f"{label} — {zip_path.name}",
+            data=fh,
+            file_name=zip_path.name,
+            mime="application/zip",
+            key=key,
+            help=help_text,
+        )
+
+
+def _clear_prepared_run_zip(state_prefix: str) -> None:
+    raw = st.session_state.pop(f"{state_prefix}_path", None)
+    st.session_state.pop(f"{state_prefix}_for", None)
+    if raw:
+        Path(raw).unlink(missing_ok=True)
 
 
 def _pipeline_run_summary(run_dir: Path) -> list[str]:
@@ -2660,7 +2707,20 @@ def _sync_isp_state_selectors(
 
 
 def _zip_upload_fingerprint(uploaded_file) -> str:
-    return f"{uploaded_file.name}:{getattr(uploaded_file, 'size', 0)}"
+    """Name, size and SHA-256 of the content (two zips can share name and size)."""
+    cached = getattr(uploaded_file, "_isp_sha256", None)
+    if cached is None:
+        h = hashlib.sha256()
+        uploaded_file.seek(0)
+        for block in iter(lambda: uploaded_file.read(1 << 20), b""):
+            h.update(block)
+        uploaded_file.seek(0)
+        cached = h.hexdigest()
+        try:
+            uploaded_file._isp_sha256 = cached
+        except AttributeError:
+            pass
+    return f"{uploaded_file.name}:{getattr(uploaded_file, 'size', 0)}:{cached}"
 
 
 def _raw_study_name() -> str:
@@ -2716,9 +2776,14 @@ def _apply_study_settings_to_yaml(upload_dir: Path) -> bool:
 
 def _process_study_zip_upload(uploaded_file, upload_dir: Path) -> None:
     """Import zip once; do not re-run on every widget rerun."""
-    buf = uploaded_file.getbuffer()
-    data = buf.getvalue() if hasattr(buf, "getvalue") else bytes(buf)
-    tokenize_dir, summary = import_study_zip(data, upload_dir, _raw_study_name())
+    # Copy to disk in blocks and import from the file, so no second in-memory copy is made.
+    with tempfile.TemporaryDirectory(prefix="gf_upload_") as tmp:
+        zip_path = Path(tmp) / "upload.zip"
+        uploaded_file.seek(0)
+        with zip_path.open("wb") as out:
+            shutil.copyfileobj(uploaded_file, out, length=1 << 20)
+        uploaded_file.seek(0)
+        tokenize_dir, summary = import_study_zip_path(zip_path, upload_dir, _raw_study_name())
     _finish_study_import(
         tokenize_dir,
         summary,
@@ -4035,11 +4100,24 @@ def _render_ortholog_approval_card(upload_dir: Path) -> None:
         "run with `ortholog_policy: best_of_n` manually if needed."
     )
 
-    approved_by = st.text_input(
-        "Approved by (required)",
-        key="ortholog_approved_by",
-        help="Audit identity for the approval_record (no login system).",
-    )
+    login_user = st.session_state.get("webui_auth_user")
+    if login_user:
+        approved_by = str(login_user)
+        st.text_input(
+            "Approved by",
+            value=approved_by,
+            disabled=True,
+            help="The logged-in user (ISP_WEBUI_USERS_FILE) is recorded as authenticated_user.",
+        )
+    else:
+        approved_by = st.text_input(
+            "Approved by (required)",
+            key="ortholog_approved_by",
+            help=(
+                "Free-text audit name. Set ISP_WEBUI_USERS_FILE to require a login and "
+                "record the logged-in user instead."
+            ),
+        )
     reason = st.text_area(
         "Reason (required)",
         key="ortholog_approval_reason",
@@ -4101,6 +4179,7 @@ def _render_ortholog_approval_card(upload_dir: Path) -> None:
             reason=reason,
             overlay_path=overlay if ui_action == "curated_bridge" else None,
             ui_session_id=str(sid) if sid else None,
+            authenticated_user=str(login_user) if login_user else None,
         )
     except _OrthologApprovalError as exc:
         st.error(f"Approval rejected (fail-closed): {exc}")
@@ -4617,27 +4696,21 @@ def _render_output_browser() -> None:
                 with st.spinner("Building zip…"):
                     zip_payload = _build_pipeline_run_zip(run_dir)
                 if zip_payload:
-                    st.session_state["output_browser_zip_bytes"] = zip_payload[0]
-                    st.session_state["output_browser_zip_name"] = zip_payload[1]
+                    st.session_state["output_browser_zip_path"] = str(zip_payload[0])
                     st.session_state["output_browser_zip_for"] = str(run_dir)
                 else:
-                    st.session_state.pop("output_browser_zip_bytes", None)
-                    st.session_state.pop("output_browser_zip_name", None)
-                    st.session_state.pop("output_browser_zip_for", None)
+                    _clear_prepared_run_zip("output_browser_zip")
                     st.warning("No downloadable files found in this run folder.")
                 st.rerun()
         else:
-            st.download_button(
-                label=f"Download run (.zip) — {st.session_state['output_browser_zip_name']}",
-                data=st.session_state["output_browser_zip_bytes"],
-                file_name=st.session_state["output_browser_zip_name"],
-                mime="application/zip",
-                key="output_browser_dl_zip",
+            _render_prepared_run_zip(
+                "output_browser_zip",
+                "Download run (.zip)",
+                "output_browser_dl_zip",
+                "Figures, ISP stats, logs, configs, fine-tuned weights.",
             )
             if st.button("Clear prepared zip", type="secondary", key="output_browser_clear_zip"):
-                st.session_state.pop("output_browser_zip_bytes", None)
-                st.session_state.pop("output_browser_zip_name", None)
-                st.session_state.pop("output_browser_zip_for", None)
+                _clear_prepared_run_zip("output_browser_zip")
                 st.rerun()
 
     st.divider()
@@ -4702,6 +4775,9 @@ def _render_output_browser() -> None:
 def main() -> None:
     st.set_page_config(page_title="ISP Platform", layout="wide")
     st.title("ISP Platform")
+    login_user = require_login(st)
+    if login_user:
+        st.caption(f"Logged in as **{login_user}**")
     st.caption(
         "Tokenize → fine-tune → ISP for Mouse or Human Geneformer. "
         "Choose the **input data species** and the **model for FT/ISP** separately."
@@ -5438,31 +5514,22 @@ def _render_analysis_panel() -> None:
                     with st.spinner("Building zip…"):
                         zip_payload = _build_pipeline_run_zip(run_path)
                     if zip_payload:
-                        st.session_state["pipeline_zip_bytes"] = zip_payload[0]
-                        st.session_state["pipeline_zip_name"] = zip_payload[1]
+                        st.session_state["pipeline_zip_path"] = str(zip_payload[0])
                         st.session_state["pipeline_zip_for"] = str(run_path)
                     else:
-                        st.session_state.pop("pipeline_zip_bytes", None)
-                        st.session_state.pop("pipeline_zip_name", None)
-                        st.session_state.pop("pipeline_zip_for", None)
+                        _clear_prepared_run_zip("pipeline_zip")
                         st.warning("No downloadable files found in this run folder.")
                     st.rerun()
             else:
-                st.download_button(
-                    label=f"Download pipeline run (.zip) — {st.session_state['pipeline_zip_name']}",
-                    data=st.session_state["pipeline_zip_bytes"],
-                    file_name=st.session_state["pipeline_zip_name"],
-                    mime="application/zip",
-                    key="dl_pipeline_run_zip",
-                    help=(
-                        "Figures, ISP stats/results, logs, configs, and the fine-tuned "
-                        "model weights (no tokenized dataset / intermediate checkpoints)."
-                    ),
+                _render_prepared_run_zip(
+                    "pipeline_zip",
+                    "Download pipeline run (.zip)",
+                    "dl_pipeline_run_zip",
+                    "Figures, ISP stats/results, logs, configs, and the fine-tuned "
+                    "model weights (no tokenized dataset / intermediate checkpoints).",
                 )
-                if st.button("Clear prepared zip from memory", type="secondary"):
-                    st.session_state.pop("pipeline_zip_bytes", None)
-                    st.session_state.pop("pipeline_zip_name", None)
-                    st.session_state.pop("pipeline_zip_for", None)
+                if st.button("Clear prepared zip", type="secondary"):
+                    _clear_prepared_run_zip("pipeline_zip")
                     st.rerun()
         _render_dropped_genes_panel(
             [pipeline_run, st.session_state.get("last_run_dir")],
