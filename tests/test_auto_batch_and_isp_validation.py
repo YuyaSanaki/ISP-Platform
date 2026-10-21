@@ -720,17 +720,38 @@ class TestBatchSizeYamlControls(unittest.TestCase):
                 "runtime:\n  forward_batch_size: auto\n"
                 "data:\n  input_dir: /app/data/x\n"
             )
-            st.session_state["pipeline_ft_train_batch_size"] = 32
+            st.session_state["pipeline_ft_train_batch_size"] = 5
             app._apply_ft_train_batch_to_yaml()
             patched = __import__("yaml").safe_load(st.session_state["yaml_editor"])
-            self.assertEqual(patched["runtime"]["train_batch_size"], 32)
+            self.assertEqual(patched["runtime"]["train_batch_size"], 5)
             self.assertEqual(patched["runtime"]["forward_batch_size"], "auto")
+
+            st.session_state["calibrated_ft_batch_size"] = 7
+            app._apply_calibrated_ft_batch_to_pipeline()
+            self.assertEqual(st.session_state["pipeline_ft_train_batch_size"], 7)
+            patched = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            self.assertEqual(patched["runtime"]["train_batch_size"], 7)
+
+            # Outside the Web UI range is clamped (CLI YAML is not enforced).
+            st.session_state["pipeline_ft_train_batch_size"] = 32
+            app._apply_ft_train_batch_to_yaml()
+            self.assertEqual(
+                st.session_state["pipeline_ft_train_batch_size"],
+                app.MAX_FT_TRAIN_BATCH_SIZE,
+            )
+            patched = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            self.assertEqual(
+                patched["runtime"]["train_batch_size"], app.MAX_FT_TRAIN_BATCH_SIZE
+            )
 
             st.session_state["calibrated_ft_batch_size"] = 48
             app._apply_calibrated_ft_batch_to_pipeline()
-            self.assertEqual(st.session_state["pipeline_ft_train_batch_size"], 48)
-            patched = __import__("yaml").safe_load(st.session_state["yaml_editor"])
-            self.assertEqual(patched["runtime"]["train_batch_size"], 48)
+            self.assertEqual(
+                st.session_state["pipeline_ft_train_batch_size"],
+                app.MAX_FT_TRAIN_BATCH_SIZE,
+            )
+            self.assertEqual(app._clamp_ft_train_batch_size(2), app.MIN_FT_TRAIN_BATCH_SIZE)
+            self.assertEqual(app._clamp_ft_train_batch_size(6), 6)
         finally:
             _restore_modules(saved)
 
@@ -755,7 +776,10 @@ class TestBatchSizeYamlControls(unittest.TestCase):
                 st.session_state["last_exit_code"] = 0
                 app._ingest_ft_batch_calibrate_result()
                 self.assertEqual(st.session_state["calibrated_ft_batch_size"], 16)
-                self.assertEqual(st.session_state["pipeline_ft_train_batch_size"], 16)
+                self.assertEqual(
+                    st.session_state["pipeline_ft_train_batch_size"],
+                    app.MAX_FT_TRAIN_BATCH_SIZE,
+                )
         finally:
             _restore_modules(saved)
 

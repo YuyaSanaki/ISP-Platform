@@ -278,7 +278,13 @@ _MAX_ISP_STEPS = 12
 
 FT_BATCH_RESULT_FILENAME = "recommended_train_batch_size.json"
 FT_BATCH_RESULT_MARKER = "RECOMMENDED_TRAIN_BATCH_SIZE="
+# Web UI only: keep FT train_batch_size near the platform default of 6.
+# Outside 4–8 (same LR / epochs, load_best_model_at_end), optimizer step counts
+# and the selected checkpoint often diverge enough to change ISP results
+# (batch 2 vs 6 is a known failure mode). CLI YAML is not enforced — comments only.
 DEFAULT_FT_TRAIN_BATCH_SIZE = 6
+MIN_FT_TRAIN_BATCH_SIZE = 4
+MAX_FT_TRAIN_BATCH_SIZE = 8
 
 
 def _default_config_path(run_label: str) -> Path:
@@ -2370,29 +2376,45 @@ def _apply_batch_size_to_yaml() -> None:
     _patch_pipeline_yaml(forward_batch_size=_selected_forward_batch_size())
 
 
+def _clamp_ft_train_batch_size(value: int) -> int:
+    """Clamp fine-tune train_batch_size to the Web UI allowed range [4, 8]."""
+    return max(MIN_FT_TRAIN_BATCH_SIZE, min(MAX_FT_TRAIN_BATCH_SIZE, int(value)))
+
+
 def _sync_ft_train_batch_controls() -> None:
     """Initialize Pipeline fine-tune train_batch_size from YAML or last calibration."""
     if "pipeline_ft_train_batch_size" in st.session_state:
+        st.session_state["pipeline_ft_train_batch_size"] = _clamp_ft_train_batch_size(
+            int(st.session_state["pipeline_ft_train_batch_size"])
+        )
         return
     calibrated = st.session_state.get("calibrated_ft_batch_size")
     if isinstance(calibrated, int) and calibrated >= 1:
-        st.session_state["pipeline_ft_train_batch_size"] = calibrated
+        st.session_state["pipeline_ft_train_batch_size"] = _clamp_ft_train_batch_size(
+            calibrated
+        )
         return
     raw = (_read_pipeline_yaml().get("runtime") or {}).get("train_batch_size")
     try:
         value = int(raw)
     except (TypeError, ValueError):
         value = DEFAULT_FT_TRAIN_BATCH_SIZE
-    st.session_state["pipeline_ft_train_batch_size"] = max(1, value)
+    st.session_state["pipeline_ft_train_batch_size"] = _clamp_ft_train_batch_size(value)
 
 
 def _selected_ft_train_batch_size() -> int:
-    return int(
-        st.session_state.get("pipeline_ft_train_batch_size", DEFAULT_FT_TRAIN_BATCH_SIZE)
+    return _clamp_ft_train_batch_size(
+        int(
+            st.session_state.get(
+                "pipeline_ft_train_batch_size", DEFAULT_FT_TRAIN_BATCH_SIZE
+            )
+        )
     )
 
 
 def _apply_ft_train_batch_to_yaml() -> None:
+    # Keep session state inside the widget range before writing YAML.
+    st.session_state["pipeline_ft_train_batch_size"] = _selected_ft_train_batch_size()
     _patch_pipeline_yaml(train_batch_size=_selected_ft_train_batch_size())
 
 
@@ -2400,7 +2422,9 @@ def _apply_calibrated_ft_batch_to_pipeline() -> None:
     calibrated = st.session_state.get("calibrated_ft_batch_size")
     if not isinstance(calibrated, int) or calibrated < 1:
         return
-    st.session_state["pipeline_ft_train_batch_size"] = calibrated
+    st.session_state["pipeline_ft_train_batch_size"] = _clamp_ft_train_batch_size(
+        calibrated
+    )
     _apply_ft_train_batch_to_yaml()
 
 
@@ -2456,7 +2480,8 @@ def _ingest_ft_batch_calibrate_result() -> None:
         return
     st.session_state["calibrated_ft_batch_size"] = chosen
     # Prefill Pipeline paste field for the next switch to Pipeline (E2E).
-    st.session_state["pipeline_ft_train_batch_size"] = chosen
+    # Calibration may exceed the Web UI stability range; clamp the paste value only.
+    st.session_state["pipeline_ft_train_batch_size"] = _clamp_ft_train_batch_size(chosen)
 
 
 def _display_input_dir_line(upload_dir: Path) -> str:
@@ -4881,32 +4906,45 @@ def _render_analysis_panel() -> None:
             _sync_ft_train_batch_controls()
             st.markdown("**Fine-tune train_batch_size**")
             st.caption(
-                "Paste the value from **FT batch size (calibrate)** here. "
-                "Once chosen for a study, **do not change it** — FT batch size changes "
-                "optimization dynamics and makes results hard to compare "
+                f"Allowed range **{MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE}** "
+                f"(default {DEFAULT_FT_TRAIN_BATCH_SIZE}). "
+                "Paste from **FT batch size (calibrate)** only if it falls in that range "
+                "(larger calibrate suggestions are clamped). "
+                "Once chosen for a study, keep it fixed "
                 "(writes `runtime.train_batch_size`)."
             )
             c_ft_batch, c_ft_apply = st.columns([2, 1])
             with c_ft_batch:
                 st.number_input(
                     "train_batch_size",
-                    min_value=1,
-                    max_value=1024,
+                    min_value=MIN_FT_TRAIN_BATCH_SIZE,
+                    max_value=MAX_FT_TRAIN_BATCH_SIZE,
                     step=1,
                     key="pipeline_ft_train_batch_size",
                     on_change=_apply_ft_train_batch_to_yaml,
-                    help="Per-device fine-tune batch size (integer). Prefer the calibrated value.",
+                    help=(
+                        f"Per-device fine-tune batch size "
+                        f"({MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE} only). "
+                        "Outside this range FT dynamics diverge."
+                    ),
                 )
             with c_ft_apply:
                 calibrated = st.session_state.get("calibrated_ft_batch_size")
                 if isinstance(calibrated, int) and calibrated >= 1:
+                    clamped = _clamp_ft_train_batch_size(calibrated)
                     # on_click runs before widgets are instantiated, so we can safely
                     # write pipeline_ft_train_batch_size (same key as the number_input).
+                    label = f"Use calibrated ({calibrated})"
+                    if clamped != calibrated:
+                        label = f"Use clamped ({clamped}; raw {calibrated})"
                     st.button(
-                        f"Use calibrated ({calibrated})",
+                        label,
                         type="secondary",
                         key="apply_calibrated_ft_batch_btn",
-                        help="Copy the last FT batch calibration result into this field.",
+                        help=(
+                            "Copy the last FT batch calibration result into this field "
+                            f"(clamped to {MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE})."
+                        ),
                         on_click=_apply_calibrated_ft_batch_to_pipeline,
                     )
                 else:

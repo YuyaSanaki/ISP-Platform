@@ -56,8 +56,12 @@ runtime:
   nproc: 16
   max_cells: 300000              # tokenize: tokenizer.max_cells = cells per shard (large values need ample RAM)
   forward_batch_size: auto       # ISP: "auto" = measure GPU at startup; or set an int
-  # Fine-tune: set an integer from Web UI "FT batch size (calibrate)", then keep it fixed.
-  # Changing train_batch_size changes optimization dynamics / results — do not retune casually.
+  # Fine-tune train_batch_size (CLI: comment guidance only; Web UI enforces 4–8):
+  #   Prefer an integer in 4–8 around the default of 6, then keep it fixed for the study.
+  #   Outside that band (same LR / epochs, load_best_model_at_end), step counts and the
+  #   selected checkpoint often diverge enough to change results (batch 2 vs 6 is known bad).
+  #   Calibrate with Web UI "FT batch size (calibrate)" / run_ft_batch_calibrate.py for VRAM,
+  #   then pick a value inside 4–8 (or keep effective batch 6 via gradient accumulation).
   # train_batch_size: 6
 
 # ISP perturbation (copied into stage ISP config; same as config/isp.yaml)
