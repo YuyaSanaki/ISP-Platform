@@ -299,6 +299,18 @@ class TestOrthologLossGate(unittest.TestCase):
             )
         self.assertIn("pending", str(ctx.exception).lower())
 
+    def test_05b_run_gate_raises_approval_error_for_caller(self):
+        """The tokenizer records rejected_ortholog_approval, so the error must reach it."""
+        genes = [POU5F1, SOX2, KLF4, MYC]
+        blocked = gate.evaluate_ortholog_loss_gate(genes, SPECIES, AUDIT)
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "approval_record.yaml"
+            record.write_text(yaml.safe_dump(dict(blocked.approval_request)), encoding="utf-8")
+            with self.assertRaises(gate.OrthologApprovalError):
+                gate.run_ortholog_loss_gate(
+                    tmp, tmp, SPECIES, AUDIT, approval_record=record, gene_ids=genes
+                )
+
     @unittest.skipUnless(
         (ROOT / "analysis" / "ortholog_policy" / "v1").is_dir(),
         "project ortholog overlay missing",
