@@ -34,11 +34,31 @@ from state_feedback.rerank import (
 RerankResult = tuple[list[list[int]], dict[str, float]]
 
 
+def keep_tail(current: Sequence[int], reranked: Sequence[int]) -> list[int]:
+    """``reranked`` plus the genes of ``current`` beyond it.
+
+    Reranks see only the first ``model_input_size`` genes. When ``reranked`` is a permutation of
+    that window, the genes past it are kept in their order instead of being dropped for good.
+    """
+    new = [int(t) for t in reranked]
+    cur = [int(t) for t in current]
+    if len(cur) > len(new) and sorted(cur[: len(new)]) == sorted(new):
+        return new + cur[len(new):]
+    return new
+
+
 def replace_input_ids(dataset, new_ids: Sequence[Sequence[int]], *, num_proc: int = 1):
-    """Dataset with ``input_ids`` / ``length`` / ``attention_mask`` replaced per row."""
+    """Dataset with ``input_ids`` / ``length`` / ``attention_mask`` replaced per row.
+
+    Rows longer than the reranked window keep their tail (see ``keep_tail``).
+    """
     if len(new_ids) != len(dataset):
         raise ValueError(f"new_ids ({len(new_ids)}) must match dataset rows ({len(dataset)})")
-    rows = [list(map(int, r)) for r in new_ids]
+    try:
+        dataset.reset_format()
+    except Exception:
+        pass
+    rows = [keep_tail(cur, new) for cur, new in zip(dataset["input_ids"], new_ids)]
 
     def _set(example, idx):
         ids = rows[int(idx)]
