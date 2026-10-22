@@ -461,7 +461,7 @@ def _build_decoder(
     assert best is not None
     _, decoder, best_metrics = best
     out_dir.mkdir(parents=True, exist_ok=True)
-    save_decoder(decoder, out_dir / "delta_rank_decoder.pt")
+    save_decoder(decoder, out_dir / "delta_rank_decoder.pt", training_steps=steps)
     info = {
         "n_teacher_tokens": len(teacher),
         "contrast_placebos": len(contrast_subs) if contrast_subs is not None else 0,
@@ -471,6 +471,10 @@ def _build_decoder(
         "n_val_pairs": len(val_set),
         "grid": results,
         "selected": best_metrics,
+        "mode": "trained",
+        "training_steps": [
+            {"name": s["name"], "type": s["type"], "genes": list(s["genes"])} for s in steps
+        ],
     }
     (out_dir / "decoder_metrics.json").write_text(json.dumps(info, indent=2) + "\n")
     return decoder, info
@@ -992,12 +996,15 @@ def main() -> int:
     )
     if needs_decoder:
         if args.decoder_checkpoint is not None:
-            decoder = load_decoder(
+            decoder, decoder_info = load_decoder(
                 args.decoder_checkpoint,
                 device=get_device(),
+                expected_steps=steps,
             )
-            decoder_info = {"loaded_from": str(args.decoder_checkpoint)}
-            print(f"Loaded decoder: {args.decoder_checkpoint}", flush=True)
+            print(
+                f"Loaded decoder: {args.decoder_checkpoint} (mode={decoder_info.get('mode')})",
+                flush=True,
+            )
         else:
             print("=== training Delta-rank decoder ===", flush=True)
             decoder, decoder_info = _build_decoder(

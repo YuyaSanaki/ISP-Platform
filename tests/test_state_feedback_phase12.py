@@ -548,15 +548,36 @@ class TestDecoder(unittest.TestCase):
         from state_feedback.decoder import load_decoder, save_decoder
 
         dec = self._decoder(d_model=6, max_shift=0.2)
+        steps = [{"name": "oe1", "type": "overexpress", "genes": ["POU5F1"]}]
         with torch.no_grad():
             dec.proj.weight.normal_()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "dec.pt"
-            save_decoder(dec, path)
-            restored = load_decoder(path)
+            save_decoder(dec, path, training_steps=steps)
+            restored, meta = load_decoder(path, expected_steps=steps)
         self.assertEqual(restored.d_model, 6)
         self.assertAlmostEqual(restored.max_shift, 0.2)
         self.assertTrue(torch.allclose(restored.proj.weight, dec.proj.weight))
+        self.assertEqual(meta["mode"], "reuse_same_steps")
+        self.assertEqual(meta["training_steps"][0]["genes"], ["POU5F1"])
+
+    def test_checkpoint_transfer_when_steps_differ(self):
+        import tempfile
+        from io import StringIO
+        from unittest.mock import patch
+
+        from state_feedback.decoder import load_decoder, save_decoder
+
+        dec = self._decoder(d_model=4, max_shift=0.1)
+        trained = [{"name": "a", "type": "overexpress", "genes": ["A"]}]
+        run = [{"name": "b", "type": "overexpress", "genes": ["B"]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dec.pt"
+            save_decoder(dec, path, training_steps=trained)
+            with patch("sys.stdout", new_callable=StringIO) as buf:
+                _, meta = load_decoder(path, expected_steps=run)
+        self.assertEqual(meta["mode"], "transfer")
+        self.assertIn("transfer test", buf.getvalue())
 
     def test_old_checkpoint_with_base_rank_input_is_rejected(self):
         import tempfile
