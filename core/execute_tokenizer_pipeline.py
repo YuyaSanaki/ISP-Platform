@@ -37,8 +37,46 @@ from run_pipeline_log import format_tokenize_run_banner, install_rotating_stdio_
 from run_provenance import write_service_provenance, update_service_provenance
 
 
+def backfill_loom_custom_attrs(
+    loom_dir: str | Path,
+    custom_attr_name_dict: dict[str, Any] | None,
+) -> list[str]:
+    """Add missing ``custom_attr_name_dict`` column attrs on each .loom (empty string).
+
+    Same-species 10x→loom already fills missing obs columns before write; loom
+    inputs skip that path, so tokenization would KeyError on ``ca[attr]``.
+    Returns ``\"file:attr\"`` labels that were filled.
+    """
+    if not custom_attr_name_dict:
+        return []
+    import loompy
+    import numpy as np
+
+    filled: list[str] = []
+    loom_path = Path(loom_dir)
+    for path in sorted(loom_path.glob("*.loom")):
+        with loompy.connect(str(path)) as ds:
+            n_cells = int(ds.shape[1])
+            for attr_name in custom_attr_name_dict.keys():
+                key = str(attr_name)
+                if key in ds.ca:
+                    continue
+                ds.ca[key] = np.asarray([""] * n_cells, dtype=object)
+                filled.append(f"{path.name}:{key}")
+                print(
+                    f"  back-filled missing loom column attr '{key}' on {path.name} "
+                    f"({n_cells} cells, empty string)",
+                    flush=True,
+                )
+    return filled
+
+
 def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cfg, species=None) -> int:
-    """Convert subdirectories of (barcodes/features/matrix) to .loom files. Returns loom count."""
+    """Convert subdirectories of (barcodes/features/matrix) to .loom files. Returns loom count.
+
+    Any sample that cannot be converted is collected; if any fail, exits non-zero
+    after summarizing (partial looms already written are left in place for debugging).
+    """
     os.makedirs(loom_temp_dir, exist_ok=True)
     input_path = Path(input_dir).resolve()
     loom_path = Path(loom_temp_dir).resolve()
@@ -58,13 +96,16 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
     from celltype_annotate_expression import apply_pre_isp_celltype_annotation
 
     converted = 0
+    failures: list[tuple[str, str]] = []
     for sample_dir in sample_dirs:
         sample_path = Path(sample_dir)
         folder_name = sample_path.name
         loom_stem = sample_label(sample_path, data_root)
         mtx_path_obj = tenx_matrix_directory(sample_path)
         if mtx_path_obj is None:
-            print(f"Skipping {folder_name}: no 10x matrix files found.")
+            msg = "no 10x matrix files found"
+            print(f"Skipping {folder_name}: {msg}.")
+            failures.append((folder_name, msg))
             continue
         mtx_path = str(mtx_path_obj)
 
@@ -104,8 +145,17 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
             converted += 1
         except Exception as e:
             print(f"Error converting {folder_name}: {e}")
+            failures.append((folder_name, str(e)))
 
     print(f"Converted {converted} sample(s) to .loom under {loom_temp_dir}")
+    if failures:
+        print(f"FAILED {len(failures)} sample(s) during 10x→loom:", flush=True)
+        for name, err in failures:
+            print(f"  - {name}: {err}", flush=True)
+        raise SystemExit(
+            f"{len(failures)} sample(s) failed 10x→loom conversion "
+            f"({converted} succeeded). Fix or remove the failed samples and retry."
+        )
     return converted
 
 
@@ -243,6 +293,7 @@ def main():
         print("  ortholog_loss_gate:    disabled")
 
     # Step 1: Handle Conversion if needed
+    loom_attr_fills: list[str] = []
     if data_cfg["input_type"] == "single-cell":
         print("Input type is single-cell. Converting to loom first...")
         study_root = resolve_single_cell_input_dir(
@@ -274,6 +325,16 @@ def main():
         print("Input type is loom. Skipping conversion.")
         tokenizer_input_dir = data_cfg['input_dir']
         file_format = "loom"
+        loom_attr_fills = backfill_loom_custom_attrs(
+            tokenizer_input_dir,
+            tokenizer_cfg.get("custom_attr_name_dict"),
+        )
+        if loom_attr_fills:
+            print(
+                f"  Back-filled {len(loom_attr_fills)} missing custom_attr "
+                f"column(s) on loom input.",
+                flush=True,
+            )
 
     # Step 2: Provenance Tracking & Fingerprinting
     input_paths = {
@@ -295,19 +356,27 @@ def main():
     if enable_fp:
         os.environ["ENABLE_INPUT_FINGERPRINT"] = "true"
 
+    truncate_cross = bool(
+        tokenizer_cfg.get("cross_species_truncate_to_max_cells", True)
+    )
     write_service_provenance(
         run_root=out_dir,
         service="tokenize",
         config_path=config_path,
         extra_meta={
             "service": "tokenize",
-            "tokenizer": {"nproc": tokenizer_nproc},
+            "tokenizer": {
+                "nproc": tokenizer_nproc,
+                "max_cells": int(tokenizer_cfg.get("max_cells", 300_000)),
+                "cross_species_truncate_to_max_cells": truncate_cross,
+            },
             "data": {
                 "input_type": data_cfg.get("input_type"),
                 "input_dir": data_cfg.get("input_dir"),
                 "loom_temp_dir": data_cfg.get("loom_temp_dir"),
                 "output_dir": data_cfg.get("output_dir"),
                 "output_prefix": data_cfg.get("output_prefix"),
+                "loom_custom_attr_backfill": loom_attr_fills,
             },
         },
         input_paths=input_paths,
@@ -383,6 +452,7 @@ def main():
         nproc=tokenizer_nproc,
         max_cells=int(tokenizer_cfg.get('max_cells', 300_000)),
         species_config=species,
+        truncate_cross_species_to_max_cells=truncate_cross,
     )
     
     print(f"Starting Tokenization of files in {tokenizer_input_dir}...")
@@ -400,6 +470,9 @@ def main():
         extra = {
             "finished_at_utc": datetime.now(timezone.utc).isoformat(),
             "run_status": "completed" if pipeline_ok else "failed",
+            "tokenizer_cross_species_file_truncation": getattr(
+                tk, "cross_species_file_truncations", []
+            ),
         }
         if gate_result is not None:
             extra["ortholog_loss_gate"] = gate_result.to_summary_dict()

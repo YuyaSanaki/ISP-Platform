@@ -1,7 +1,7 @@
 ### English
 
-Same-species path: `max_cells` is a shard-split threshold, so data can spill into `_1.dataset`…; the pipeline concatenates the shards into `{study}_merged.dataset` and uses all of them. Cross-species path: `max_cells` still truncates each file instead.
+Same-species: `max_cells` remains a shard-split threshold; shards are merged into `{study}_merged.dataset`. Cross-species: each file is still truncated to `max_cells` by default (prior results unchanged). The run warns and records truncations in provenance. Set `tokenizer.cross_species_truncate_to_max_cells: false` to keep all filter-pass cells in each file.
 
 ### 日本語
 
-同種の経路では `max_cells` が分割のしきい値なので、データが `_1.dataset` 以降に分かれることがあります。パイプラインはそれらを `{study}_merged.dataset` に結合してすべて使います。種をまたぐ経路では、`max_cells` は今も各ファイルの切り詰めとして働きます。
+同種: `max_cells` は今も分割のしきい値で、シャードは `{study}_merged.dataset` に結合されます。異種: 既定では各ファイルを今も `max_cells` で切り詰めます（これまでの結果は変わりません）。実行時に警告し、切り詰めは provenance に記録します。各ファイルの filter-pass 細胞をすべて残すには `tokenizer.cross_species_truncate_to_max_cells: false` を設定します。
