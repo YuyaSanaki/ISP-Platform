@@ -6,7 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **State-feedback Δrank decoder checkpoints record `training_steps`.** Loading `--decoder-checkpoint` against a different step list prints a transfer warning and sets `decoder.mode` to `transfer` in the run manifest (same-step reuse is `reuse_same_steps`). Order rankings that train one decoder per step list still mix order and decoder by design. Tests: `tests/test_state_feedback_phase12.py`.
+- **State-feedback rerank keeps genes beyond `model_input_size`.** After a feedback event, the tail past the model window stays in original order (`keep_tail`), so a long encoding is no longer permanently shortened. Test: `tests/test_state_feedback_tail.py`.
+- **10x→loom failures exit non-zero.** A sample that cannot be converted is counted; after the summary the stage exits non-zero (partial looms may remain for debugging). For `input_type: loom`, missing `custom_attr_name_dict` column attributes are back-filled with empty strings before tokenize. Test: `tests/test_tenx_loom_and_truncate.py`.
+- **Cross-species tokenize warns when `max_cells` truncates a file.** Default behaviour is unchanged (each file still truncated). Truncations are recorded in provenance. Set `tokenizer.cross_species_truncate_to_max_cells: false` to keep all filter-pass cells per file. Test: `tests/test_tenx_loom_and_truncate.py`.
+- **Web UI / pipeline hygiene (v1.4.1 follow-ups).** Optional login and disk-backed uploads / run zips; URL import limited to public hosts; approval card names the YAML keys it sets; Web UI imports only listed light core helpers (Geneformer loads lazily); Docker / macOS / H100 share `requirements-pins.txt` and Python 3.12 with package versions in run provenance; ISP warns on underrepresented states and offers opt-in `isp.max_ncells_per_state`; ISP UMAP records readout and offers opt-in `umap.readout: isp`; oracle mid-chain OE pin keeps overexpressed genes at the front through permute.
+
+### Notes
+
+- Intentional residuals documented under `.omm/` (image-build transitive pins; ISP / UMAP cell-set differences; approval-card overlay not shipped; study-ingest Streamlit uploader memory and DNS rebinding).
+
 ## [1.4.1] - 2026-10-21
+
 
 ### Fixed
 
