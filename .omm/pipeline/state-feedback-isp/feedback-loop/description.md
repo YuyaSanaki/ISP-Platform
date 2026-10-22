@@ -1,6 +1,6 @@
 ### English
 
-`run_condition`: for each step apply the edit, score, then rerank against the reference (`ctrl_reference: start` by default), pin genes overexpressed so far at the front, write back, score again. N steps ⇒ N feedback events. Rerank strategies in `feedback.py`: `rerank_norm`, `rerank_delta_mlm`, `rerank_linear_deltarank`, `rerank_oracle`; all keep the gene set and only permute (`rerank.apply_priority_order`, optional `hysteresis`).
+After each feedback event, genes beyond `model_input_size` stay on the encoding (`keep_tail`). `run_condition`: for each step apply the edit, score, then rerank against the reference (`ctrl_reference: start` by default), pin genes overexpressed so far at the front, write back, score again. N steps ⇒ N feedback events. Rerank strategies in `feedback.py`: `rerank_norm`, `rerank_delta_mlm`, `rerank_linear_deltarank`, `rerank_oracle`; all keep the gene set and only permute (`rerank.apply_priority_order`, optional `hysteresis`).
 
 ### 日本語
 
