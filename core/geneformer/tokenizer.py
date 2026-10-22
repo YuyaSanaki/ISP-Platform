@@ -100,6 +100,7 @@ class TranscriptomeTokenizer:
         species_config=None,
         max_input_size=None,
         chunk_size=512,
+        truncate_cross_species_to_max_cells=True,
     ):
         """
         Initialize tokenizer.
@@ -113,7 +114,12 @@ class TranscriptomeTokenizer:
         nproc : int
             Number of processes to use for dataset mapping.
         max_cells : int
-            Max number of cells to tokenize before saving to disk.
+            Same-species: cells per output shard before starting a new ``_N.dataset``.
+            Cross-species: by default also truncates each input file to this many
+            filter-pass cells (legacy behaviour). Set
+            ``truncate_cross_species_to_max_cells=False`` to keep all cells in each
+            file (still shard-splits across files when the running total hits
+            ``max_cells``).
         gene_median_file : Path, optional
             Override path to gene median dictionary pickle.
         token_dictionary_file : Path, optional
@@ -125,12 +131,20 @@ class TranscriptomeTokenizer:
             Max tokens per cell (2048 mouse, 4096 human V2). Inferred from species when omitted.
         chunk_size : int
             Cells per loom scan / ortholog-conversion batch (avoids full densify).
+        truncate_cross_species_to_max_cells : bool
+            When True (default), the cross-species loom path truncates each file
+            to ``max_cells`` filter-pass cells. Opt out to preserve all cells;
+            default keeps prior scientific results.
         """
         from geneformer.backends import get_backend, parse_species_config
         from geneformer.species_context import should_convert
 
         self.species_config = parse_species_config(species_config) if species_config else None
         self._species_convert = should_convert(self.species_config)
+        self.truncate_cross_species_to_max_cells = bool(
+            truncate_cross_species_to_max_cells
+        )
+        self.cross_species_file_truncations: list[dict] = []
 
         if self.species_config:
             backend = get_backend(self.species_config)
@@ -170,6 +184,39 @@ class TranscriptomeTokenizer:
 
         # max cells in 1 dataset
         self.max_cells = max_cells
+
+    def _maybe_truncate_cross_species_cells(
+        self, filter_pass_loc, loom_file_path
+    ):
+        """Apply per-file max_cells cap on the cross-species path (default on)."""
+        if self.max_cells is None or len(filter_pass_loc) <= int(self.max_cells):
+            return filter_pass_loc
+        n_before = int(len(filter_pass_loc))
+        cap = int(self.max_cells)
+        if not self.truncate_cross_species_to_max_cells:
+            print(
+                f"WARNING: {loom_file_path} has {n_before} filter-pass cells "
+                f"(> max_cells={cap}); cross-species per-file truncate is off "
+                f"(tokenizer.cross_species_truncate_to_max_cells=false), keeping all cells.",
+                flush=True,
+            )
+            return filter_pass_loc
+        print(
+            f"WARNING: {loom_file_path} has {n_before} filter-pass cells; "
+            f"cross-species path truncates each file to max_cells={cap} "
+            f"(set tokenizer.cross_species_truncate_to_max_cells: false to keep all). "
+            f"Same-species path shard-splits instead of truncating.",
+            flush=True,
+        )
+        self.cross_species_file_truncations.append(
+            {
+                "file": str(loom_file_path),
+                "filter_pass_before": n_before,
+                "kept": cap,
+                "mode": "truncate_per_file",
+            }
+        )
+        return filter_pass_loc[:cap]
 
     def _refresh_vocabulary_keys(self):
         """Keep only genes present in both median and token dictionaries."""
@@ -413,7 +460,10 @@ class TranscriptomeTokenizer:
             ]
             if self.custom_attr_name_dict is not None:
                 for k in file_cell_metadata.keys():
-                    file_cell_metadata[k] += adata[idx].obs[k].tolist()
+                    if k in adata.obs.columns:
+                        file_cell_metadata[k] += adata[idx].obs[k].tolist()
+                    else:
+                        file_cell_metadata[k] += [""] * int(len(idx))
         return tokenized_cells, file_cell_metadata
 
     def tokenize_anndata(self, adata_file_path, target_sum=10_000, chunk_size=None):
@@ -452,8 +502,9 @@ class TranscriptomeTokenizer:
             with lp.connect(str(loom_file_path)) as data:
                 row_attr_key = self._require_ensembl_row_attr(data, loom_file_path)
                 filter_pass_loc = self._loom_filter_pass_indices(data, loom_file_path)
-                if self.max_cells is not None and len(filter_pass_loc) > self.max_cells:
-                    filter_pass_loc = filter_pass_loc[: int(self.max_cells)]
+                filter_pass_loc = self._maybe_truncate_cross_species_cells(
+                    filter_pass_loc, loom_file_path
+                )
                 n_cells_total = int(len(filter_pass_loc))
                 for (_ix, _selection, view) in data.scan(
                     items=filter_pass_loc,
@@ -539,7 +590,10 @@ class TranscriptomeTokenizer:
                 # add custom attributes for subview to dict
                 if self.custom_attr_name_dict is not None:
                     for k in file_cell_metadata.keys():
-                        file_cell_metadata[k] += subview.ca[k].tolist()
+                        if k in subview.ca:
+                            file_cell_metadata[k] += subview.ca[k].tolist()
+                        else:
+                            file_cell_metadata[k] += [""] * int(subview.shape[1])
                 else:
                     file_cell_metadata = None
 
