@@ -14,7 +14,7 @@ is zero-initialized, so an untrained decoder is exactly the identity permutation
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import torch
 import torch.nn as nn
@@ -199,19 +199,49 @@ def null_drift(decoder: DeltaRankDecoder, n_genes: int = 2048) -> dict[str, floa
     }
 
 
-def save_decoder(decoder: DeltaRankDecoder, path) -> None:
-    torch.save(
-        {
-            "state_dict": decoder.state_dict(),
-            "d_model": decoder.d_model,
-            "max_shift": decoder.max_shift,
-            "inputs": INPUTS,
-        },
-        str(path),
-    )
+def steps_fingerprint(steps: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Stable record of the step list a decoder was trained on (order and genes)."""
+    out: list[dict[str, Any]] = []
+    for step in steps:
+        genes = step.get("genes") or []
+        out.append(
+            {
+                "name": str(step.get("name") or ""),
+                "type": str(step.get("type") or ""),
+                "genes": [str(g) for g in genes],
+            }
+        )
+    return out
 
 
-def load_decoder(path, device: str | torch.device | None = None) -> DeltaRankDecoder:
+def save_decoder(
+    decoder: DeltaRankDecoder,
+    path,
+    *,
+    training_steps: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    blob: dict[str, Any] = {
+        "state_dict": decoder.state_dict(),
+        "d_model": decoder.d_model,
+        "max_shift": decoder.max_shift,
+        "inputs": INPUTS,
+    }
+    if training_steps is not None:
+        blob["training_steps"] = steps_fingerprint(training_steps)
+    torch.save(blob, str(path))
+
+
+def load_decoder(
+    path,
+    device: str | torch.device | None = None,
+    *,
+    expected_steps: Sequence[Mapping[str, Any]] | None = None,
+) -> tuple[DeltaRankDecoder, dict[str, Any]]:
+    """Load a decoder. Returns ``(decoder, meta)`` with transfer / match info.
+
+    When ``expected_steps`` is set and the checkpoint records different
+    ``training_steps``, ``meta["mode"]`` is ``"transfer"`` (not a same-step reuse).
+    """
     blob = torch.load(str(path), map_location="cpu")
     if blob.get("inputs") != INPUTS:
         raise ValueError(
@@ -223,4 +253,33 @@ def load_decoder(path, device: str | torch.device | None = None) -> DeltaRankDec
     decoder.eval()
     if device is not None:
         decoder = decoder.to(torch.device(device))
-    return decoder
+
+    trained = blob.get("training_steps")
+    meta: dict[str, Any] = {
+        "loaded_from": str(path),
+        "training_steps": trained,
+        "mode": "reuse",
+    }
+    if expected_steps is not None and trained is not None:
+        expected = steps_fingerprint(expected_steps)
+        if expected != trained:
+            meta["mode"] = "transfer"
+            meta["run_steps"] = expected
+            print(
+                "WARNING: --decoder-checkpoint was trained on a different step list "
+                f"({trained!r}) than this run ({expected!r}). This is a transfer test, "
+                "not a same-order result; order rankings that mix per-order and shared "
+                "decoders are not pure order effects.",
+                flush=True,
+            )
+        else:
+            meta["mode"] = "reuse_same_steps"
+    elif expected_steps is not None and trained is None:
+        meta["mode"] = "reuse_unlabeled"
+        meta["run_steps"] = steps_fingerprint(expected_steps)
+        print(
+            "WARNING: --decoder-checkpoint has no training_steps record; cannot verify "
+            "it matches this run's step list. Prefer a decoder saved by a current run.",
+            flush=True,
+        )
+    return decoder, meta

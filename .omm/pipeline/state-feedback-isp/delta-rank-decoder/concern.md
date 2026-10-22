@@ -1,7 +1,7 @@
 ### English
 
-Reusing a decoder on a different step list (including a different order) is a transfer test, not a result. Each step list trains its own decoder, so an order ranking mixes order and decoder.
+Order rankings that train one decoder per step list still mix order and decoder (by design; see `docs/state_feedback_decode_methods.md`). Checkpoints now record `training_steps`. Loading `--decoder-checkpoint` against a different step list prints a transfer warning and sets `decoder.mode` to `transfer` in the run manifest.
 
 ### 日本語
 
-別のステップリスト（順序違いも含む）にデコーダーを使い回すのは転移テストであって、結果にはなりません。ステップリストごとにデコーダーを学習するため、順序のランキングには順序の効果とデコーダーの違いが混ざります。
+ステップリストごとにデコーダーを学習する順序ランキングでは、順序とデコーダーが混ざる点は設計どおりです（`docs/state_feedback_decode_methods.md`）。チェックポイントには `training_steps` を記録します。別のステップリストに `--decoder-checkpoint` を当てると転移警告を出し、run manifest の `decoder.mode` を `transfer` にします。
