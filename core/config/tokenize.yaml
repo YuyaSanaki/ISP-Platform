@@ -61,12 +61,17 @@ tokenizer:
     celltype_confidence: "celltype_confidence"
     celltype_annotator: "celltype_annotator"
 
-    # need to accept more flexibility using metadata, not folder name
-
 # Settings for single-cell (barcodes/features/matrix) format
 single_cell_settings:
-  # If true, try to extract metadata (time-genotype-replicate) from folder names
+  # If true, and no metadata manifest is present, fill time / genotype / disease /
+  # replicate / sample_id by splitting the sample folder name on hyphens.
   extract_metadata_from_path: true
+  # Optional TSV (QIIME2-style). When set, or when metadata.tsv, sample-metadata.tsv,
+  # or manifest.tsv sits in the study root, cell metadata comes from that file
+  # instead of the folder name. Required columns: sample-id, disease, species.
+  # Further columns are kept. species must match species.model_organism.
+  # Template: metadata.tsv.example in the repository root.
+  # metadata_manifest: /app/data/Somatoid/metadata.tsv
 
 # Provenance and reproducibility settings
 provenance:

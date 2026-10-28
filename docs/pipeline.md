@@ -137,7 +137,7 @@ Copied into the generated ISP config. Same keys as [`core/config/isp.yaml`](../c
 |-------|------|
 | `type` | Perturbation mode: `delete` (remove gene from rank encoding) or `overexpress` (gene to front). `inhibit` / `activate` (quartile shifts) are not implemented and stop with an error |
 | `state_key` | Metadata column for states (e.g. `disease`) |
-| `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (from folder names when `extract_metadata_from_path` is on) |
+| `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (manifest `disease` values when a metadata TSV is present, otherwise folder names when `extract_metadata_from_path` is on) |
 | `organ_data` | Optional output filename prefix |
 | `genes_to_perturb` | Optional gene list; empty = genome-wide. E2E always runs **TOP1 significant ISP UMAP** once under `{run}/isp_umap/` (largest shift toward goal among Sig == 1 genes with `N_Detections` ≥ 20) (full trajectory UMAP: use Run type **ISP UMAP**) |
 

@@ -271,6 +271,7 @@ def format_tokenize_run_banner(
         "",
         "  single_cell_settings:",
         f"    extract_metadata_from_path: {single_cell.get('extract_metadata_from_path')}",
+        f"    metadata_manifest: {single_cell.get('metadata_manifest') or '(auto)'}",
         "=" * 72,
     ]
     return "\n".join(lines) + "\n"

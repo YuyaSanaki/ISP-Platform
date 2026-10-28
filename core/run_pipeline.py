@@ -69,11 +69,18 @@ def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
     """Fail before tokenize/fine-tune when ISP states cannot exist or are not unique."""
     perturbation = pipeline.get("perturbation") or {}
     state_key = str(perturbation.get("state_key") or "").strip()
-    if state_key not in _PATH_DERIVED_STATE_KEYS:
-        return
-
     start = str(perturbation.get("start_state") or "").strip()
     end = str(perturbation.get("end_state") or "").strip()
+
+    from data_input_layout import column_values_from_study
+
+    available = column_values_from_study(Path(study_root), state_key)
+    if available is None:
+        # Custom columns are checked only when a manifest defines them.
+        if state_key not in _PATH_DERIVED_STATE_KEYS:
+            return
+        available = unique_states_from_samples(Path(study_root))
+
     if start and end and start == end:
         raise ValueError(
             f"ISP start_state and end_state are both `{start}`. "
@@ -81,7 +88,6 @@ def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
             "(Web UI: pick different ISP start_state / end_state, e.g. AD → WT)."
         )
 
-    available = unique_states_from_samples(Path(study_root))
     if not available:
         return
 
@@ -91,7 +97,7 @@ def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
     if missing:
         raise ValueError(
             f"ISP perturbation states {', '.join(missing)} are not in the study data. "
-            f"Sample folders provide {state_key}: {', '.join(available)}. "
+            f"Study metadata provides {state_key}: {', '.join(available)}. "
             "Fix perturbation.start_state / end_state (Web UI: ISP state dropdowns)."
         )
 

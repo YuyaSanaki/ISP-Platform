@@ -20,6 +20,12 @@ from data_input_layout import (
     sample_label,
     tenx_matrix_directory,
 )
+from sample_manifest import (
+    SampleManifestError,
+    check_manifest_covers_samples,
+    manifest_species,
+    resolve_sample_manifest,
+)
 from geneformer import TranscriptomeTokenizer
 from geneformer.conversion_report import resolve_report_conversion, run_conversion_report
 from geneformer.gene_converter import normalize_gene_id
@@ -93,6 +99,36 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
         print(diagnose_input_dir(input_path, loom_path))
         return 0
 
+    manifest = None
+    try:
+        manifest = resolve_sample_manifest(data_root, settings if isinstance(settings, dict) else None)
+        if manifest is not None:
+            check_manifest_covers_samples(manifest, {path.name for path in sample_dirs})
+    except SampleManifestError as exc:
+        raise SystemExit(f"metadata manifest: {exc}") from exc
+
+    if manifest is not None:
+        org = manifest_species(manifest)
+        configured = ""
+        if isinstance(species, dict):
+            configured = str(species.get("model_organism") or "").strip().lower()
+        if configured and configured != org:
+            raise SystemExit(
+                f"metadata manifest species is {org}, but species.model_organism is {configured}. "
+                "Set species.model_organism to the organism in the manifest."
+            )
+        if not isinstance(tokenizer_cfg, dict):
+            raise SystemExit("tokenizer config must be a dict to attach manifest columns.")
+        attr = dict(tokenizer_cfg.get("custom_attr_name_dict") or {})
+        for col in manifest.columns:
+            attr.setdefault(col, col)
+        tokenizer_cfg["custom_attr_name_dict"] = attr
+        print(
+            f"Using metadata manifest {manifest.path} "
+            f"({len(manifest.by_folder)} samples, species {org})."
+        )
+        print("Folder-name metadata is not applied.")
+
     from celltype_annotate_expression import apply_pre_isp_celltype_annotation
 
     converted = 0
@@ -121,7 +157,11 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
                 adata.X.sum(axis=1).A1 if hasattr(adata.X, "sum") else adata.X.sum(axis=1)
             )
 
-            if settings.get("extract_metadata_from_path"):
+            if manifest is not None:
+                row = manifest.by_folder[folder_name]
+                for col, value in row.items():
+                    adata.obs[col] = value
+            elif settings.get("extract_metadata_from_path"):
                 meta = parse_sample_folder_name(folder_name)
                 adata.obs["time"] = meta["time"]
                 adata.obs["genotype"] = meta["genotype"]

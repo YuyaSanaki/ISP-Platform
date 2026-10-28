@@ -1,0 +1,10 @@
+# ISP Platform sample metadata.
+# CLI: copy this file into the study directory as metadata.tsv, then edit the rows.
+# sample-id must match each sample folder name.
+# Required columns: sample-id, disease, species.
+# species is mouse, human, or drosophila, and must be the same on every row.
+# It must also match species.model_organism.
+# Add any further columns you need (experiment, replicate, batch, ...).
+sample-id	disease	species	experiment
+sample_S01	Matrigel	human	Somatoid
+sample_S02	NoMatrigel	human	Somatoid

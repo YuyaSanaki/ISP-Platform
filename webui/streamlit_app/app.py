@@ -3275,6 +3275,10 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
             "Check folder names and `barcodes/features/matrix` files."
         )
 
+    manifest_error = _commit_manifest(upload_dir)
+    if manifest_error:
+        return None, manifest_error
+
     start_state = st.session_state.get("pipeline_isp_start_state")
     end_state = st.session_state.get("pipeline_isp_end_state")
     if start_state and end_state and str(start_state) == str(end_state):
@@ -3289,7 +3293,7 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
     if available and unknown:
         return None, (
             f"ISP states `{', '.join(unknown)}` do not exist in study **{study_name}**.\n\n"
-            f"Sample folders provide: `{', '.join(available)}`. "
+            f"Study metadata provides: `{', '.join(available)}`. "
             "Pick those in the **ISP start_state / end_state** dropdowns."
         )
 
@@ -3880,8 +3884,31 @@ def _native_model_organism(model_id: str) -> str:
     return "human" if model_id == "human_geneformer" else "mouse"
 
 
+def _apply_manifest_species_if_ready() -> None:
+    """Point species.model_organism at the Manifest table when that table is complete."""
+    from sample_manifest import validate_sample_metadata
+
+    records = st.session_state.get("manifest_records")
+    fields = list(st.session_state.get("manifest_fields") or _MANIFEST_CORE_FIELDS)
+    if not isinstance(records, dict) or not records:
+        return
+    samples = _manifest_samples_from_records(list(records.keys()), fields, records)
+    if validate_sample_metadata(samples):
+        return
+    species = str(samples[0].get("species", "")).strip().lower()
+    if not species:
+        return
+    st.session_state["pipeline_model_organism"] = species
+    if not st.session_state.get("yaml_editor"):
+        return
+    current = (_read_pipeline_yaml().get("species") or {}).get("model_organism")
+    if current != species:
+        _apply_species_to_yaml()
+
+
 def _render_species_model_controls() -> None:
     """Input-data species vs FT/ISP model — clear separation for cross-species runs."""
+    _apply_manifest_species_if_ready()
     _sync_species_form_from_yaml()
     st.markdown("**Input data species**")
     st.selectbox(
@@ -4807,6 +4834,246 @@ def main() -> None:
         _render_output_browser()
 
 
+_MANIFEST_CORE_FIELDS = ("disease", "species")
+
+
+def _manifest_optional_field(name: str) -> str:
+    from sample_manifest import SampleManifestError, _normalize_header
+
+    try:
+        field = _normalize_header(name)
+    except SampleManifestError:
+        raise
+    if field in {"sample_id", "disease", "species"}:
+        raise SampleManifestError(f"{field} is already in the table.")
+    return field
+
+
+def _manifest_records_from_file(path: Path, sample_names: list[str], organism: str):
+    from sample_manifest import load_sample_manifest, manifest_field_order
+
+    manifest = load_sample_manifest(path)
+    fields = manifest_field_order(manifest.columns)
+    for name in _MANIFEST_CORE_FIELDS:
+        if name not in fields:
+            insert_at = 0 if name == "disease" else min(1, len(fields))
+            fields.insert(insert_at, name)
+    records: dict[str, dict[str, str]] = {}
+    for sample in sample_names:
+        row = manifest.by_folder.get(sample, {})
+        rec = {}
+        for field in fields:
+            if field == "species":
+                rec[field] = str(row.get(field) or organism).strip().lower()
+            else:
+                rec[field] = str(row.get(field, "")).strip()
+        records[sample] = rec
+    return fields, records
+
+
+def _manifest_samples_from_records(
+    sample_names: list[str],
+    fields: list[str],
+    records: dict[str, dict[str, str]],
+) -> list[dict[str, str]]:
+    samples = []
+    for name in sample_names:
+        row = {"sample_id": name}
+        stored = records.get(name) or {}
+        for field in fields:
+            row[field] = str(stored.get(field, "")).strip()
+        samples.append(row)
+    return samples
+
+
+def _write_manifest_tsv(study_root: Path, fields: list[str], samples: list[dict[str, str]]) -> None:
+    from sample_manifest import samples_to_metadata_tsv
+
+    text = samples_to_metadata_tsv(fields, samples)
+    (study_root / "metadata.tsv").write_text(text, encoding="utf-8")
+
+
+def _commit_manifest(upload_dir: Path) -> str | None:
+    """Write metadata.tsv from the Manifest table. Return an error, or None."""
+    from sample_manifest import validate_sample_metadata
+
+    study_root = _compute_tokenize_input_dir(upload_dir)
+    if study_root is None:
+        return None
+    sample_names = [path.name for path in discover_sample_dirs(study_root)]
+    if not sample_names:
+        return None
+    records = st.session_state.get("manifest_records")
+    fields = list(st.session_state.get("manifest_fields") or _MANIFEST_CORE_FIELDS)
+    if not isinstance(records, dict) or not records:
+        return "Fill **disease** and **species** in the **Manifest** table under Data input."
+    samples = _manifest_samples_from_records(sample_names, fields, records)
+    error = validate_sample_metadata(samples)
+    tsv_path = study_root / "metadata.tsv"
+    if error:
+        if tsv_path.is_file():
+            tsv_path.unlink()
+        return error
+    _write_manifest_tsv(study_root, fields, samples)
+    return None
+
+
+def _render_manifest_editor(upload_dir: Path) -> None:
+    """Manifest table directly under Data input. Sample names come from the upload."""
+    import pandas as pd
+    from sample_manifest import SampleManifestError, validate_sample_metadata
+
+    st.subheader("Manifest")
+    st.caption(
+        "Sample names are the uploaded folders. Fill **disease** and **species** "
+        "(mouse, human, or drosophila, the same value for every sample). "
+        "**＋** adds an optional metadata row, such as experiment or batch."
+    )
+    study_root = _compute_tokenize_input_dir(upload_dir)
+    if study_root is None:
+        st.info("Set a study name and upload data to edit the manifest.")
+        return
+    sample_names = [path.name for path in discover_sample_dirs(study_root)]
+    if not sample_names:
+        st.info("Upload a study to fill sample names.")
+        return
+
+    organism = str(st.session_state.get("pipeline_model_organism") or "mouse").strip().lower()
+    if organism not in {"mouse", "human", "drosophila"}:
+        organism = "mouse"
+    sample_sig = tuple(sample_names)
+    if st.session_state.get("manifest_sample_sig") != sample_sig:
+        st.session_state["manifest_sample_sig"] = sample_sig
+        st.session_state.pop("manifest_loaded_path", None)
+
+    tsv_path = study_root / "metadata.tsv"
+    if tsv_path.is_file() and st.session_state.get("manifest_loaded_path") != str(tsv_path.resolve()):
+        try:
+            fields, records = _manifest_records_from_file(tsv_path, sample_names, organism)
+            st.session_state["manifest_fields"] = fields
+            st.session_state["manifest_records"] = records
+            st.session_state["manifest_loaded_path"] = str(tsv_path.resolve())
+            st.session_state["manifest_editor_nonce"] = st.session_state.get("manifest_editor_nonce", 0) + 1
+        except SampleManifestError as exc:
+            st.warning(f"Could not read {tsv_path.name}: {exc}")
+
+    fields = list(st.session_state.get("manifest_fields") or list(_MANIFEST_CORE_FIELDS))
+    for name in _MANIFEST_CORE_FIELDS:
+        if name not in fields:
+            fields.insert(0 if name == "disease" else 1, name)
+    extras = [name for name in fields if name not in _MANIFEST_CORE_FIELDS]
+    fields = list(_MANIFEST_CORE_FIELDS) + extras
+    records = dict(st.session_state.get("manifest_records") or {})
+    for name in sample_names:
+        rec = dict(records.get(name) or {})
+        for field in fields:
+            rec.setdefault(field, "")
+        if not str(rec.get("species", "")).strip():
+            rec["species"] = organism
+        records[name] = rec
+    st.session_state["manifest_fields"] = fields
+    st.session_state["manifest_records"] = records
+
+    editor_sig = (sample_sig, tuple(fields))
+    if st.session_state.get("manifest_editor_sig") != editor_sig:
+        st.session_state["manifest_editor_sig"] = editor_sig
+        st.session_state["manifest_editor_nonce"] = st.session_state.get("manifest_editor_nonce", 0) + 1
+    editor_key = f"manifest_editor_{st.session_state.get('manifest_editor_nonce', 0)}"
+
+    rows = []
+    for field in fields:
+        row = {"metadata": field}
+        for name in sample_names:
+            row[name] = records[name].get(field, "")
+        rows.append(row)
+    edited = st.data_editor(
+        pd.DataFrame(rows),
+        disabled=["metadata"],
+        hide_index=True,
+        num_rows="fixed",
+        use_container_width=True,
+        key=editor_key,
+        column_config={
+            "metadata": st.column_config.TextColumn("metadata", disabled=True, width="small"),
+        },
+    )
+    new_records: dict[str, dict[str, str]] = {name: {} for name in sample_names}
+    for _, row in edited.iterrows():
+        field = str(row["metadata"]).strip()
+        if not field:
+            continue
+        for name in sample_names:
+            cell = row[name]
+            text = "" if cell is None or (isinstance(cell, float) and pd.isna(cell)) else str(cell).strip()
+            new_records[name][field] = text
+    st.session_state["manifest_records"] = new_records
+
+    optional_nonce = st.session_state.get("manifest_optional_nonce", 0)
+    add_col, add_btn = st.columns([4, 1])
+    with add_col:
+        st.text_input(
+            "Optional metadata",
+            key=f"manifest_optional_name_{optional_nonce}",
+            label_visibility="collapsed",
+            placeholder="Optional metadata name (e.g. experiment)",
+        )
+    with add_btn:
+        add_clicked = st.button("＋", key="manifest_add_row", help="Add an optional metadata row")
+    if add_clicked:
+        raw = str(st.session_state.get(f"manifest_optional_name_{optional_nonce}") or "")
+        try:
+            field = _manifest_optional_field(raw)
+        except SampleManifestError as exc:
+            st.error(str(exc))
+        else:
+            if field in fields:
+                st.warning(f"{field} is already in the table.")
+            else:
+                fields.append(field)
+                for name in sample_names:
+                    new_records[name][field] = ""
+                st.session_state["manifest_fields"] = fields
+                st.session_state["manifest_records"] = new_records
+                st.session_state["manifest_optional_nonce"] = optional_nonce + 1
+                st.rerun()
+
+    optional = [name for name in fields if name not in _MANIFEST_CORE_FIELDS]
+    if optional:
+        remove_nonce = st.session_state.get("manifest_remove_nonce", 0)
+        rm_col, rm_btn = st.columns([4, 1])
+        with rm_col:
+            st.selectbox(
+                "Remove optional metadata",
+                optional,
+                key=f"manifest_remove_choice_{remove_nonce}",
+                label_visibility="collapsed",
+            )
+        with rm_btn:
+            remove_clicked = st.button("−", key="manifest_remove_row", help="Remove the selected optional row")
+        if remove_clicked:
+            target = str(st.session_state.get(f"manifest_remove_choice_{remove_nonce}") or "")
+            st.session_state["manifest_remove_nonce"] = remove_nonce + 1
+            if target in fields:
+                fields = [name for name in fields if name != target]
+                for name in sample_names:
+                    new_records[name].pop(target, None)
+                st.session_state["manifest_fields"] = fields
+                st.session_state["manifest_records"] = new_records
+                st.rerun()
+
+    samples = _manifest_samples_from_records(sample_names, fields, new_records)
+    error = validate_sample_metadata(samples)
+    if error:
+        if tsv_path.is_file():
+            tsv_path.unlink()
+        st.warning(error)
+        return
+    _write_manifest_tsv(study_root, fields, samples)
+    st.session_state["manifest_loaded_path"] = str(tsv_path.resolve())
+    species = str(samples[0].get("species", "")).strip().lower()
+    st.caption(f"Using `{tsv_path.name}` for tokenize and ISP ({len(samples)} samples, species {species}).")
+
+
 def _render_analysis_panel() -> None:
     """Current job UI: data input, run type, execute, live log, session outputs."""
     upload_dir = _session_upload_dir()
@@ -4940,6 +5207,8 @@ def _render_analysis_panel() -> None:
                 if last_src:
                     st.caption(f"Last import: {last_src}")
 
+            _render_manifest_editor(upload_dir)
+
     with c2:
         st.subheader("Run type")
         run_types = list(RUN_FILES.keys())
@@ -4967,15 +5236,19 @@ def _render_analysis_panel() -> None:
             _sync_pipeline_form_from_yaml(upload_dir)
             upload_states = _detected_states_from_upload(upload_dir)
             if upload_states:
+                previous = list(st.session_state.get("pipeline_detected_states") or [])
                 st.session_state["pipeline_detected_states"] = upload_states
-            if "pipeline_isp_start_state" not in st.session_state:
+                current = st.session_state.get("pipeline_isp_start_state")
+                force = bool(previous) and previous != list(upload_states) and current not in upload_states
+                _sync_isp_state_selectors(upload_states, force=force)
+            elif "pipeline_isp_start_state" not in st.session_state:
                 _sync_isp_state_selectors(
                     st.session_state.get("pipeline_detected_states"),
                     force=False,
                 )
             detected = st.session_state.get("pipeline_detected_states") or []
             if detected:
-                st.caption(f"Detected states from sample folders: **{', '.join(detected)}**")
+                st.caption(f"Detected states: **{', '.join(detected)}**")
             isp_options = st.session_state.get("pipeline_isp_state_options") or [
                 "Disease",
                 "Ctrl",
