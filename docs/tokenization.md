@@ -38,7 +38,23 @@ Example: `1w-Disease-SingleCell/`, `1w-Ctrl-SingleCell/` under one study root.
 | Replicate | Third segment (e.g. `Rep1`, `SingleCell`; use a placeholder if only one replicate) |
 | `sample_id` | Full folder name |
 
-With **`single_cell_settings.extract_metadata_from_path: true`** in `config/tokenize.yaml`, `time`, `genotype`, `replicate`, `disease`, and `sample_id` are filled from folder names. Adjust naming or the script if your labels differ.
+With **`single_cell_settings.extract_metadata_from_path: true`** in `config/tokenize.yaml`, and **no metadata manifest**, `time`, `genotype`, `replicate`, `disease`, and `sample_id` are filled from folder names. Adjust naming or use a manifest if your labels differ.
+
+### Metadata manifest
+
+To attach labels that do not fit `Time-Condition-Replicate`, put a tab-separated file in the study root. The names checked, in order, are `metadata.tsv`, `sample-metadata.tsv`, and `manifest.tsv`. One file only. Or set `single_cell_settings.metadata_manifest` to a path. The folder name can stay as the sequencer left it.
+
+The file is the same idea as a QIIME2 sample manifest plus sample metadata. The first column is `sample-id` (the sample folder name, or a short id when `filepath` points at that folder). Required columns are `disease` (the ISP state) and `species` (`mouse`, `human`, or `drosophila`). Any other column, such as `experiment`, is copied onto every cell in that sample and can be used as `state_key` or a fine-tune label. A template is `metadata.tsv.example` in the repository root. A `#q2:types` row is ignored.
+
+`species` must be the same on every row and must match `species.model_organism`. When this file is present, folder-name splitting is not applied.
+
+```text
+sample-id	disease	species	experiment	replicate
+20211122_ME10x01_S01_Mat	Matrigel	human	Somatoid	S01
+20211122_ME10x01_S02_NoMat	NoMatrigel	human	Somatoid	S02
+```
+
+ISP `start_state` / `end_state` must match the `disease` values exactly (`Matrigel`, `NoMatrigel`), not the folder names.
 
 **`data.input_dir`** is the **study root** (parent of sample folders), e.g. `/app/data/my_study/` or `/app/data/ExperimentName/`. See [`data_input_layout.py`](../contracts/data_input_layout.py) for discovery rules (flat samples, nested `ExperimentName/`, multiple experiments under `/data/`).
 
@@ -92,7 +108,8 @@ With **`single_cell_settings.extract_metadata_from_path: true`** in `config/toke
 | `tokenizer.ortholog_approval_record` | NEW `status: approved` YAML matching a prior Block (not the pending request) |
 | `species.model_organism` / `species.model` | Input data species vs Geneformer backend; triggers ortholog remap when they differ |
 | `species.ortholog_curated_overlay` | Optional project bridge (file or dir with `curated_bridge_{pair}.tsv`) |
-| `single_cell_settings.extract_metadata_from_path` | Parse sample folder names (default `true`) |
+| `single_cell_settings.extract_metadata_from_path` | Parse sample folder names when no metadata manifest is present (default `true`) |
+| `single_cell_settings.metadata_manifest` | Optional path to a metadata TSV. Empty: look for `metadata.tsv` in the study root |
 
 **`input_type: single-cell`**: builds `.loom` under `data.loom_temp_dir`, then runs `TranscriptomeTokenizer`.
 

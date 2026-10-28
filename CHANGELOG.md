@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Sample metadata manifest.** A TSV in the study root (`metadata.tsv`, `sample-metadata.tsv`, or `manifest.tsv`, or `single_cell_settings.metadata_manifest`) supplies cell labels instead of splitting the folder name. Required columns are `sample-id`, `disease`, and `species`. Further columns are kept and can be an ISP `state_key`. `species` must match `species.model_organism`. The repository root has `metadata.tsv.example` for the CLI. The Web UI **Manifest** table under **Data input** fills sample names from the uploaded folders, edits `disease` and `species`, and adds optional metadata with **＋**. With no manifest, `Time-Condition-Replicate` folder names work as before. Tests: `tests/test_sample_manifest.py`.
+
 ### Fixed
 
 - **State-feedback Δrank decoder checkpoints record `training_steps`.** Loading `--decoder-checkpoint` against a different step list prints a transfer warning and sets `decoder.mode` to `transfer` in the run manifest (same-step reuse is `reuse_same_steps`). Order rankings that train one decoder per step list still mix order and decoder by design. Tests: `tests/test_state_feedback_phase12.py`.

@@ -69,6 +69,8 @@ def _load_run_pipeline_validators():
     dil = sys.modules["data_input_layout"]
     if not hasattr(dil, "unique_states_from_samples"):
         dil.unique_states_from_samples = lambda study_root: []
+    if not hasattr(dil, "column_values_from_study"):
+        dil.column_values_from_study = lambda study_root, column: None
 
     pl = sys.modules["pipeline_lib"]
     for attr in (
@@ -425,6 +427,8 @@ class TestValidatePerturbationStates(unittest.TestCase):
                 import data_input_layout as dil
 
                 with mock.patch.object(
+                    dil, "column_values_from_study", return_value=None
+                ), mock.patch.object(
                     dil, "unique_states_from_samples", return_value=["AD", "WT"]
                 ):
                     with self.assertRaises(ValueError) as ctx:
@@ -456,7 +460,11 @@ class TestValidatePerturbationStates(unittest.TestCase):
     def test_accepts_valid_pair(self):
         import data_input_layout as dil
 
-        with mock.patch.object(dil, "unique_states_from_samples", return_value=["AD", "WT"]):
+        with mock.patch.object(
+            dil, "column_values_from_study", return_value=None
+        ), mock.patch.object(
+            self.rp, "unique_states_from_samples", return_value=["AD", "WT"]
+        ):
             self.rp._validate_perturbation_states(
                 {
                     "perturbation": {

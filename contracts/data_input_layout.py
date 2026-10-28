@@ -55,12 +55,62 @@ def parse_sample_folder_name(folder_name: str) -> dict[str, str]:
     }
 
 
-def unique_states_from_samples(study_root: Path) -> list[str]:
-    """Sorted unique state/condition tokens (2nd hyphen field) from sample folder names."""
+def _folder_state_values(study_root: Path) -> list[str]:
     states: set[str] = set()
     for sample in discover_sample_dirs(study_root):
         states.add(parse_sample_folder_name(sample.name)["state"])
     return sorted(states)
+
+
+def unique_states_from_samples(study_root: Path) -> list[str]:
+    """Sorted ISP state labels for this study.
+
+    With a metadata manifest, these are the ``disease`` values. Otherwise they
+    are the second hyphen-separated field of each sample folder name.
+    """
+    from sample_manifest import find_sample_manifest, load_sample_manifest
+
+    path = find_sample_manifest(study_root)
+    if path is not None:
+        manifest = load_sample_manifest(path)
+        names = {sample.name for sample in discover_sample_dirs(study_root)}
+        return sorted(
+            {
+                row["disease"]
+                for folder, row in manifest.by_folder.items()
+                if folder in names
+            }
+        )
+    return _folder_state_values(study_root)
+
+
+def column_values_from_study(study_root: Path, column: str) -> list[str] | None:
+    """Unique values of one metadata column, or None when this study does not have it.
+
+    ``disease``, ``genotype``, and ``state`` fall back to the folder-name field
+    when there is no manifest. Any other column is read only from a manifest.
+    """
+    from sample_manifest import find_sample_manifest, load_sample_manifest
+
+    col = str(column).strip()
+    path = find_sample_manifest(study_root)
+    if path is not None:
+        manifest = load_sample_manifest(path)
+        if col == "state" and "state" not in manifest.columns:
+            col = "disease"
+        if col not in manifest.columns:
+            return None
+        names = {sample.name for sample in discover_sample_dirs(study_root)}
+        return sorted(
+            {
+                row[col]
+                for folder, row in manifest.by_folder.items()
+                if folder in names and row.get(col)
+            }
+        )
+    if col in {"disease", "genotype", "state"}:
+        return _folder_state_values(study_root)
+    return None
 
 
 # Columns written when extract_metadata_from_path is on (see execute_tokenizer_pipeline).
@@ -101,6 +151,13 @@ def label_column_candidates_from_study(
     if study_root is not None:
         root = Path(study_root)
         try:
+            from sample_manifest import SampleManifestError, manifest_column_names
+
+            try:
+                for name in manifest_column_names(root):
+                    _add(name)
+            except SampleManifestError:
+                pass
             if root.is_dir() and discover_sample_dirs(root):
                 for name in FOLDER_DERIVED_LABEL_COLUMNS:
                     _add(name)
@@ -274,10 +331,21 @@ def count_single_cell_samples(
     if not samples:
         return 0, study_root, "none detected"
 
+    from sample_manifest import SampleManifestError, find_sample_manifest
+
+    manifest_path = None
+    manifest_error = ""
+    try:
+        manifest_path = find_sample_manifest(study_root)
+    except SampleManifestError as exc:
+        manifest_error = f"; metadata manifest error: {exc}"
     noncanonical = [s.name for s in samples if not is_canonical_sample_name(s.name)]
     name_hint = ""
-    if noncanonical:
+    if manifest_path is not None:
+        name_hint = f"; metadata manifest {manifest_path.name}"
+    elif noncanonical:
         name_hint = f"; naming hint: use Time-Condition-Replicate ({noncanonical[0]} …)"
+    name_hint += manifest_error
 
     direct = [c for c in _child_dirs(study_root, loom) if is_10x_mtx_dir(c)]
     if direct:
@@ -310,15 +378,33 @@ def diagnose_input_dir(input_dir: str | Path, loom_temp_dir: str | Path | None =
     n = len(samples)
     layout = count_single_cell_samples(root, loom_temp_dir)[2]
 
+    from sample_manifest import SampleManifestError, find_sample_manifest
+
+    manifest_path = None
+    manifest_error = ""
+    try:
+        manifest_path = find_sample_manifest(study_root)
+    except SampleManifestError as exc:
+        manifest_error = str(exc)
+
     lines = [
         f"YAML input_dir: {root}",
         f"study root (tokenize): {study_root}",
         f"samples detected: {n} ({layout})",
     ]
+    if manifest_path is not None:
+        lines.append(f"metadata manifest: {manifest_path}")
+    if manifest_error:
+        lines.append(f"metadata manifest error: {manifest_error}")
     if samples:
-        lines.append("sample folders (Time-Condition-Replicate):")
+        lines.append("sample folders:")
         for s in samples[:12]:
-            ok = "ok" if is_canonical_sample_name(s.name) else "non-standard name"
+            if manifest_path is not None:
+                ok = f"metadata from {manifest_path.name}"
+            elif is_canonical_sample_name(s.name):
+                ok = "ok"
+            else:
+                ok = "non-standard name"
             lines.append(f"  - {s}  [{ok}]")
         if len(samples) > 12:
             lines.append(f"  … and {len(samples) - 12} more")
@@ -350,6 +436,7 @@ __all__ = [
     "sample_label",
     "tenx_matrix_directory",
     "unique_states_from_samples",
+    "column_values_from_study",
     "FOLDER_DERIVED_LABEL_COLUMNS",
     "label_column_candidates_from_study",
 ]
