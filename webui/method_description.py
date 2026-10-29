@@ -471,18 +471,16 @@ def _ft_sentence(cfg: Mapping[str, Any], *, pipeline_config: bool) -> str | None
         size = effective or _DEFAULT_FT_BATCH
         return (
             f"Fine-tuning keeps an effective batch size of {size}. "
-            "When fine-tuning starts, the run measures the token lengths of the cells in that job "
-            "and the free memory on the machine that runs it. "
-            "One GPU pass of that many cells is used when it fits. "
-            "When it does not fit, each weight update is split into GPU passes that divide that size."
+            "Cells per GPU pass and the number of passes added before one update "
+            "will be entered here when fine-tuning starts."
         )
     if mode == "micro" and micro and (effective or accum):
         passes = accum or (effective // micro if effective and effective % micro == 0 else None)
         update_cells = effective or (micro * passes if passes else None)
         if passes and update_cells:
             sentence = (
-                f"Fine-tuning used an effective batch size of {update_cells}. "
-                f"Each weight update accumulated {passes} GPU passes of {micro} cells."
+                f"Fine-tuning keeps an effective batch size of {update_cells}. "
+                f"Each weight update added {passes} passes of {micro} cells on the GPU."
             )
             if choice == "auto" and seq_len:
                 sentence += (
@@ -502,8 +500,8 @@ def _ft_sentence(cfg: Mapping[str, Any], *, pipeline_config: bool) -> str | None
     if choice == "auto" and (effective or explicit):
         size = effective or explicit
         sentence = (
-            f"Fine-tuning used a batch size of {size}. "
-            f"Each weight update used one GPU pass of {size} cells."
+            f"Fine-tuning keeps an effective batch size of {size}. "
+            f"Each weight update used one pass of {size} cells on the GPU."
         )
         if seq_len:
             sentence += f" A pass of {size} cells fit at rank length {seq_len}."
