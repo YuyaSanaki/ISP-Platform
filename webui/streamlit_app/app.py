@@ -2709,6 +2709,25 @@ def _sync_pipeline_output_run_dir() -> None:
         st.session_state["pipeline_output_run_dir"] = str(found.resolve())
 
 
+def _active_pipeline_output_dir() -> Path | None:
+    """Pipeline folder for the job that is running, including one started before a reload."""
+    raw = st.session_state.get("pipeline_output_run_dir")
+    if raw:
+        path = Path(str(raw))
+        if path.is_dir() and (path / "pipeline_config_used.yaml").is_file():
+            return path
+    web_dirs = [st.session_state.get("last_run_dir")]
+    job = read_active_job(_ensure_workspace())
+    if job and str(job.get("run_type") or "") == RUN_TYPE_PIPELINE:
+        web_dirs.append(job.get("run_dir"))
+    for web_dir in web_dirs:
+        found = _reported_pipeline_run_dir(web_dir)
+        if found is not None and (found / "pipeline_config_used.yaml").is_file():
+            st.session_state["pipeline_output_run_dir"] = str(found.resolve())
+            return found
+    return None
+
+
 
 def _method_run_kind(run_label: str) -> str:
     return {
@@ -2796,9 +2815,15 @@ def _render_method_description(
     proc = st.session_state.get("active_proc")
     busy = proc is not None and proc.poll() is None
     pipeline_run = None
-    raw_pipeline = st.session_state.get("pipeline_output_run_dir")
-    if raw_pipeline and Path(str(raw_pipeline)).is_dir():
-        pipeline_run = Path(str(raw_pipeline))
+    if not recorded_only and kind == _METHOD_E2E:
+        pipeline_run = _active_pipeline_output_dir()
+        if pipeline_run is not None and _pipeline_job_running():
+            _render_live_pipeline_method(key_prefix, height)
+            return
+    if pipeline_run is None:
+        raw_pipeline = st.session_state.get("pipeline_output_run_dir")
+        if raw_pipeline and Path(str(raw_pipeline)).is_dir():
+            pipeline_run = Path(str(raw_pipeline))
     umap_source = sf_source = None
     umap_genes = None
     sf_mode = None
@@ -4996,6 +5021,33 @@ def _render_other_session_job(info: dict) -> None:
     log_path = Path(str(info.get("log_path") or ""))
     if log_path.is_file():
         st.code(_tail_log(log_path), language="text")
+
+
+def _pipeline_job_running() -> bool:
+    proc = st.session_state.get("active_proc")
+    if proc is not None and proc.poll() is None:
+        active = st.session_state.get("active_run_type") or st.session_state.get("run_type_sel")
+        if active == RUN_TYPE_PIPELINE:
+            return True
+    job = read_active_job(_ensure_workspace())
+    return bool(job and str(job.get("run_type") or "") == RUN_TYPE_PIPELINE)
+
+
+@st.fragment(run_every=timedelta(seconds=15))
+def _render_live_pipeline_method(key_prefix: str, height: int) -> None:
+    """Re-read the running job's saved config so the Method box gains the fine-tune batch."""
+    run_dir = _active_pipeline_output_dir()
+    text, notes = _build_method_view(
+        version=_platform_version(ROOT),
+        run_kind=_METHOD_E2E,
+        recorded_only=False,
+        run_dir=run_dir,
+        pipeline_run_dir=run_dir,
+        live_cfg=_apply_method_form(_read_pipeline_yaml(), _method_form()),
+        busy=True,
+        length_reader=_method_length_reader,
+    )
+    _render_method_box(st, text, notes, key_prefix=key_prefix, height=height)
 
 
 @st.fragment(run_every=_LOG_AUTO_REFRESH_SHORT)
