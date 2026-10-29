@@ -79,7 +79,7 @@ _DEFAULT_STATS_MODE = "goal_state_shift"
 _DEFAULT_ISP_ANALYSIS_ENABLED = True
 _DEFAULT_ISP_POSTPROCESS_ENABLED = False
 _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS = 4
-_DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE = "manual"  # "auto" | "manual"
+_DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE = "auto"  # "auto" | "manual"
 _DEFAULT_ISP_POSTPROCESS_CELLTYPE = True
 _DEFAULT_PERTURB_TYPE = "delete"
 _DEFAULT_STATE_KEY = "disease"
@@ -219,6 +219,19 @@ from job_lock import (
     read_active_job,
     release_job_lock,
     stop_job,
+)
+from method_description import (
+    RUN_KIND_E2E as _METHOD_E2E,
+    RUN_KIND_FT_BATCH as _METHOD_FT_BATCH,
+    RUN_KIND_ISP_UMAP as _METHOD_ISP_UMAP,
+    RUN_KIND_STATE_FEEDBACK as _METHOD_STATE_FEEDBACK,
+    apply_form_overrides as _apply_method_form,
+    build_method_view as _build_method_view,
+    model_input_size_for_config as _model_input_size_for_config,
+    platform_version as _platform_version,
+    render_method_box as _render_method_box,
+    token_lengths_cached as _token_lengths_cached,
+    length_stats_for_run as _length_stats_for_run,
 )
 
 discover_sample_dirs = _dil.discover_sample_dirs
@@ -2429,12 +2442,109 @@ def _apply_batch_size_to_yaml() -> None:
 
 
 def _clamp_ft_train_batch_size(value: int) -> int:
-    """Clamp fine-tune train_batch_size to the Web UI allowed range [4, 8]."""
+    """Clamp the standard fine-tune train_batch_size to the Web UI range [4, 8]."""
     return max(MIN_FT_TRAIN_BATCH_SIZE, min(MAX_FT_TRAIN_BATCH_SIZE, int(value)))
+
+
+def _sync_ft_batch_mode_from_yaml() -> None:
+    """Load standard vs micro-batch choice without overwriting a choice already made."""
+    runtime = (_read_pipeline_yaml().get("runtime") or {})
+    choice = str(runtime.get("ft_batch_choice") or "auto").strip().lower()
+    if choice not in ("auto", "manual"):
+        choice = "auto"
+    st.session_state.setdefault(
+        "pipeline_ft_batch_choice", "Auto" if choice == "auto" else "Manual"
+    )
+    mode = str(runtime.get("ft_batch_mode") or "standard").strip().lower()
+    if mode not in ("standard", "micro"):
+        mode = "standard"
+    st.session_state.setdefault("pipeline_ft_batch_mode", mode)
+    try:
+        micro = int(runtime.get("micro_batch_size", 2))
+    except (TypeError, ValueError):
+        micro = 2
+    st.session_state.setdefault("pipeline_ft_micro_batch_size", max(1, min(32, micro)))
+    if "micro_effective_batch_size" in runtime:
+        try:
+            effective = int(runtime.get("micro_effective_batch_size"))
+        except (TypeError, ValueError):
+            effective = DEFAULT_FT_TRAIN_BATCH_SIZE
+    else:
+        try:
+            accum = int(runtime.get("micro_gradient_accumulation_steps", 3))
+        except (TypeError, ValueError):
+            accum = 3
+        effective = max(1, micro) * max(1, accum)
+    st.session_state.setdefault(
+        "pipeline_ft_effective_batch_size", _clamp_ft_train_batch_size(effective)
+    )
+
+
+def _selected_ft_batch_choice() -> str:
+    raw = str(st.session_state.get("pipeline_ft_batch_choice") or "Auto").strip().lower()
+    return "auto" if raw == "auto" else "manual"
+
+
+def _selected_ft_batch_mode() -> str:
+    mode = str(st.session_state.get("pipeline_ft_batch_mode") or "standard").strip().lower()
+    return mode if mode in ("standard", "micro") else "standard"
+
+
+def _selected_micro_batch_size() -> int:
+    try:
+        value = int(st.session_state.get("pipeline_ft_micro_batch_size", 2))
+    except (TypeError, ValueError):
+        value = 2
+    return max(1, min(32, value))
+
+
+def _selected_effective_batch_size() -> int:
+    """Cells in one weight update. Same role as the standard train_batch_size."""
+    try:
+        value = int(
+            st.session_state.get("pipeline_ft_effective_batch_size", DEFAULT_FT_TRAIN_BATCH_SIZE)
+        )
+    except (TypeError, ValueError):
+        value = DEFAULT_FT_TRAIN_BATCH_SIZE
+    return _clamp_ft_train_batch_size(value)
+
+
+def _micro_pass_count() -> int | None:
+    """GPU passes before one update: effective batch size / cells on the GPU."""
+    micro = _selected_micro_batch_size()
+    effective = _selected_effective_batch_size()
+    if micro < 1 or effective % micro != 0:
+        return None
+    return effective // micro
+
+
+def _ft_batch_patch_kwargs() -> dict:
+    """Standard batch and micro-batch settings, both kept in the Pipeline YAML.
+
+    Auto records the effective batch size only. The pass size is chosen when
+    fine-tune starts, from that job's token lengths and that machine's free memory.
+    The stored standard ``train_batch_size`` is not replaced.
+    """
+    choice = _selected_ft_batch_choice()
+    kwargs = {
+        "ft_batch_choice": choice,
+        "train_batch_size": _selected_ft_train_batch_size(),
+        "micro_batch_size": _selected_micro_batch_size(),
+        "micro_effective_batch_size": _selected_effective_batch_size(),
+    }
+    if choice == "auto":
+        kwargs["micro_effective_batch_size"] = DEFAULT_FT_TRAIN_BATCH_SIZE
+        return kwargs
+    kwargs["ft_batch_mode"] = _selected_ft_batch_mode()
+    passes = _micro_pass_count()
+    if passes is not None:
+        kwargs["micro_gradient_accumulation_steps"] = passes
+    return kwargs
 
 
 def _sync_ft_train_batch_controls() -> None:
     """Initialize Pipeline fine-tune train_batch_size from YAML or last calibration."""
+    _sync_ft_batch_mode_from_yaml()
     if "pipeline_ft_train_batch_size" in st.session_state:
         st.session_state["pipeline_ft_train_batch_size"] = _clamp_ft_train_batch_size(
             int(st.session_state["pipeline_ft_train_batch_size"])
@@ -2465,9 +2575,11 @@ def _selected_ft_train_batch_size() -> int:
 
 
 def _apply_ft_train_batch_to_yaml() -> None:
-    # Keep session state inside the widget range before writing YAML.
+    # Keep the standard batch inside 4–8. Micro-batch fields are stored beside it.
     st.session_state["pipeline_ft_train_batch_size"] = _selected_ft_train_batch_size()
-    _patch_pipeline_yaml(train_batch_size=_selected_ft_train_batch_size())
+    st.session_state["pipeline_ft_micro_batch_size"] = _selected_micro_batch_size()
+    st.session_state["pipeline_ft_effective_batch_size"] = _selected_effective_batch_size()
+    _patch_pipeline_yaml(**_ft_batch_patch_kwargs())
 
 
 def _apply_calibrated_ft_batch_to_pipeline() -> None:
@@ -2597,6 +2709,134 @@ def _sync_pipeline_output_run_dir() -> None:
         st.session_state["pipeline_output_run_dir"] = str(found.resolve())
 
 
+
+def _method_run_kind(run_label: str) -> str:
+    return {
+        RUN_TYPE_PIPELINE: _METHOD_E2E,
+        RUN_TYPE_FT_BATCH: _METHOD_FT_BATCH,
+        RUN_TYPE_ISP_UMAP: _METHOD_ISP_UMAP,
+        RUN_TYPE_STATE_FEEDBACK_ISP: _METHOD_STATE_FEEDBACK,
+    }.get(run_label, _METHOD_E2E)
+
+
+def _method_form() -> dict:
+    """On-screen Pipeline / FT choices. Absent widgets leave the YAML as written."""
+    form: dict = {}
+    for session_key, form_key in (
+        ("pipeline_model_organism", "model_organism"),
+        ("pipeline_model", "model"),
+        ("pipeline_mouse_variant", "mouse_variant"),
+        ("pipeline_human_variant", "human_variant"),
+        ("pipeline_ortholog_policy", "ortholog_policy"),
+        ("pipeline_pert_type", "pert_type"),
+        ("pipeline_ft_batch_mode", "ft_batch_mode"),
+    ):
+        if session_key in st.session_state and st.session_state.get(session_key):
+            form[form_key] = st.session_state.get(session_key)
+    if "pipeline_genes_to_perturb_text" in st.session_state:
+        form["genes"] = _parse_genes_to_perturb_text(
+            st.session_state.get("pipeline_genes_to_perturb_text")
+        )
+    if "pipeline_isp_start_state" in st.session_state:
+        column, value = _split_isp_state_token(st.session_state.get("pipeline_isp_start_state"))
+        if value:
+            form["start"] = value
+        if column:
+            form["state_key"] = column
+    if "pipeline_isp_end_state" in st.session_state:
+        _column, value = _split_isp_state_token(st.session_state.get("pipeline_isp_end_state"))
+        if value:
+            form["goal"] = value
+    if "state_key" not in form and st.session_state.get("pipeline_pert_state_key"):
+        form["state_key"] = st.session_state.get("pipeline_pert_state_key")
+    if "pipeline_ft_train_batch_size" in st.session_state:
+        form["train_batch_size"] = _selected_ft_train_batch_size()
+    choice = _selected_ft_batch_choice()
+    form["ft_batch_choice"] = choice
+    if choice == "auto":
+        form["micro_effective_batch_size"] = DEFAULT_FT_TRAIN_BATCH_SIZE
+        form.pop("ft_batch_mode", None)
+        form.pop("micro_batch_size", None)
+        form.pop("micro_accum_steps", None)
+        form.pop("ft_n_cells", None)
+        form.pop("ft_length_max", None)
+        form.pop("ft_input_length", None)
+        form.pop("ft_memory_gib", None)
+    else:
+        if "pipeline_ft_batch_mode" in st.session_state:
+            form["ft_batch_mode"] = _selected_ft_batch_mode()
+        if "pipeline_ft_micro_batch_size" in st.session_state:
+            form["micro_batch_size"] = _selected_micro_batch_size()
+        if "pipeline_ft_effective_batch_size" in st.session_state:
+            form["micro_effective_batch_size"] = _selected_effective_batch_size()
+        passes = _micro_pass_count()
+        if passes is not None:
+            form["micro_accum_steps"] = passes
+    return form
+
+
+def _method_length_reader(run_dir: Path, cfg: dict):
+    input_size = _model_input_size_for_config(cfg)
+    if _token_lengths_cached(run_dir, max_input_size=input_size):
+        return _length_stats_for_run(run_dir, max_input_size=input_size)
+    with st.spinner("Reading token lengths…"):
+        return _length_stats_for_run(run_dir, max_input_size=input_size)
+
+
+def _render_method_description(
+    run_label: str,
+    *,
+    key_prefix: str,
+    run_dir: Path | None = None,
+    recorded_only: bool = False,
+    height: int = 280,
+) -> None:
+    """Methods paragraph under Run directory and on the Output tab."""
+    kind = _method_run_kind(run_label)
+    proc = st.session_state.get("active_proc")
+    busy = proc is not None and proc.poll() is None
+    pipeline_run = None
+    raw_pipeline = st.session_state.get("pipeline_output_run_dir")
+    if raw_pipeline and Path(str(raw_pipeline)).is_dir():
+        pipeline_run = Path(str(raw_pipeline))
+    umap_source = sf_source = None
+    umap_genes = None
+    sf_mode = None
+    sf_steps = None
+    recommended = None
+    if kind == _METHOD_ISP_UMAP:
+        raw = str(st.session_state.get("isp_umap_source_run_dir") or "").strip()
+        umap_source = Path(raw) if raw else None
+        umap_genes = _normalize_isp_umap_genes(st.session_state.get("isp_umap_genes_text"))
+        if not umap_genes:
+            umap_genes = _normalize_isp_umap_genes(st.session_state.get("isp_umap_gene"))
+    elif kind == _METHOD_STATE_FEEDBACK:
+        raw = str(st.session_state.get("isp_steps_source_run_dir") or "").strip()
+        sf_source = Path(raw) if raw else None
+        sf_mode = _sf_isp_mode()
+        sf_steps = _isp_steps_collect()
+    elif kind == _METHOD_FT_BATCH:
+        raw_batch = st.session_state.get("calibrated_ft_batch_size")
+        recommended = raw_batch if isinstance(raw_batch, int) and raw_batch >= 1 else None
+    text, notes = _build_method_view(
+        version=_platform_version(ROOT),
+        run_kind=kind,
+        recorded_only=recorded_only,
+        run_dir=run_dir,
+        pipeline_run_dir=pipeline_run,
+        live_cfg=_apply_method_form(_read_pipeline_yaml(), _method_form()),
+        busy=busy,
+        umap_source=umap_source,
+        umap_genes=umap_genes,
+        sf_source=sf_source,
+        sf_mode=sf_mode,
+        sf_steps=sf_steps,
+        recommended_batch=recommended,
+        length_reader=_method_length_reader,
+    )
+    _render_method_box(st, text, notes, key_prefix=key_prefix, height=height)
+
+
 def _render_run_directory_input(upload_dir: Path, run_label: str) -> None:
     """data.input_dir block (Pipeline / FT calibrate; call after YAML editor)."""
     if run_label not in _STUDY_RUN_TYPES:
@@ -2668,6 +2908,66 @@ def _render_run_directory_output(run_label: str) -> None:
             "**Run job** writes trajectory UMAP under "
             "`<selected pipeline run>/isp_umap/` (via `--run-dir`)."
         )
+    _render_method_description(run_label, key_prefix="run_directory")
+
+
+_ISP_CHOICE_SEP = "\x1f"
+
+
+def _isp_state_token(column: str, value: str) -> str:
+    return f"{column}{_ISP_CHOICE_SEP}{value}"
+
+
+def _split_isp_state_token(token: object) -> tuple[str, str]:
+    text = str(token or "")
+    if _ISP_CHOICE_SEP in text:
+        column, value = text.split(_ISP_CHOICE_SEP, 1)
+        if column and value:
+            return column, value
+    return "", text
+
+
+def _isp_choice_label(token: str) -> str:
+    column, value = _split_isp_state_token(token)
+    if column:
+        return f"{column}: {value}"
+    return value or token
+
+
+def _manifest_isp_choices() -> list[str]:
+    """Every non-empty Manifest value, tagged with its column. species is not a cell state."""
+    records = st.session_state.get("manifest_records") or {}
+    fields = [
+        name
+        for name in (st.session_state.get("manifest_fields") or [])
+        if name not in {"species", "sample_id"}
+    ]
+    if not isinstance(records, dict) or not fields:
+        return []
+    choices: list[str] = []
+    seen: set[str] = set()
+    for field in fields:
+        values: list[str] = []
+        for rec in records.values():
+            if not isinstance(rec, dict):
+                continue
+            value = str(rec.get(field, "")).strip()
+            if value and value not in values:
+                values.append(value)
+        for value in values:
+            token = _isp_state_token(field, value)
+            if token not in seen:
+                seen.add(token)
+                choices.append(token)
+    return choices
+
+
+def _state_key_from_isp_choices(start: object, end: object) -> str | None:
+    start_col, _start_val = _split_isp_state_token(start)
+    end_col, _end_val = _split_isp_state_token(end)
+    if start_col and start_col == end_col:
+        return start_col
+    return None
 
 
 def _default_isp_start_end(states: list[str]) -> tuple[str, str]:
@@ -2768,8 +3068,8 @@ def _apply_study_settings_to_yaml(upload_dir: Path) -> bool:
     }
     if "pipeline_batch_mode" in st.session_state:
         patch_kwargs["forward_batch_size"] = _selected_forward_batch_size()
-    if "pipeline_ft_train_batch_size" in st.session_state:
-        patch_kwargs["train_batch_size"] = _selected_ft_train_batch_size()
+    if "pipeline_ft_train_batch_size" in st.session_state or "pipeline_ft_batch_mode" in st.session_state:
+        patch_kwargs.update(_ft_batch_patch_kwargs())
     _patch_pipeline_yaml(**patch_kwargs)
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
     return True
@@ -2819,8 +3119,8 @@ def _finish_study_import(
     }
     if "pipeline_batch_mode" in st.session_state:
         patch_kwargs["forward_batch_size"] = _selected_forward_batch_size()
-    if "pipeline_ft_train_batch_size" in st.session_state:
-        patch_kwargs["train_batch_size"] = _selected_ft_train_batch_size()
+    if "pipeline_ft_train_batch_size" in st.session_state or "pipeline_ft_batch_mode" in st.session_state:
+        patch_kwargs.update(_ft_batch_patch_kwargs())
     _patch_pipeline_yaml(**patch_kwargs)
     st.session_state["processed_zip_fingerprint"] = fingerprint
     st.session_state["last_data_source"] = source_label
@@ -2978,6 +3278,11 @@ def _build_patched_pipeline_yaml(
     ortholog_gate_genes: list[str] | None = None,
     forward_batch_size: int | str | None = None,
     train_batch_size: int | str | None = None,
+    ft_batch_choice: str | None = None,
+    ft_batch_mode: str | None = None,
+    micro_batch_size: int | None = None,
+    micro_effective_batch_size: int | None = None,
+    micro_gradient_accumulation_steps: int | None = None,
     ft_epochs: int | None = None,
     ft_learning_rate: float | None = None,
     ft_num_runs: int | None = None,
@@ -3071,6 +3376,11 @@ def _build_patched_pipeline_yaml(
     if (
         forward_batch_size is not None
         or train_batch_size is not None
+        or ft_batch_choice is not None
+        or ft_batch_mode is not None
+        or micro_batch_size is not None
+        or micro_effective_batch_size is not None
+        or micro_gradient_accumulation_steps is not None
         or runtime_max_cells is not None
     ):
         cfg.setdefault("runtime", {})
@@ -3078,6 +3388,27 @@ def _build_patched_pipeline_yaml(
             cfg["runtime"]["forward_batch_size"] = forward_batch_size
         if train_batch_size is not None:
             cfg["runtime"]["train_batch_size"] = train_batch_size
+        if ft_batch_choice is not None:
+            cfg["runtime"]["ft_batch_choice"] = ft_batch_choice
+        if ft_batch_mode is not None:
+            cfg["runtime"]["ft_batch_mode"] = ft_batch_mode
+        if micro_batch_size is not None:
+            cfg["runtime"]["micro_batch_size"] = int(micro_batch_size)
+        if micro_effective_batch_size is not None:
+            cfg["runtime"]["micro_effective_batch_size"] = int(micro_effective_batch_size)
+        if micro_gradient_accumulation_steps is not None:
+            cfg["runtime"]["micro_gradient_accumulation_steps"] = int(
+                micro_gradient_accumulation_steps
+            )
+        if str(cfg["runtime"].get("ft_batch_choice") or "").strip().lower() == "auto":
+            cfg["runtime"].pop("ft_batch_mode", None)
+            cfg["runtime"].pop("micro_batch_size", None)
+            cfg["runtime"].pop("micro_gradient_accumulation_steps", None)
+            cfg["runtime"].pop("ft_batch_decided", None)
+            cfg["runtime"].pop("ft_n_cells", None)
+            cfg["runtime"].pop("ft_length_max", None)
+            cfg["runtime"].pop("ft_input_length", None)
+            cfg["runtime"].pop("ft_memory_gib", None)
         if runtime_max_cells is not None:
             cfg["runtime"]["max_cells"] = int(runtime_max_cells)
 
@@ -3173,6 +3504,11 @@ def _patch_pipeline_yaml(
     ortholog_gate_genes: list[str] | None = None,
     forward_batch_size: int | str | None = None,
     train_batch_size: int | str | None = None,
+    ft_batch_choice: str | None = None,
+    ft_batch_mode: str | None = None,
+    micro_batch_size: int | None = None,
+    micro_effective_batch_size: int | None = None,
+    micro_gradient_accumulation_steps: int | None = None,
     ft_epochs: int | None = None,
     ft_learning_rate: float | None = None,
     ft_num_runs: int | None = None,
@@ -3208,6 +3544,11 @@ def _patch_pipeline_yaml(
         ortholog_gate_genes=ortholog_gate_genes,
         forward_batch_size=forward_batch_size,
         train_batch_size=train_batch_size,
+        ft_batch_choice=ft_batch_choice,
+        ft_batch_mode=ft_batch_mode,
+        micro_batch_size=micro_batch_size,
+        micro_effective_batch_size=micro_effective_batch_size,
+        micro_gradient_accumulation_steps=micro_gradient_accumulation_steps,
         ft_epochs=ft_epochs,
         ft_learning_rate=ft_learning_rate,
         ft_num_runs=ft_num_runs,
@@ -3279,23 +3620,33 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
     if manifest_error:
         return None, manifest_error
 
-    start_state = st.session_state.get("pipeline_isp_start_state")
-    end_state = st.session_state.get("pipeline_isp_end_state")
-    if start_state and end_state and str(start_state) == str(end_state):
+    start_token = st.session_state.get("pipeline_isp_start_state")
+    end_token = st.session_state.get("pipeline_isp_end_state")
+    start_col, start_state = _split_isp_state_token(start_token)
+    end_col, end_state = _split_isp_state_token(end_token)
+    if start_state and end_state and start_state == end_state and start_col == end_col:
         return None, (
-            f"ISP **start_state** and **end_state** are both `{start_state}`.\n\n"
-            "Goal-state-shift ISP needs two different conditions "
-            "(e.g. start=`AD`, end=`WT`). Change the dropdowns and run again."
+            f"ISP **start** and **goal** are both `{start_state}`.\n\n"
+            "Goal-state-shift ISP needs two different conditions. "
+            "Change the dropdowns and run again."
         )
+    if start_col and end_col and start_col != end_col:
+        return None, (
+            f"Start is `{start_col}` and goal is `{end_col}`. "
+            "Pick two values from the same Manifest column."
+        )
+    if start_col:
+        st.session_state["pipeline_pert_state_key"] = start_col
 
-    available = unique_states_from_samples(tokenize_dir)
-    unknown = sorted({str(s) for s in (start_state, end_state) if s} - set(available))
-    if available and unknown:
-        return None, (
-            f"ISP states `{', '.join(unknown)}` do not exist in study **{study_name}**.\n\n"
-            f"Study metadata provides: `{', '.join(available)}`. "
-            "Pick those in the **ISP start_state / end_state** dropdowns."
-        )
+    choices = _manifest_isp_choices()
+    if choices:
+        known = {_split_isp_state_token(token)[1] for token in choices if _split_isp_state_token(token)[0] == (start_col or end_col)}
+        unknown = sorted({value for value in (start_state, end_state) if value and value not in known})
+        if known and unknown:
+            return None, (
+                f"ISP states `{', '.join(unknown)}` are not in the Manifest column "
+                f"`{start_col or end_col}`."
+            )
 
     overlay_raw = str(st.session_state.get("pipeline_ortholog_curated_overlay") or "").strip()
     model_id = st.session_state.get("pipeline_model", "mouse_geneformer")
@@ -3317,6 +3668,18 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
             "Enter at least one gene (e.g. the genes you perturb) or turn the gate off."
         )
 
+    if (
+        _selected_ft_batch_choice() != "auto"
+        and _selected_ft_batch_mode() == "micro"
+        and _micro_pass_count() is None
+    ):
+        micro = _selected_micro_batch_size()
+        effective = _selected_effective_batch_size()
+        return None, (
+            f"Effective batch size ({effective}) must be a multiple of "
+            f"cells on the GPU ({micro})."
+        )
+
     _sync_ft_isp_advanced_from_yaml()
     yaml_text = _build_patched_pipeline_yaml(
         input_dir=tokenize_dir,
@@ -3333,7 +3696,7 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
         ortholog_audit=st.session_state.get("pipeline_ortholog_audit"),
         ortholog_gate_genes=gate_genes,
         forward_batch_size=_selected_forward_batch_size(),
-        train_batch_size=_selected_ft_train_batch_size(),
+        **_ft_batch_patch_kwargs(),
         **_ft_isp_advanced_kwargs_from_session(),
     )
     st.session_state["pipeline_tokenize_dir"] = str(tokenize_dir)
@@ -3363,9 +3726,17 @@ def _prepare_ft_batch_calibrate_yaml_for_run(
 
 
 def _apply_isp_states_to_yaml() -> None:
+    start = st.session_state.get("pipeline_isp_start_state")
+    end = st.session_state.get("pipeline_isp_end_state")
+    _start_col, start_val = _split_isp_state_token(start)
+    _end_col, end_val = _split_isp_state_token(end)
+    state_key = _state_key_from_isp_choices(start, end)
+    if state_key:
+        st.session_state["pipeline_pert_state_key"] = state_key
     _patch_pipeline_yaml(
-        isp_start_state=st.session_state.get("pipeline_isp_start_state"),
-        isp_end_state=st.session_state.get("pipeline_isp_end_state"),
+        isp_start_state=start_val,
+        isp_end_state=end_val,
+        pert_state_key=st.session_state.get("pipeline_pert_state_key"),
     )
 
 
@@ -3475,8 +3846,8 @@ def _apply_perturbation_controls_to_yaml() -> None:
         pert_genes_to_perturb=_parse_genes_to_perturb_text(
             st.session_state.get("pipeline_genes_to_perturb_text")
         ),
-        isp_start_state=st.session_state.get("pipeline_isp_start_state"),
-        isp_end_state=st.session_state.get("pipeline_isp_end_state"),
+        isp_start_state=_split_isp_state_token(st.session_state.get("pipeline_isp_start_state"))[1],
+        isp_end_state=_split_isp_state_token(st.session_state.get("pipeline_isp_end_state"))[1],
     )
 
 
@@ -3504,8 +3875,24 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
         isp_stage,
         "postprocess",
         "n_clusters",
-        default=_DEFAULT_ISP_POSTPROCESS_N_CLUSTERS,
+        default="auto",
     )
+    # Sessions opened before the default changed still hold manual K=4.
+    if st.session_state.get("_n_clusters_default_rev") != "auto":
+        st.session_state["_n_clusters_default_rev"] = "auto"
+        if _normalize_n_clusters_value(postprocess_n_clusters) == _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS:
+            postprocess_n_clusters = "auto"
+            editor = st.session_state.get("yaml_editor")
+            if isinstance(editor, str) and "n_clusters: 4" in editor:
+                st.session_state["yaml_editor"] = editor.replace(
+                    "n_clusters: 4", "n_clusters: auto", 1
+                )
+            st.session_state["pipeline_isp_postprocess_n_clusters_mode"] = "auto"
+            if (
+                st.session_state.get("isp_umap_postprocess_n_clusters_mode") == "manual"
+                and int(st.session_state.get("isp_umap_postprocess_n_clusters") or 4) == 4
+            ):
+                st.session_state["isp_umap_postprocess_n_clusters_mode"] = "auto"
     postprocess_celltype = _nested_get(
         isp_stage,
         "postprocess",
@@ -3573,26 +3960,14 @@ def _render_perturbation_controls() -> None:
         "Writes `perturbation.*` (copied into the ISP stage). "
         "Empty gene list = perturb **all** genes (slow)."
     )
-    c_type, c_key = st.columns(2)
-    with c_type:
-        st.selectbox(
-            "perturbation.type",
-            list(_PERTURB_TYPE_LABELS.keys()),
-            key="pipeline_pert_type",
-            format_func=lambda v: _PERTURB_TYPE_LABELS.get(v, v),
-            on_change=_apply_perturbation_controls_to_yaml,
-            help="How the gene is changed in the rank encoding (`perturbation.type`).",
-        )
-    with c_key:
-        st.text_input(
-            "state_key",
-            key="pipeline_pert_state_key",
-            on_change=_apply_perturbation_controls_to_yaml,
-            help=(
-                "Dataset column for start/end labels (`perturbation.state_key`). "
-                "Usually `disease` (folder-derived metadata)."
-            ),
-        )
+    st.selectbox(
+        "perturbation.type",
+        list(_PERTURB_TYPE_LABELS.keys()),
+        key="pipeline_pert_type",
+        format_func=lambda v: _PERTURB_TYPE_LABELS.get(v, v),
+        on_change=_apply_perturbation_controls_to_yaml,
+        help="How the gene is changed in the rank encoding (`perturbation.type`).",
+    )
     st.text_area(
         "genes_to_perturb (one per line; empty = all)",
         key="pipeline_genes_to_perturb_text",
@@ -3604,6 +3979,168 @@ def _render_perturbation_controls() -> None:
         ),
         placeholder="Igfbp2\n# or leave empty for all genes",
     )
+
+
+def _render_ft_batch_controls() -> None:
+    """Fine-tune batch above ISP GPU batch. Auto or Manual, plus a copyable Methods line."""
+    _apply_manifest_species_if_ready()
+    _sync_species_form_from_yaml()
+    _sync_ft_train_batch_controls()
+    st.markdown("**Fine-tune batch**")
+    st.radio(
+        "Fine-tune batch",
+        ["Auto", "Manual"],
+        horizontal=True,
+        key="pipeline_ft_batch_choice",
+        on_change=_apply_ft_train_batch_to_yaml,
+        help=(
+            "Auto keeps an effective batch size of 6. "
+            "Each run measures that job's token lengths and the free memory on the "
+            "machine that starts fine-tune, then chooses standard or micro-batch. "
+            "Manual keeps the standard batch and the micro-batch settings separate."
+        ),
+    )
+    if _selected_ft_batch_choice() == "auto":
+        st.caption(
+            "Each run decides this when fine-tune starts. "
+            "It reads the token lengths of the cells in that job and the free memory "
+            "on the machine running the job. "
+            f"The effective batch size stays **{DEFAULT_FT_TRAIN_BATCH_SIZE}**. "
+            "One GPU pass of that many cells is used when it fits. "
+            "When it does not fit, the update is split into passes that divide that size. "
+            "The stored standard batch is not changed."
+        )
+        _apply_auto_ft_batch_if_changed()
+    else:
+        st.radio(
+            "Fine-tune batch mode",
+            ["standard", "micro"],
+            format_func=lambda mode: (
+                "Standard batch (one GPU batch per weight update)"
+                if mode == "standard"
+                else "Micro-batch (add gradients, then update)"
+            ),
+            horizontal=True,
+            key="pipeline_ft_batch_mode",
+            on_change=_apply_ft_train_batch_to_yaml,
+            help=(
+                "Standard is the existing 4–8 batch. "
+                "Micro-batch is separate: fewer cells on the GPU at once, "
+                "and the standard batch stays stored."
+            ),
+        )
+        if _selected_ft_batch_mode() == "standard":
+            st.caption(
+                f"Allowed range **{MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE}** "
+                f"(default {DEFAULT_FT_TRAIN_BATCH_SIZE}). "
+                "One weight update uses this many cells. "
+                "Paste from **FT batch size (calibrate)** only if it falls in that range "
+                "(larger calibrate suggestions are clamped). "
+                "Once chosen for a study, keep it fixed "
+                "(writes `runtime.train_batch_size`, accumulation 1). "
+                "Micro-batch settings stay saved and are not used in this mode."
+            )
+            c_ft_batch, c_ft_apply = st.columns([2, 1])
+            with c_ft_batch:
+                st.number_input(
+                    "train_batch_size",
+                    min_value=MIN_FT_TRAIN_BATCH_SIZE,
+                    max_value=MAX_FT_TRAIN_BATCH_SIZE,
+                    step=1,
+                    key="pipeline_ft_train_batch_size",
+                    on_change=_apply_ft_train_batch_to_yaml,
+                    help=(
+                        f"Cells in one GPU pass and in one weight update "
+                        f"({MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE}). "
+                        "Outside this range FT dynamics diverge."
+                    ),
+                )
+            with c_ft_apply:
+                calibrated = st.session_state.get("calibrated_ft_batch_size")
+                if isinstance(calibrated, int) and calibrated >= 1:
+                    clamped = _clamp_ft_train_batch_size(calibrated)
+                    label = f"Use calibrated ({calibrated})"
+                    if clamped != calibrated:
+                        label = f"Use clamped ({clamped}; raw {calibrated})"
+                    st.button(
+                        label,
+                        type="secondary",
+                        key="apply_calibrated_ft_batch_btn",
+                        help=(
+                            "Copy the last FT batch calibration result into the standard batch "
+                            f"(clamped to {MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE})."
+                        ),
+                        on_click=_apply_calibrated_ft_batch_to_pipeline,
+                    )
+                else:
+                    st.caption("No calibration yet")
+        else:
+            micro = _selected_micro_batch_size()
+            effective = _selected_effective_batch_size()
+            passes = _micro_pass_count()
+            if passes is None:
+                st.error(
+                    f"Effective batch size ({effective}) must be a multiple of "
+                    f"cells on the GPU ({micro})."
+                )
+            else:
+                st.caption(
+                    f"One weight update uses **{effective}** cells, "
+                    f"in **{passes}** GPU passes of {micro} "
+                    f"({effective} / {micro}). "
+                    f"The standard train_batch_size ({_selected_ft_train_batch_size()}) "
+                    "stays saved and is not used in this mode."
+                )
+            c_micro, c_effective = st.columns(2)
+            with c_micro:
+                st.number_input(
+                    "Cells on the GPU at once",
+                    min_value=1,
+                    max_value=32,
+                    step=1,
+                    key="pipeline_ft_micro_batch_size",
+                    on_change=_apply_ft_train_batch_to_yaml,
+                    help="`runtime.micro_batch_size`. Cells in one forward and backward pass.",
+                )
+            with c_effective:
+                st.number_input(
+                    "Effective batch size",
+                    min_value=MIN_FT_TRAIN_BATCH_SIZE,
+                    max_value=MAX_FT_TRAIN_BATCH_SIZE,
+                    step=1,
+                    key="pipeline_ft_effective_batch_size",
+                    on_change=_apply_ft_train_batch_to_yaml,
+                    help=(
+                        "Cells in one weight update. Same role as standard train_batch_size. "
+                        "GPU passes = effective batch size / cells on the GPU "
+                        "(`runtime.micro_effective_batch_size`)."
+                    ),
+                )
+
+
+def _apply_auto_ft_batch_if_changed() -> None:
+    """Keep Auto in the YAML without a batch chosen on this machine."""
+    if _selected_ft_batch_choice() != "auto":
+        return
+    runtime = _read_pipeline_yaml().get("runtime") or {}
+    resolved_keys = (
+        "ft_batch_mode",
+        "micro_batch_size",
+        "micro_gradient_accumulation_steps",
+        "ft_batch_decided",
+        "ft_n_cells",
+        "ft_length_max",
+        "ft_input_length",
+        "ft_memory_gib",
+    )
+    same = (
+        str(runtime.get("ft_batch_choice") or "") == "auto"
+        and int(runtime.get("micro_effective_batch_size") or 0) == DEFAULT_FT_TRAIN_BATCH_SIZE
+        and all(key not in runtime for key in resolved_keys)
+    )
+    if same:
+        return
+    _apply_ft_train_batch_to_yaml()
 
 
 def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
@@ -3763,71 +4300,13 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
                 "Fine-tune UMAP is controlled by `stages.finetune.umap.enabled`."
             )
 
-        with st.expander("Cluster / cell-type / enrichment analysis", expanded=False):
-            st.caption(
-                "After ISP, optionally write `cluster_coexpr_analysis/` after ISP UMAP "
-                "(including E2E TOP1) and `rank_enrichment/` (enrichment of the top Start, "
-                "Goal and ISP genes) (`stages.isp.postprocess.*`). Default **off**."
-            )
-            st.checkbox(
-                "Enable analyses after ISP",
-                key="pipeline_isp_postprocess_enabled",
-                on_change=_apply_ft_isp_advanced_to_yaml,
-                help="`stages.isp.postprocess.enabled`",
-            )
-            if st.session_state.get("pipeline_isp_postprocess_enabled"):
-                st.radio(
-                    "n_clusters (KMeans)",
-                    options=["auto", "manual"],
-                    format_func=lambda m: (
-                        "auto (silhouette)" if m == "auto" else "manual (specify K)"
-                    ),
-                    horizontal=True,
-                    key="pipeline_isp_postprocess_n_clusters_mode",
-                    on_change=_apply_ft_isp_advanced_to_yaml,
-                    help=(
-                        "auto: silhouette-optimal K (2..15) on start embeddings. "
-                        "manual: fixed K (`stages.isp.postprocess.n_clusters`)."
-                    ),
-                )
-                if (
-                    st.session_state.get("pipeline_isp_postprocess_n_clusters_mode")
-                    == "manual"
-                ):
-                    st.number_input(
-                        "K",
-                        min_value=2,
-                        max_value=50,
-                        step=1,
-                        key="pipeline_isp_postprocess_n_clusters",
-                        on_change=_apply_ft_isp_advanced_to_yaml,
-                        help="`stages.isp.postprocess.n_clusters`",
-                    )
-                st.checkbox(
-                    "Cell-type prediction (marker genes)",
-                    key="pipeline_isp_postprocess_celltype",
-                    on_change=_apply_ft_isp_advanced_to_yaml,
-                    help="`stages.isp.postprocess.celltype_prediction`",
-                )
-                st.checkbox(
-                    "Rank enrichment (Start / Goal / ISP top genes)",
-                    key="pipeline_isp_postprocess_rank_enrichment",
-                    on_change=_apply_ft_isp_advanced_to_yaml,
-                    help=(
-                        "`stages.isp.postprocess.rank_enrichment`. Per-gene ISP screens: ORA of "
-                        "the top 10% background genes by Start and Goal pseudobulk rank and of "
-                        "the top ISP hits shifted toward Goal, on local gene set libraries "
-                        "(Reactome, GO, KEGG). Output: `rank_enrichment/` in the run folder."
-                    ),
-                )
-
     with st.expander("What do these options mean?", expanded=False):
         st.markdown(
             """
 | Control | Effect |
 |---------|--------|
 | **perturbation.type** | delete / overexpress |
-| **state_key** | Metadata column for start/end (usually `disease`) |
+| **ISP start / goal** | Any Manifest value. The column of those two values is `state_key` |
 | **genes_to_perturb** | Empty = all genes; list = targeted ISP |
 | **task_type / label_column** | What the fine-tune classifier learns |
 | **tokenize max_cells** | Cells per tokenized shard (RAM). All shards are used. Cross-species: also cells kept per sample file |
@@ -3895,22 +4374,89 @@ def _apply_manifest_species_if_ready() -> None:
     samples = _manifest_samples_from_records(list(records.keys()), fields, records)
     if validate_sample_metadata(samples):
         return
-    species = str(samples[0].get("species", "")).strip().lower()
+    species = _canonical_species(samples[0].get("species"))
     if not species:
         return
-    st.session_state["pipeline_model_organism"] = species
-    if not st.session_state.get("yaml_editor"):
+    if st.session_state.get("manifest_model_applied_for") == species:
+        st.session_state["pipeline_model_organism"] = species
         return
-    current = (_read_pipeline_yaml().get("species") or {}).get("model_organism")
-    if current != species:
+    st.session_state["pipeline_model_organism"] = species
+    st.session_state["manifest_model_applied_for"] = species
+    if species == "human":
+        st.session_state["pipeline_model"] = "human_geneformer"
+        st.session_state["pipeline_human_variant"] = "v2_104m"
+    elif species == "mouse":
+        st.session_state["pipeline_model"] = "mouse_geneformer"
+        st.session_state["pipeline_mouse_variant"] = "base"
+    if st.session_state.get("yaml_editor"):
         _apply_species_to_yaml()
+
+
+def _render_cluster_enrichment_controls() -> None:
+    """Cluster, cell-type, and rank enrichment. Shown above ISP model, not inside Advanced."""
+    _sync_ft_isp_advanced_from_yaml()
+    st.markdown("**Cluster / cell-type / enrichment analysis**")
+    st.caption(
+        "After ISP, optionally write `cluster_coexpr_analysis/` after ISP UMAP "
+        "(including E2E TOP1) and `rank_enrichment/` (enrichment of the top Start, "
+        "Goal and ISP genes) (`stages.isp.postprocess.*`). Default **off**. "
+        "`n_clusters` defaults to **auto**."
+    )
+    st.checkbox(
+        "Enable analyses after ISP",
+        key="pipeline_isp_postprocess_enabled",
+        on_change=_apply_ft_isp_advanced_to_yaml,
+        help="`stages.isp.postprocess.enabled`",
+    )
+    if st.session_state.get("pipeline_isp_postprocess_enabled"):
+        st.radio(
+            "n_clusters (KMeans)",
+            options=["auto", "manual"],
+            format_func=lambda m: (
+                "auto (silhouette)" if m == "auto" else "manual (specify K)"
+            ),
+            horizontal=True,
+            key="pipeline_isp_postprocess_n_clusters_mode",
+            on_change=_apply_ft_isp_advanced_to_yaml,
+            help=(
+                "auto: silhouette-optimal K (2..15) on start embeddings. "
+                "manual: fixed K (`stages.isp.postprocess.n_clusters`)."
+            ),
+        )
+        if st.session_state.get("pipeline_isp_postprocess_n_clusters_mode") == "manual":
+            st.number_input(
+                "K",
+                min_value=2,
+                max_value=50,
+                step=1,
+                key="pipeline_isp_postprocess_n_clusters",
+                on_change=_apply_ft_isp_advanced_to_yaml,
+                help="`stages.isp.postprocess.n_clusters`",
+            )
+        st.checkbox(
+            "Cell-type prediction (marker genes)",
+            key="pipeline_isp_postprocess_celltype",
+            on_change=_apply_ft_isp_advanced_to_yaml,
+            help="`stages.isp.postprocess.celltype_prediction`",
+        )
+        st.checkbox(
+            "Rank enrichment (Start / Goal / ISP top genes)",
+            key="pipeline_isp_postprocess_rank_enrichment",
+            on_change=_apply_ft_isp_advanced_to_yaml,
+            help=(
+                "`stages.isp.postprocess.rank_enrichment`. Per-gene ISP screens: ORA of "
+                "the top 10% background genes by Start and Goal pseudobulk rank and of "
+                "the top ISP hits shifted toward Goal, on local gene set libraries "
+                "(Reactome, GO, KEGG). Output: `rank_enrichment/` in the run folder."
+            ),
+        )
 
 
 def _render_species_model_controls() -> None:
     """Input-data species vs FT/ISP model — clear separation for cross-species runs."""
     _apply_manifest_species_if_ready()
     _sync_species_form_from_yaml()
-    st.markdown("**Input data species**")
+    st.markdown("**ISP model**")
     st.selectbox(
         "Species of the uploaded scRNA-seq",
         list(_ORGANISM_LABELS.keys()),
@@ -4754,6 +5300,14 @@ def _render_output_browser() -> None:
                 _clear_prepared_run_zip("output_browser_zip")
                 st.rerun()
 
+    _render_method_description(
+        RUN_TYPE_PIPELINE,
+        key_prefix="output_browser",
+        run_dir=run_dir,
+        recorded_only=True,
+        height=220,
+    )
+
     st.divider()
     _render_dropped_genes_panel([run_dir], key_prefix="output_browser")
 
@@ -4835,6 +5389,17 @@ def main() -> None:
 
 
 _MANIFEST_CORE_FIELDS = ("disease", "species")
+_MANIFEST_SPECIES_OPTIONS = ("human", "mouse", "drosophila")
+_MANIFEST_SPECIES_LABELS = {"human": "human", "mouse": "mouse", "drosophila": "fly"}
+
+
+def _canonical_species(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"fly", "fruitfly", "fruit fly", "drosophila"}:
+        return "drosophila"
+    if text in {"human", "mouse"}:
+        return text
+    return ""
 
 
 def _manifest_optional_field(name: str) -> str:
@@ -4845,7 +5410,10 @@ def _manifest_optional_field(name: str) -> str:
     except SampleManifestError:
         raise
     if field in {"sample_id", "disease", "species"}:
-        raise SampleManifestError(f"{field} is already in the table.")
+        raise SampleManifestError(
+            f"{field} is already in the Manifest. "
+            "species is the dropdown (human, mouse, or fly)."
+        )
     return field
 
 
@@ -4925,9 +5493,10 @@ def _render_manifest_editor(upload_dir: Path) -> None:
 
     st.subheader("Manifest")
     st.caption(
-        "Sample names are the uploaded folders. Fill **disease** and **species** "
-        "(mouse, human, or drosophila, the same value for every sample). "
-        "**＋** adds an optional metadata row, such as experiment or batch."
+        "Sample names are the uploaded folders, one row each. "
+        "**species** is the dropdown above the table (human, mouse, or fly) and stays the same as **ISP model**. "
+        "**disease** is typed in the table. "
+        "**＋** adds an optional metadata column, such as experiment or batch."
     )
     study_root = _compute_tokenize_input_dir(upload_dir)
     if study_root is None:
@@ -4964,48 +5533,114 @@ def _render_manifest_editor(upload_dir: Path) -> None:
     extras = [name for name in fields if name not in _MANIFEST_CORE_FIELDS]
     fields = list(_MANIFEST_CORE_FIELDS) + extras
     records = dict(st.session_state.get("manifest_records") or {})
+    stored_species = {
+        _canonical_species(rec.get("species"))
+        for rec in records.values()
+        if isinstance(rec, dict)
+    }
+    stored_species.discard("")
+    table_species = next(iter(stored_species)) if len(stored_species) == 1 else organism
+    species_from_isp = False
+    if "manifest_linked_isp" not in st.session_state:
+        st.session_state["manifest_linked_isp"] = table_species
+        st.session_state["pipeline_model_organism"] = table_species
+    elif st.session_state.get("manifest_linked_isp") != organism:
+        table_species = organism
+        st.session_state["manifest_linked_isp"] = organism
+        species_from_isp = True
     for name in sample_names:
         rec = dict(records.get(name) or {})
         for field in fields:
             rec.setdefault(field, "")
-        if not str(rec.get("species", "")).strip():
-            rec["species"] = organism
+        rec["species"] = table_species
         records[name] = rec
     st.session_state["manifest_fields"] = fields
     st.session_state["manifest_records"] = records
 
-    editor_sig = (sample_sig, tuple(fields))
+    editor_fields = list(fields)
+    editor_sig = (sample_sig, tuple(editor_fields))
     if st.session_state.get("manifest_editor_sig") != editor_sig:
         st.session_state["manifest_editor_sig"] = editor_sig
         st.session_state["manifest_editor_nonce"] = st.session_state.get("manifest_editor_nonce", 0) + 1
     editor_key = f"manifest_editor_{st.session_state.get('manifest_editor_nonce', 0)}"
 
-    rows = []
-    for field in fields:
-        row = {"metadata": field}
-        for name in sample_names:
-            row[name] = records[name].get(field, "")
-        rows.append(row)
+    species_labels = ["human", "mouse", "fly"]
+    species_label = _MANIFEST_SPECIES_LABELS.get(table_species, "mouse")
+    if "manifest_species_dropdown" not in st.session_state or species_from_isp:
+        st.session_state["manifest_species_dropdown"] = species_label
+    picked_label = st.selectbox(
+        "species",
+        species_labels,
+        key="manifest_species_dropdown",
+        help="human, mouse, or fly. One value for the whole study, linked to ISP model.",
+    )
+    picked_species = _canonical_species(picked_label) or table_species
+    if picked_species != table_species:
+        table_species = picked_species
+        st.session_state["pipeline_model_organism"] = table_species
+        st.session_state["manifest_linked_isp"] = table_species
+        if st.session_state.get("yaml_editor"):
+            _apply_species_to_yaml()
+    for name in sample_names:
+        records[name]["species"] = table_species
+
+    table_rows = []
+    for name in sample_names:
+        row = {"sample": name}
+        for field in editor_fields:
+            raw = records[name].get(field, "")
+            if field == "species":
+                row[field] = _MANIFEST_SPECIES_LABELS.get(table_species, "mouse")
+            else:
+                row[field] = raw
+        table_rows.append(row)
+    column_config = {
+        "sample": st.column_config.TextColumn("sample", disabled=True),
+        "species": st.column_config.TextColumn(
+            "species",
+            disabled=True,
+            help="Set with the species dropdown above the table.",
+        ),
+    }
+    for field in editor_fields:
+        if field != "species":
+            column_config[field] = st.column_config.TextColumn(field)
     edited = st.data_editor(
-        pd.DataFrame(rows),
-        disabled=["metadata"],
+        pd.DataFrame(table_rows),
+        disabled=["sample", "species"],
         hide_index=True,
         num_rows="fixed",
-        use_container_width=True,
+        width="stretch",
         key=editor_key,
-        column_config={
-            "metadata": st.column_config.TextColumn("metadata", disabled=True, width="small"),
-        },
+        column_config=column_config,
     )
-    new_records: dict[str, dict[str, str]] = {name: {} for name in sample_names}
+    new_records: dict[str, dict[str, str]] = {}
     for _, row in edited.iterrows():
-        field = str(row["metadata"]).strip()
-        if not field:
+        name = str(row["sample"]).strip()
+        if name not in sample_names:
             continue
-        for name in sample_names:
-            cell = row[name]
+        rec: dict[str, str] = {}
+        for field in editor_fields:
+            cell = row.get(field, "")
             text = "" if cell is None or (isinstance(cell, float) and pd.isna(cell)) else str(cell).strip()
-            new_records[name][field] = text
+            if field == "species":
+                text = _canonical_species(text) or text
+            rec[field] = text
+        new_records[name] = rec
+    species_values = {
+        _canonical_species(new_records[name].get("species"))
+        for name in sample_names
+    }
+    species_values.discard("")
+    if len(species_values) == 1:
+        chosen = next(iter(species_values))
+        for name in sample_names:
+            new_records[name]["species"] = chosen
+        if chosen != organism:
+            st.session_state["pipeline_model_organism"] = chosen
+            st.session_state["manifest_linked_isp"] = chosen
+            if st.session_state.get("yaml_editor"):
+                _apply_species_to_yaml()
     st.session_state["manifest_records"] = new_records
 
     optional_nonce = st.session_state.get("manifest_optional_nonce", 0)
@@ -5018,7 +5653,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
             placeholder="Optional metadata name (e.g. experiment)",
         )
     with add_btn:
-        add_clicked = st.button("＋", key="manifest_add_row", help="Add an optional metadata row")
+        add_clicked = st.button("＋", key="manifest_add_row", help="Add an optional metadata column")
     if add_clicked:
         raw = str(st.session_state.get(f"manifest_optional_name_{optional_nonce}") or "")
         try:
@@ -5049,7 +5684,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
                 label_visibility="collapsed",
             )
         with rm_btn:
-            remove_clicked = st.button("−", key="manifest_remove_row", help="Remove the selected optional row")
+            remove_clicked = st.button("−", key="manifest_remove_row", help="Remove the selected optional column")
         if remove_clicked:
             target = str(st.session_state.get(f"manifest_remove_choice_{remove_nonce}") or "")
             st.session_state["manifest_remove_nonce"] = remove_nonce + 1
@@ -5234,105 +5869,71 @@ def _render_analysis_panel() -> None:
                 "`{paths.output_root}/{DATE}/pipeline_<UTC>/`."
             )
             _sync_pipeline_form_from_yaml(upload_dir)
-            upload_states = _detected_states_from_upload(upload_dir)
-            if upload_states:
-                previous = list(st.session_state.get("pipeline_detected_states") or [])
-                st.session_state["pipeline_detected_states"] = upload_states
-                current = st.session_state.get("pipeline_isp_start_state")
-                force = bool(previous) and previous != list(upload_states) and current not in upload_states
-                _sync_isp_state_selectors(upload_states, force=force)
-            elif "pipeline_isp_start_state" not in st.session_state:
-                _sync_isp_state_selectors(
-                    st.session_state.get("pipeline_detected_states"),
-                    force=False,
-                )
-            detected = st.session_state.get("pipeline_detected_states") or []
-            if detected:
-                st.caption(f"Detected states: **{', '.join(detected)}**")
-            isp_options = st.session_state.get("pipeline_isp_state_options") or [
-                "Disease",
-                "Ctrl",
-            ]
+            manifest_choices = _manifest_isp_choices()
+            if manifest_choices:
+                isp_options = manifest_choices
+                if st.session_state.get("pipeline_isp_start_state") not in isp_options:
+                    st.session_state["pipeline_isp_start_state"] = isp_options[0]
+                if st.session_state.get("pipeline_isp_end_state") not in isp_options:
+                    st.session_state["pipeline_isp_end_state"] = isp_options[min(1, len(isp_options) - 1)]
+            else:
+                upload_states = _detected_states_from_upload(upload_dir)
+                if upload_states:
+                    previous = list(st.session_state.get("pipeline_detected_states") or [])
+                    st.session_state["pipeline_detected_states"] = upload_states
+                    current = st.session_state.get("pipeline_isp_start_state")
+                    force = bool(previous) and previous != list(upload_states) and current not in upload_states
+                    _sync_isp_state_selectors(upload_states, force=force)
+                elif "pipeline_isp_start_state" not in st.session_state:
+                    _sync_isp_state_selectors(
+                        st.session_state.get("pipeline_detected_states"),
+                        force=False,
+                    )
+                isp_options = st.session_state.get("pipeline_isp_state_options") or [
+                    "Disease",
+                    "Ctrl",
+                ]
             c_start, c_end = st.columns(2)
             with c_start:
                 st.selectbox(
-                    "ISP start_state",
+                    "ISP start",
                     isp_options,
                     key="pipeline_isp_start_state",
+                    format_func=_isp_choice_label,
                     on_change=_apply_isp_states_to_yaml,
-                    help="Perturb cells in this condition (writes `perturbation.start_state`).",
+                    help="Start condition. The menu lists every Manifest value except species.",
                 )
             with c_end:
                 st.selectbox(
-                    "ISP end_state",
+                    "ISP goal",
                     isp_options,
                     key="pipeline_isp_end_state",
+                    format_func=_isp_choice_label,
                     on_change=_apply_isp_states_to_yaml,
-                    help="Goal state for in-silico shift (writes `perturbation.end_state`).",
+                    help="Goal condition. It must come from the same Manifest column as start.",
                 )
-            pert = _read_pipeline_perturbation()
             sel_start = st.session_state.get("pipeline_isp_start_state")
             sel_end = st.session_state.get("pipeline_isp_end_state")
-            st.caption(
-                f"ISP: start=`{sel_start}` end=`{sel_end}` "
-                f"(YAML end=`{pert.get('end_state', '')}` — updates when you change the dropdowns)"
-            )
-            if sel_start and sel_end and str(sel_start) == str(sel_end):
+            start_col, start_val = _split_isp_state_token(sel_start)
+            end_col, end_val = _split_isp_state_token(sel_end)
+            if start_col and end_col and start_col != end_col:
                 isp_states_invalid = True
                 st.error(
-                    f"start_state and end_state are both `{sel_start}`. "
-                    "Pick different values (e.g. WT → AD). **Run job** is disabled."
+                    f"Start is `{start_col}` and goal is `{end_col}`. "
+                    "Pick two values from the same Manifest column."
                 )
+            elif start_val and end_val and start_val == end_val:
+                isp_states_invalid = True
+                st.error(
+                    f"Start and goal are both `{start_val}`. "
+                    "Pick different values. **Run job** is disabled."
+                )
+            elif start_col and start_col == end_col:
+                st.session_state["pipeline_pert_state_key"] = start_col
 
             _render_perturbation_controls()
 
-            _sync_ft_train_batch_controls()
-            st.markdown("**Fine-tune train_batch_size**")
-            st.caption(
-                f"Allowed range **{MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE}** "
-                f"(default {DEFAULT_FT_TRAIN_BATCH_SIZE}). "
-                "Paste from **FT batch size (calibrate)** only if it falls in that range "
-                "(larger calibrate suggestions are clamped). "
-                "Once chosen for a study, keep it fixed "
-                "(writes `runtime.train_batch_size`)."
-            )
-            c_ft_batch, c_ft_apply = st.columns([2, 1])
-            with c_ft_batch:
-                st.number_input(
-                    "train_batch_size",
-                    min_value=MIN_FT_TRAIN_BATCH_SIZE,
-                    max_value=MAX_FT_TRAIN_BATCH_SIZE,
-                    step=1,
-                    key="pipeline_ft_train_batch_size",
-                    on_change=_apply_ft_train_batch_to_yaml,
-                    help=(
-                        f"Per-device fine-tune batch size "
-                        f"({MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE} only). "
-                        "Outside this range FT dynamics diverge."
-                    ),
-                )
-            with c_ft_apply:
-                calibrated = st.session_state.get("calibrated_ft_batch_size")
-                if isinstance(calibrated, int) and calibrated >= 1:
-                    clamped = _clamp_ft_train_batch_size(calibrated)
-                    # on_click runs before widgets are instantiated, so we can safely
-                    # write pipeline_ft_train_batch_size (same key as the number_input).
-                    label = f"Use calibrated ({calibrated})"
-                    if clamped != calibrated:
-                        label = f"Use clamped ({clamped}; raw {calibrated})"
-                    st.button(
-                        label,
-                        type="secondary",
-                        key="apply_calibrated_ft_batch_btn",
-                        help=(
-                            "Copy the last FT batch calibration result into this field "
-                            f"(clamped to {MIN_FT_TRAIN_BATCH_SIZE}–{MAX_FT_TRAIN_BATCH_SIZE})."
-                        ),
-                        on_click=_apply_calibrated_ft_batch_to_pipeline,
-                    )
-                else:
-                    st.caption("No calibration yet")
-
+            _render_ft_batch_controls()
             _sync_batch_size_controls()
             c_mode, c_size = st.columns(2)
             with c_mode:
@@ -5363,6 +5964,7 @@ def _render_analysis_panel() -> None:
                         "Calibrate on an idle GPU; a busy GPU yields a smaller batch."
                     )
 
+            _render_cluster_enrichment_controls()
             _render_species_model_controls()
             _render_ft_isp_advanced_controls(upload_dir)
 

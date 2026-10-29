@@ -194,6 +194,43 @@ def is_canonical_sample_name(name: str) -> bool:
     return bool(CANONICAL_SAMPLE_NAME.match(name.strip()))
 
 
+def matrix_file(sample_dir: Path) -> Path | None:
+    """10x ``matrix.mtx`` (or ``.gz``) for one sample folder, if present."""
+    directory = tenx_matrix_directory(sample_dir)
+    if directory is None:
+        return None
+    for name in _MATRIX_NAMES:
+        path = directory / name
+        if path.is_file():
+            return path
+    return None
+
+
+def cell_nnz_counts(matrix_path: Path) -> list[int]:
+    """Nonzero counts per cell (column) in a 10x Matrix Market file.
+
+    Geneformer rank length is this count, truncated at the model input size.
+    """
+    import gzip
+
+    opener = gzip.open if matrix_path.name.endswith(".gz") else open
+    counts: list[int] | None = None
+    with opener(matrix_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line or line.startswith("%"):
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            if counts is None:
+                counts = [0] * int(parts[1])
+                continue
+            column = int(parts[1]) - 1
+            if 0 <= column < len(counts):
+                counts[column] += 1
+    return counts or []
+
+
 def tenx_matrix_directory(sample_dir: Path) -> Path | None:
     sample_dir = sample_dir.resolve()
     filtered = sample_dir / "filtered_feature_bc_matrix"

@@ -189,6 +189,33 @@ def read_gpu_memory_snapshot() -> GpuMemorySnapshot:
     )
 
 
+def usable_ft_memory_bytes() -> tuple[int, str]:
+    """Bytes the fine-tune batch decision may use, and where they were read.
+
+    Discrete GPUs use the memory this process can still take (torch free plus
+    its own allocation). Unified-memory devices (GB10, where nvidia-smi memory
+    is N/A) use ``MemAvailable``, because the GPU and the CPU share one pool
+    and that is what the OOM killer sees.
+    """
+    snapshot = read_gpu_memory_snapshot()
+    if snapshot.free_accounting_reliable and snapshot.total > 0:
+        return int(snapshot.allocated) + int(snapshot.free), "gpu"
+    available = 0
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    available = int(line.split()[1]) * 1024
+                    break
+    except (OSError, ValueError, IndexError):
+        available = 0
+    if available > 0:
+        return available, "unified"
+    if snapshot.total > 0:
+        return int(snapshot.usable), "gpu"
+    return 0, "unknown"
+
+
 def calibration_memory_budget(
     snapshot: GpuMemorySnapshot,
     *,

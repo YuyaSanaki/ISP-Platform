@@ -68,9 +68,12 @@ model:
 # ── Training hyperparameters ────────────────────────────────────────
 training:
   learning_rate: 5e-5
-  # Prefer 4–8 around default 6 (result stability with fixed LR / epochs).
-  # CLI does not enforce this range; Web UI clamps train_batch_size to 4–8.
+  # Standard path: one GPU batch per weight update. Prefer 4–8 around default 6.
+  # CLI does not enforce this range; Web UI standard mode clamps train_batch_size to 4–8.
+  # gradient_accumulation_steps 1 is that historical path. Micro-batch is a separate
+  # Pipeline choice (ft_batch_mode: micro) and does not replace this default.
   batch_size: 6
+  gradient_accumulation_steps: 1
   eval_batch_size: 2
   lr_scheduler_type: linear   # linear | cosine | polynomial
   warmup_ratio: null          # set 0.05 for classification-oriented FT (overrides warmup_steps)

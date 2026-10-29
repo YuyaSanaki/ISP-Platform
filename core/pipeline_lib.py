@@ -307,10 +307,84 @@ def build_finetune_config(
     if "nproc" in rt:
         cfg.setdefault("runtime", {})
         cfg["runtime"]["nproc"] = int(rt["nproc"])
+    _apply_runtime_finetune_batch(cfg, rt)
+    return cfg
+
+
+def _positive_int(value: Any, *, name: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise ValueError(f"{name} must be >= 1")
+    return number
+
+
+def _accumulation_steps_for_effective_batch(micro_batch: int, effective_batch: Any) -> int:
+    """GPU passes before one update: effective batch size / cells on the GPU."""
+    effective = _positive_int(effective_batch, name="runtime.micro_effective_batch_size")
+    if effective % micro_batch != 0:
+        raise ValueError(
+            f"runtime.micro_effective_batch_size ({effective}) must be a multiple of "
+            f"runtime.micro_batch_size ({micro_batch})"
+        )
+    return effective // micro_batch
+
+
+def _apply_runtime_finetune_batch(cfg: dict[str, Any], rt: Mapping[str, Any]) -> None:
+    """Copy Pipeline runtime batch fields onto the fine-tune stage.
+
+    ``ft_batch_choice: auto`` does not bake a batch into this config. Fine-tune
+    measures that run's token lengths and the free memory on the machine that
+    starts it, then sets the pass size. The stored standard ``train_batch_size``
+    stays untouched. ``training.effective_batch_size`` is the cells per update.
+    ``ft_batch_mode: standard`` uses ``runtime.train_batch_size`` and forces
+    accumulation to 1, which is the historical one-batch-per-update path.
+    ``ft_batch_mode: micro`` uses ``micro_batch_size`` as the GPU pass and
+    ``micro_effective_batch_size / micro_batch_size`` as the accumulation
+    count. It does not replace the stored standard batch. If the effective
+    size is absent, ``micro_gradient_accumulation_steps`` is used as before.
+    Missing mode keeps the historical path: ``train_batch_size`` when present,
+    and ``gradient_accumulation_steps`` only if that runtime key is set.
+    """
+    choice = str(rt.get("ft_batch_choice") or "").strip().lower()
+    mode = str(rt.get("ft_batch_mode") or "").strip().lower()
+    if choice == "auto":
+        cfg.setdefault("training", {})
+        cfg["training"]["batch_size_policy"] = "auto"
+        cfg["training"]["effective_batch_size"] = _positive_int(
+            rt.get("micro_effective_batch_size", 6),
+            name="runtime.micro_effective_batch_size",
+        )
+        return
+    if mode == "standard":
+        cfg.setdefault("training", {})
+        if "train_batch_size" in rt:
+            cfg["training"]["batch_size"] = _batch_size_value(rt["train_batch_size"])
+        cfg["training"]["gradient_accumulation_steps"] = 1
+        return
+    if mode == "micro":
+        cfg.setdefault("training", {})
+        micro = _positive_int(rt.get("micro_batch_size", 2), name="runtime.micro_batch_size")
+        if "micro_effective_batch_size" in rt:
+            accum = _accumulation_steps_for_effective_batch(
+                micro, rt["micro_effective_batch_size"]
+            )
+        else:
+            accum = _positive_int(
+                rt.get("micro_gradient_accumulation_steps", 3),
+                name="runtime.micro_gradient_accumulation_steps",
+            )
+        cfg["training"]["batch_size"] = micro
+        cfg["training"]["gradient_accumulation_steps"] = accum
+        return
     if "train_batch_size" in rt:
         cfg.setdefault("training", {})
         cfg["training"]["batch_size"] = _batch_size_value(rt["train_batch_size"])
-    return cfg
+    if "gradient_accumulation_steps" in rt:
+        cfg.setdefault("training", {})
+        cfg["training"]["gradient_accumulation_steps"] = _positive_int(
+            rt["gradient_accumulation_steps"],
+            name="runtime.gradient_accumulation_steps",
+        )
 
 
 def build_isp_config(

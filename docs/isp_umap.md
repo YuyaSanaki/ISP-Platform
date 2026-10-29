@@ -32,7 +32,7 @@ Key configurations to note:
 | `perturbation.start_state` | Condition you are perturbing (e.g. `Disease`). |
 | `perturbation.end_state` | Condition you are comparing against (e.g. `Ctrl`). |
 | `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
-| `postprocess.n_clusters` | KMeans clusters when no `cluster` column. Integer (>=2) or `auto` (silhouette over k=2..15; default `4`). |
+| `postprocess.n_clusters` | KMeans clusters when no `cluster` column. Integer (>=2) or `auto` (silhouette over k=2..15; default `auto`). |
 | `postprocess.celltype_prediction` | Marker-gene labels on start-state cells (default `true` when postprocess is on). |
 | `postprocess.prefer_metadata_celltype` | `auto` (default): use pre-ISP platform `cell_type` when `celltype_annotator` is `isp_expression*`; `true`: trust any dataset `cell_type`; `false`: marker scoring only. |
 | `postprocess.celltype_rank_weights` | Rank-weight marker hits (earlier Geneformer ranks = higher expression; default `true`). |

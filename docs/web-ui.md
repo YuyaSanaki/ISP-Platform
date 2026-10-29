@@ -189,6 +189,8 @@ Under the page title:
 | **Analysis** | Data input, run type, YAML, **Run job**, live log, and the current-session Outputs section                                                                                     |
 | **Output**   | Browse past `pipeline_`* folders under `/app/output` **only** (dropped-gene table, figures inline, CSV previews, zip download). Works even if the Analysis session / Streamlit connection was lost |
 
+**Method description.** Under **Run directory** on Analysis, and again for the selected past run on Output, a paragraph is ready to copy into Methods. It states the ISP Platform version, whether the job is the end-to-end pipeline, the input species, the model, ISP mode (`delete` or `overexpress`), Start and Goal, and the fine-tune batch. After tokenization it adds the median, mean, SD and range of token length (genes kept per cell, truncated at the model input size). ISP UMAP and State-feedback ISP fill those fields from the selected pipeline run and add the UMAP genes or the ordered steps. Edits in the box are not saved.
+
 ### One job at a time, and stopping a job
 
 Only one job runs at a time across **all** browser sessions. **Run job** takes a lock file, `{WEBUI_WORKSPACE}/active_job.json`, and is disabled in every session while the job runs. A tab opened later, or the same tab after a reload, shows the running job under **Logs & status** (run type, run folder, log tail).
@@ -221,7 +223,7 @@ What State-feedback ISP does, and every setting (conditions, feedback, specifici
 
 1. Run type **FT batch size (calibrate)** → **Run job** (~1 min, no training). **GPU must be idle** (stop any other Pipeline / fine-tune first).
 2. Copy the recommended integer (or on Pipeline click **Use calibrated (N)**).
-3. On **Pipeline (E2E)**, set **Fine-tune train_batch_size** and keep that value fixed for the study.
+3. On **Pipeline (E2E)**, open **Advanced options** and set **Fine-tune train_batch_size**. Keep that value fixed for the study.
 
 Changing FT batch size after you start comparing runs changes optimization dynamics; do not retune casually. ISP **ISP GPU batch size** (`forward_batch_size`) is independent.
 
@@ -240,7 +242,6 @@ Under **Advanced options** (collapsed by default):
 | max_ncells                        | `stages.isp.isp.max_ncells` (default 2000; same idea as Mouse-Geneformer-WebUI) |
 | stats.mode                        | `stages.isp.stats.mode` (usual: `goal_state_shift`)                             |
 | ISP analysis plots                | `stages.isp.analysis.enabled`                                                   |
-| Cluster / cell-type / enrichment analysis | `stages.isp.postprocess.enabled` (+ `n_clusters`, `celltype_prediction`, `rank_enrichment`; default **off**). Rank enrichment of the top Start, Goal and ISP genes goes to `rank_enrichment/` and is shown in **Output browser** ([pipeline.md](pipeline.md)) |
 
 
 **Trajectory UMAP** (per-cell arrows): use Run type **ISP UMAP**. Choose a past E2E pipeline folder + gene; toggle **Draw trajectory lines** (and arrow count) under Plot options. Optional expander **Cluster / cell-type analysis** enables `cluster_coexpr_analysis/` after the UMAP (`n_clusters` can be a fixed K or `auto`). The job runs `run_isp_umap.py --run-dir … --gene …` and writes under `{pipeline_run}/isp_umap/`.
@@ -256,6 +257,8 @@ Also on the main form (not under Advanced):
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | perturbation.type / state_key / genes_to_perturb | `perturbation.*`                                                                                     |
 | task_type / label_column                         | `stages.finetune.finetune.*` (`label_column` dropdown from sample-folder metadata + tokenizer attrs) |
+| Cluster / cell-type / enrichment analysis | Above **ISP model**, not inside Advanced. `stages.isp.postprocess.enabled` (default **off**), `n_clusters` (default **auto**), `celltype_prediction`, `rank_enrichment`. Rank enrichment of the top Start, Goal and ISP genes goes to `rank_enrichment/` and is shown in **Output browser** ([pipeline.md](pipeline.md)) |
+| Fine-tune batch | Above **ISP GPU batch size**. Auto (`ft_batch_choice: auto`) keeps effective batch size 6 and, when one pass of 6 cells does not fit, uses micro-batch (4096 tokens: 2 cells per pass, 3 passes). Manual keeps the standard 4–8 batch separate from micro-batch. A **Methods** box copies the sentence |
 
 
 These merge onto `config/finetune.yaml` / `config/isp.yaml` at pipeline start. Changing epochs/LR/num_runs/warmup, `max_ncells` / `stats.mode`, perturbation type/genes, or FT labels changes results; analysis only toggles optional post-stats figures. Empty `genes_to_perturb` = all genes (slow); a short list (e.g. `Igfbp2`) enables targeted ISP (and optional auto UMAP if YAML `umap.enabled` is true). Default warmup is **500 steps** (virtual genetic screen). Choose **rate 0.05** in Advanced options when the fine-tune goal is classification.

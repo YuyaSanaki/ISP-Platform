@@ -62,7 +62,7 @@ runtime:
 postprocess:
   enabled: false
   # Integer (>=2) or "auto" (silhouette over k=2..15 on start embeddings).
-  n_clusters: 4
+  n_clusters: auto
   celltype_prediction: true
   # Pre-ISP only: auto = isp_expression* labels from tokenize (brain token panels removed).
   prefer_metadata_celltype: auto

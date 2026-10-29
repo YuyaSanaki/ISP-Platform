@@ -30,6 +30,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 import torch
+import transformers
 import yaml
 from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
@@ -57,9 +58,16 @@ from geneformer.auto_batch_size import (
     resolve_batch_size,
     train_candidates_for_seq_len,
     train_memory_fraction_for_seq_len,
+    usable_ft_memory_bytes,
 )
 from geneformer.collator_for_classification import DataCollatorForCellClassification
-from geneformer.training_schedule import resolve_dataloader_num_workers, resolve_warmup_steps
+from geneformer.training_schedule import (
+    apply_auto_ft_batch_to_configs,
+    auto_ft_batch_decision,
+    optimizer_updates_per_epoch,
+    resolve_dataloader_num_workers,
+    resolve_warmup_steps,
+)
 from geneformer.backends import resolve_pretrained_path
 from geneformer.species_context import (
     backend_from_config,
@@ -149,6 +157,7 @@ def format_finetune_run_banner(cfg: dict[str, Any], extras: dict[str, Any]) -> s
         "  training:",
         f"    learning_rate:    {tr.get('learning_rate', 5e-5)}",
         f"    batch_size:       {tr.get('batch_size', 6)}",
+        f"    gradient_accumulation_steps: {tr.get('gradient_accumulation_steps', 1)}",
         f"    epochs:           {tr.get('epochs', 10)}",
         f"    lr_scheduler:     {tr.get('lr_scheduler_type', 'linear')}",
         f"    warmup_steps:     {tr.get('warmup_steps', 500)}",
@@ -482,6 +491,106 @@ def generate_umap(
     plt.close()
     print(f"  UMAP saved: {pdf_path}", flush=True)
 
+def _pipeline_config_used(config_path: Path, run_root: Path) -> Path | None:
+    """Pipeline record for this fine-tune, when the job was started by the E2E pipeline."""
+    candidates = (
+        config_path.parent.parent / "pipeline_config_used.yaml",
+        run_root.parent / "pipeline_config_used.yaml",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _resolve_auto_ft_batch_for_this_run(
+    cfg: dict[str, Any],
+    dataset: Any,
+    *,
+    model_cap: int,
+    config_path: Path,
+    run_root: Path,
+) -> None:
+    """Measure this job's token lengths and this machine's free memory, then set the batch.
+
+    Runs only when the fine-tune config asks for ``training.batch_size_policy: auto``.
+    Manual standard and micro settings are left as written.
+    """
+    training = cfg.get("training") if isinstance(cfg.get("training"), dict) else None
+    if training is None:
+        return
+    if str(training.get("batch_size_policy") or "").strip().lower() != "auto":
+        return
+    try:
+        effective = int(training.get("effective_batch_size") or 6)
+    except (TypeError, ValueError):
+        effective = 6
+    effective = max(1, effective)
+    lengths: list[int] = []
+    if "length" in getattr(dataset, "column_names", []):
+        cap = max(1, int(model_cap))
+        lengths = [min(int(value), cap) for value in dataset["length"]]
+    try:
+        usable, source = usable_ft_memory_bytes()
+    except Exception as exc:
+        print(f"  NOTE: free memory could not be read ({exc}). Using token length only.")
+        usable, source = 0, "unknown"
+    decision = auto_ft_batch_decision(
+        lengths,
+        usable,
+        effective_batch=effective,
+        model_cap=model_cap,
+        memory_source=source,
+    )
+    pipeline_path = _pipeline_config_used(config_path, run_root)
+    pipeline_cfg = None
+    if pipeline_path is not None:
+        with pipeline_path.open(encoding="utf-8") as handle:
+            loaded = yaml.safe_load(handle) or {}
+        if isinstance(loaded, dict):
+            pipeline_cfg = loaded
+    apply_auto_ft_batch_to_configs(cfg, pipeline_cfg, decision)
+    with config_path.open(encoding="utf-8") as handle:
+        disk_cfg = yaml.safe_load(handle) or {}
+    if isinstance(disk_cfg, dict):
+        apply_auto_ft_batch_to_configs(disk_cfg, None, decision)
+        with config_path.open("w", encoding="utf-8") as handle:
+            yaml.dump(
+                disk_cfg,
+                handle,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+    if pipeline_path is not None and pipeline_cfg is not None:
+        with pipeline_path.open("w", encoding="utf-8") as handle:
+            yaml.dump(
+                pipeline_cfg,
+                handle,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+    gib = decision["memory_gib"]
+    memory = f"{gib:.0f} GiB ({decision['memory_source']})" if gib else "unavailable"
+    print(
+        "  Auto fine-tune batch: "
+        f"{decision['n']} cells, longest rank length {decision['maximum']}, "
+        f"available memory {memory}."
+    )
+    if decision["mode"] == "micro":
+        print(
+            f"  A pass of {decision['effective']} cells at rank length {decision['seq_len']} "
+            f"does not fit. Using {decision['cells']} cells per GPU pass and "
+            f"{decision['passes']} passes (effective batch size {decision['effective']})."
+        )
+    else:
+        print(
+            f"  A pass of {decision['effective']} cells at rank length {decision['seq_len']} "
+            "fits. Using the standard batch."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -601,6 +710,14 @@ def main() -> None:
     print(f"  Columns: {full_dataset.column_names}")
     print(f"  Rows: {len(full_dataset)}")
 
+    _resolve_auto_ft_batch_for_this_run(
+        cfg,
+        full_dataset,
+        model_cap=int(backend.max_input_size),
+        config_path=args.config.resolve(),
+        run_root=run_root,
+    )
+
     # ── Metadata injection ──
     meta_cfg = cfg.get("metadata") or {}
     if meta_cfg:
@@ -646,6 +763,9 @@ def main() -> None:
             "Long-sequence fine-tuning often OOMs at batch sizes calibrated for 2048. "
             f"Consider batch_size={default_bs} or gradient accumulation."
         )
+    gradient_accumulation_steps = int(tr_cfg.get("gradient_accumulation_steps", 1))
+    if gradient_accumulation_steps < 1:
+        raise ValueError("training.gradient_accumulation_steps must be >= 1")
     eval_batch_size_cfg = tr_cfg.get("eval_batch_size")
     lr_sched = tr_cfg.get("lr_scheduler_type", "linear")
     epochs = int(tr_cfg.get("epochs", 10))
@@ -811,17 +931,30 @@ def main() -> None:
                     else max(1, run_batch_size // 4)
                 )
 
-                steps_per_epoch = max(1, len(train_proc) // run_batch_size)
+                steps_per_epoch = optimizer_updates_per_epoch(
+                    len(train_proc), run_batch_size, gradient_accumulation_steps
+                )
                 total_steps = steps_per_epoch * epochs
                 warmup = resolve_warmup_steps(
                     tr_cfg, steps_per_epoch=steps_per_epoch, num_epochs=epochs
                 )
                 dataloader_workers = resolve_dataloader_num_workers(rt_cfg)
+                effective_batch = int(run_batch_size) * gradient_accumulation_steps
                 print(
                     f"  Training steps: {total_steps} "
                     f"({steps_per_epoch}/epoch × {epochs} epochs), "
                     f"warmup_steps={warmup}, "
                     f"dataloader_num_workers={dataloader_workers}"
+                )
+                print(
+                    f"  microbatch size: {run_batch_size}, "
+                    f"gradient accumulation steps: {gradient_accumulation_steps}, "
+                    f"world size: 1, "
+                    f"effective batch size: {effective_batch}, "
+                    f"train cells: {len(train_proc)}"
+                )
+                print(
+                    f"  torch {torch.__version__}, transformers {transformers.__version__}"
                 )
 
                 # Output directory
@@ -829,7 +962,7 @@ def main() -> None:
                 os.makedirs(out_dir, exist_ok=True)
 
                 # Training arguments
-                log_steps = max(1, len(train_proc) // run_batch_size // 10)
+                log_steps = max(1, steps_per_epoch // 10)
                 training_args = TrainingArguments(
                     output_dir=out_dir,
                     learning_rate=lr,
@@ -850,6 +983,7 @@ def main() -> None:
                     weight_decay=weight_decay,
                     per_device_train_batch_size=run_batch_size,
                     per_device_eval_batch_size=eval_batch_size,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
                     num_train_epochs=epochs,
                     load_best_model_at_end=True,
                     eval_accumulation_steps=1,

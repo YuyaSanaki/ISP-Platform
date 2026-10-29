@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Web UI Method description.** Under **Run directory**, and on the Output tab for a past run, a paragraph for Methods states the ISP Platform version, whether the job is the end-to-end pipeline, the input species, the model, ISP mode, Start and Goal, and the fine-tune batch. After tokenization it adds the median, mean, SD and range of token length (genes kept per cell). ISP UMAP and State-feedback ISP use the selected pipeline run. Test: `tests/test_method_description.py`.
 - **Sample metadata manifest.** A TSV in the study root (`metadata.tsv`, `sample-metadata.tsv`, or `manifest.tsv`, or `single_cell_settings.metadata_manifest`) supplies cell labels instead of splitting the folder name. Required columns are `sample-id`, `disease`, and `species`. Further columns are kept and can be an ISP `state_key`. `species` must match `species.model_organism`. The repository root has `metadata.tsv.example` for the CLI. The Web UI **Manifest** table under **Data input** fills sample names from the uploaded folders, edits `disease` and `species`, and adds optional metadata with **＋**. With no manifest, `Time-Condition-Replicate` folder names work as before. Tests: `tests/test_sample_manifest.py`.
 
 ### Fixed

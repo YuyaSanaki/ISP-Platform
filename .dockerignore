@@ -1,9 +1,15 @@
-# Exclude large data files from Docker build context
+# Exclude large data files from Docker build context.
+# Compose bind-mounts the repo at /app, so these stay on the host.
 data/
 models/
 output/
+review/
+Fly-model/
+.worktrees/
 .git/
 *.pkl
 __pycache__/
 .ipynb_checkpoints/
 *.pyc
+.pytest_cache/
+.numba_cache/

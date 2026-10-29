@@ -156,6 +156,7 @@ model:
 training:
   learning_rate: 5e-5
   batch_size: 6
+  gradient_accumulation_steps: 1
   eval_batch_size: 2
   lr_scheduler_type: linear   # linear | cosine | polynomial
   warmup_ratio: null          # set 0.05 for classification-oriented FT (overrides warmup_steps)
@@ -170,8 +171,9 @@ training:
 | Key | Description |
 |-----|-------------|
 | `learning_rate` | Peak learning rate (5e-5 is a good starting point for BERT fine-tuning) |
-| `batch_size` | Per-device training batch size. Prefer a value from Web UI **FT batch size (calibrate)** / `run_ft_batch_calibrate.py`, then **keep it fixed** — changing it alters optimizer step counts and results |
-| `eval_batch_size` | Per-device eval batch size (can be larger than train batch) |
+| `batch_size` | Cells in one GPU pass on the standard path. Prefer 4–8 around 6, then keep it fixed. Changing it changes how many times the weights update |
+| `gradient_accumulation_steps` | GPU passes added before one weight update. **1** is the historical path. In Web UI micro-batch mode this is `micro_effective_batch_size / micro_batch_size`, and the standard batch stays stored |
+| `eval_batch_size` | Per-device eval batch size. Independent of the training update size |
 | `lr_scheduler_type` | `linear` (standard), `cosine` (smooth decay), or `polynomial` |
 | `warmup_steps` | Steps of linear warmup before decay. **Default 500** (v1.1.0) — use for virtual genetic screens / ISP gene-effect size |
 | `warmup_ratio` | If set (e.g. `0.05`), overrides `warmup_steps`. Use **rate 0.05** when the fine-tune goal is classification, not per-gene ISP |
@@ -368,7 +370,7 @@ output/20260410/finetune_.../
 | Problem | Solution |
 |---------|----------|
 | `Label column 'X' not found in dataset` | Add the column via `metadata.add_columns` or `metadata.rename_columns` in config |
-| CUDA OOM during training | Reduce `training.batch_size` (try 4, then 2) |
+| CUDA OOM during training | Keep the standard batch if you need the same update count, and switch Pipeline **Fine-tune batch** to **Micro-batch**. Set cells on the GPU (for example 2) and effective batch size 6. Passes are 6 / 2 = 3. Setting `batch_size: 2` with accumulation 1 changes the number of updates |
 | CUDA OOM during UMAP | Set `umap.enabled: false` or reduce eval dataset size |
 | Poor accuracy | Try: increase `training.epochs`, adjust `training.learning_rate` (1e-5 to 1e-4), try `lr_scheduler_type: cosine`, increase `training.warmup_steps` |
 | Overfitting (train acc >> eval acc) | Increase `model.freeze_layers`, increase `training.weight_decay`, reduce `training.epochs` |
