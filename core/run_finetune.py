@@ -595,6 +595,57 @@ def _resolve_auto_ft_batch_for_this_run(
 # Main
 # ---------------------------------------------------------------------------
 
+def torch_can_load_trainer_checkpoints() -> bool:
+    """True when torch is new enough for transformers 4.57 to allow torch.load.
+
+    That library refuses torch.load on torch older than 2.6. The floor is the
+    same on Spark, Pegasus, Mac, and any other NVIDIA GPU. The wheel itself
+    differs by machine (aarch64 NVIDIA build, x86 cu124, Mac CPU/MPS).
+    """
+    raw = torch.__version__.split("+", 1)[0]
+    numbers: list[int] = []
+    token = ""
+    for ch in raw:
+        if ch.isdigit():
+            token += ch
+        elif token:
+            numbers.append(int(token))
+            token = ""
+            if len(numbers) == 2:
+                break
+    if token and len(numbers) < 2:
+        numbers.append(int(token))
+    if len(numbers) < 2:
+        return False
+    return (numbers[0], numbers[1]) >= (2, 6)
+
+
+def allow_trusted_checkpoint_resume() -> str | None:
+    """Force one resume rule on Spark, Pegasus, Mac, and other NVIDIA GPUs.
+
+    torch 2.6 and later default ``torch.load`` to ``weights_only=True``.
+    Hugging Face Trainer loads our own ``rng_state.pth`` without passing
+    ``weights_only``. That file holds numpy RNG state, so the default raises
+    ``Weights only load failed`` on every machine that uses torch>=2.6.
+    Leaving the default to the local install makes Spark, Pegasus, and Mac
+    disagree. ``TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD`` overrides only ``torch.load``
+    calls that omit ``weights_only``. Optimizer and scheduler loads pass
+    ``weights_only=True`` and are unchanged.
+
+    Returns the previous value so the caller can restore it after training.
+    """
+    previous = os.environ.get("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD")
+    os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
+    return previous
+
+
+def restore_trusted_checkpoint_resume(previous: str | None) -> None:
+    if previous is None:
+        os.environ.pop("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", None)
+    else:
+        os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = previous
+
+
 def main() -> None:
     warnings.filterwarnings(
         "ignore",
@@ -1001,11 +1052,30 @@ def main() -> None:
                 )
 
                 # Train. Optional path continues a checkpoint (same output dir and batch).
+                # Resume has two machine-independent requirements. transformers 4.57
+                # refuses torch.load below torch 2.6, which is what stopped Pegasus
+                # while its conda env was still 2.5.1. From torch 2.6 on, including
+                # Spark's 2.7 wheel and a Mac install, Trainer's load of rng_state.pth
+                # follows weights_only=True and rejects the numpy RNG state unless we
+                # set TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD here. Do not rely on the shell.
                 resume_from = tr_cfg.get("resume_from_checkpoint") or None
+                previous_load = None
                 if resume_from:
                     resume_from = str(resume_from)
+                    if not torch_can_load_trainer_checkpoints():
+                        raise RuntimeError(
+                            "Resuming a fine-tune checkpoint needs torch>=2.6 "
+                            "on Spark, Pegasus, Mac, and other NVIDIA GPUs. "
+                            f"This environment has torch {torch.__version__}. "
+                            "transformers refuses torch.load on older torch."
+                        )
                     print(f"  Resuming from checkpoint: {resume_from}", flush=True)
-                trainer.train(resume_from_checkpoint=resume_from)
+                    previous_load = allow_trusted_checkpoint_resume()
+                try:
+                    trainer.train(resume_from_checkpoint=resume_from)
+                finally:
+                    if resume_from:
+                        restore_trusted_checkpoint_resume(previous_load)
                 _empty_device_cache()
 
                 # Predict
