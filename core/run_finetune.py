@@ -1000,8 +1000,12 @@ def main() -> None:
                     compute_metrics=compute_metrics,
                 )
 
-                # Train
-                trainer.train()
+                # Train. Optional path continues a checkpoint (same output dir and batch).
+                resume_from = tr_cfg.get("resume_from_checkpoint") or None
+                if resume_from:
+                    resume_from = str(resume_from)
+                    print(f"  Resuming from checkpoint: {resume_from}", flush=True)
+                trainer.train(resume_from_checkpoint=resume_from)
                 _empty_device_cache()
 
                 # Predict
