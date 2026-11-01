@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "contracts"))
 
 
 MANIFEST = """\
-sample-id\tdisease\tspecies\texperiment\tbatch
+sample-id\tstate\tspecies\texperiment\tbatch
 #q2:types\tcategorical\tcategorical\tcategorical\tcategorical
 20211122_ME10x01_S01_Mat\tMatrigel\thuman\tSomatoid\tS01
 20211122_ME10x01_S02_NoMat\tNoMatrigel\tHuman\tSomatoid\tS02
@@ -38,16 +38,16 @@ class TestLoadSampleManifest(unittest.TestCase):
             manifest = load_sample_manifest(path)
             self.assertEqual(
                 manifest.columns,
-                ("sample_id", "disease", "species", "experiment", "batch"),
+                ("sample_id", "state", "species", "experiment", "batch"),
             )
             row = manifest.by_folder["20211122_ME10x01_S01_Mat"]
-            self.assertEqual(row["disease"], "Matrigel")
+            self.assertEqual(row["state"], "Matrigel")
             self.assertEqual(row["species"], "human")
             self.assertEqual(row["experiment"], "Somatoid")
             self.assertEqual(row["batch"], "S01")
             self.assertEqual(manifest.by_folder["20211122_ME10x01_S02_NoMat"]["species"], "human")
 
-    def test_state_alias_and_filepath(self):
+    def test_state_column_and_filepath(self):
         from sample_manifest import load_sample_manifest
 
         text = (
@@ -60,7 +60,8 @@ class TestLoadSampleManifest(unittest.TestCase):
             manifest = load_sample_manifest(path)
             row = manifest.by_folder["20211122_ME10x01_S01_Mat"]
             self.assertEqual(row["sample_id"], "S01")
-            self.assertEqual(row["disease"], "Matrigel")
+            self.assertEqual(row["state"], "Matrigel")
+            self.assertNotIn("disease", row)
             self.assertEqual(row["donor"], "D1")
             self.assertNotIn("filepath", row)
 
@@ -68,7 +69,7 @@ class TestLoadSampleManifest(unittest.TestCase):
         from sample_manifest import load_sample_manifest, samples_to_metadata_tsv, validate_sample_metadata
 
         text = (
-            "sample-id\tdisease\tspecies\n"
+            "sample-id\tstate\tspecies\n"
             "20211122_ME10x01_S01_Mat\tMatrigel\thuman\n"
             "20211122_ME10x01_S02_NoMat\tNoMatrigel\thuman\n"
         )
@@ -77,18 +78,63 @@ class TestLoadSampleManifest(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             manifest = load_sample_manifest(path)
             self.assertNotIn("experiment", manifest.columns)
-            self.assertEqual(manifest.by_folder["20211122_ME10x01_S01_Mat"]["disease"], "Matrigel")
+            self.assertEqual(manifest.by_folder["20211122_ME10x01_S01_Mat"]["state"], "Matrigel")
         samples = [
-            {"sample_id": "A", "disease": "Matrigel", "species": "human"},
-            {"sample_id": "B", "disease": "NoMatrigel", "species": "Human"},
+            {"sample_id": "A", "state": "Matrigel", "species": "human"},
+            {"sample_id": "B", "state": "NoMatrigel", "species": "Human"},
         ]
         self.assertIsNone(validate_sample_metadata(samples))
-        tsv = samples_to_metadata_tsv(["disease", "species"], samples)
-        self.assertIn("sample-id\tdisease\tspecies\n", tsv)
+        tsv = samples_to_metadata_tsv(["state", "species"], samples)
+        self.assertIn("sample-id\tstate\tspecies\n", tsv)
         self.assertIn("B\tNoMatrigel\thuman\n", tsv)
         self.assertIsNotNone(validate_sample_metadata([
-            {"sample_id": "A", "disease": "", "species": "human"},
+            {"sample_id": "A", "state": "", "species": "human"},
         ]))
+
+    def test_legacy_disease_column_is_read_as_state(self):
+        from data_input_layout import column_values_from_study
+        from sample_manifest import load_sample_manifest
+
+        text = (
+            "sample-id\tdisease\tspecies\texperiment\n"
+            "20211122_ME10x01_S01_Mat\tMatrigel\thuman\tSomatoid\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _touch_10x(root / "20211122_ME10x01_S01_Mat")
+            path = root / "metadata.tsv"
+            path.write_text(text, encoding="utf-8")
+            manifest = load_sample_manifest(path)
+            self.assertEqual(manifest.columns, ("sample_id", "state", "species", "experiment"))
+            row = manifest.by_folder["20211122_ME10x01_S01_Mat"]
+            self.assertEqual(row["state"], "Matrigel")
+            self.assertNotIn("disease", row)
+            self.assertEqual(column_values_from_study(root, "state"), ["Matrigel"])
+            self.assertIsNone(column_values_from_study(root, "disease"))
+
+    def test_disease_next_to_state_is_an_extra_column(self):
+        from sample_manifest import load_sample_manifest
+
+        text = (
+            "sample-id\tState\tdisease\tspecies\n"
+            "A\tMatrigel\tDCM\thuman\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.tsv"
+            path.write_text(text, encoding="utf-8")
+            manifest = load_sample_manifest(path)
+            row = manifest.by_folder["A"]
+            self.assertEqual(row["state"], "Matrigel")
+            self.assertEqual(row["disease"], "DCM")
+
+    def test_missing_state_column_is_an_error(self):
+        from sample_manifest import SampleManifestError, load_sample_manifest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "metadata.tsv"
+            path.write_text("sample-id\tspecies\nA\thuman\n", encoding="utf-8")
+            with self.assertRaisesRegex(SampleManifestError, "state column"):
+                load_sample_manifest(path)
 
     def test_rejects_bad_species_and_duplicates(self):
         from sample_manifest import SampleManifestError, load_sample_manifest
@@ -123,7 +169,7 @@ class TestLoadSampleManifest(unittest.TestCase):
 
 
 class TestManifestStates(unittest.TestCase):
-    def test_disease_comes_from_manifest_not_folder_name(self):
+    def test_state_comes_from_manifest_not_folder_name(self):
         from data_input_layout import (
             column_values_from_study,
             label_column_candidates_from_study,
@@ -143,13 +189,15 @@ class TestManifestStates(unittest.TestCase):
             self.assertIn("batch", labels)
 
     def test_folder_names_still_work_without_manifest(self):
-        from data_input_layout import unique_states_from_samples
+        from data_input_layout import column_values_from_study, unique_states_from_samples
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _touch_10x(root / "1w-AD-Rep1")
             _touch_10x(root / "1w-WT-Rep1")
             self.assertEqual(unique_states_from_samples(root), ["AD", "WT"])
+            self.assertEqual(column_values_from_study(root, "state"), ["AD", "WT"])
+            self.assertIsNone(column_values_from_study(root, "disease"))
 
 
 class TestManifestLoomConversion(unittest.TestCase):
@@ -169,7 +217,7 @@ class TestManifestLoomConversion(unittest.TestCase):
             _touch_10x(root / "20211122_ME10x01_S01_Mat")
             _touch_10x(root / "20211122_ME10x01_S02_NoMat")
             (root / "metadata.tsv").write_text(MANIFEST, encoding="utf-8")
-            cfg = {"custom_attr_name_dict": {"disease": "disease"}}
+            cfg = {"custom_attr_name_dict": {"state": "state"}}
             written: list = []
 
             def _capture(adata, path):
@@ -197,7 +245,8 @@ class TestManifestLoomConversion(unittest.TestCase):
             self.assertIn("batch", cfg["custom_attr_name_dict"])
             by_name = dict(written)
             mat = by_name["20211122_ME10x01_S01_Mat.loom"]
-            self.assertEqual(mat["disease"], "Matrigel")
+            self.assertEqual(mat["state"], "Matrigel")
+            self.assertNotIn("disease", mat)
             self.assertEqual(mat["experiment"], "Somatoid")
             self.assertEqual(mat["species"], "human")
             self.assertNotIn("time", mat)

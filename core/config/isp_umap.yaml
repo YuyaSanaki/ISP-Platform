@@ -41,7 +41,7 @@ perturbation:
   type: delete
   
   # Dataset column specifying the cell condition
-  state_key: disease
+  state_key: state
   # The starting cell condition (the one being perturbed)
   start_state: AD
   # The goal/target condition (the one to compare against)

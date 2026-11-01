@@ -8,7 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Sample metadata manifest.** A TSV in the study root (`metadata.tsv`, `sample-metadata.tsv`, or `manifest.tsv`, or `single_cell_settings.metadata_manifest`) supplies cell labels instead of splitting the folder name. Required columns are `sample-id`, `disease`, and `species`. Further columns are kept and can be an ISP `state_key`. `species` must match `species.model_organism`. The repository root has `metadata.tsv.example` for the CLI. The Web UI **Manifest** table under **Data input** fills sample names from the uploaded folders, edits `disease` and `species`, and adds optional metadata with **＋**. With no manifest, `Time-Condition-Replicate` folder names work as before. Tests: `tests/test_sample_manifest.py`.
+- **Sample metadata manifest.** A TSV in the study root (`metadata.tsv`, `sample-metadata.tsv`, or `manifest.tsv`, or `single_cell_settings.metadata_manifest`) supplies cell labels instead of splitting the folder name. Required columns are `sample-id`, `state`, and `species`. Further columns are kept and can be an ISP `state_key`. `species` must match `species.model_organism`. The repository root has `metadata.tsv.example` for the CLI. The Web UI **Manifest** table under **Data input** fills sample names from the uploaded folders, edits **State** and `species`, and adds optional metadata with **＋**. With no manifest, `Time-Condition-Replicate` folder names work as before. Tests: `tests/test_sample_manifest.py`.
+
+### Changed
+
+- **The default state column is `state`, not `disease`.** The manifest requires `state`, folder names `Time-Condition-Replicate` fill `state` (no `disease` column), and the default `perturbation.state_key`, fine-tune `task_type` and `label_column` are `state`. The Web UI shows the column as **State** in the Manifest table. A manifest with `disease` and no `state` column is read with `disease` as `state`. A pipeline YAML that still names `disease` as `state_key` or the fine-tune label is pointed at `state` when the study has no `disease` column. Configs that read an existing tokenized dataset with a `disease` column (`state_feedback_*.yaml`) keep `state_key: disease`. Tests: `tests/test_sample_manifest.py`, `tests/test_auto_batch_and_isp_validation.py`.
 
 ### Fixed
 

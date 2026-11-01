@@ -216,11 +216,11 @@ Then open **[http://localhost:8502](http://localhost:8502)** locally. Or use the
 1. **Run type** — start with **FT batch size (calibrate)** (optional but recommended on a new GPU), then **Pipeline (E2E)**.
 2. **Study name** — your experiment name (e.g. `MyExperiment`; set **before** uploading the zip).
 3. **Data input** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.mtx.gz` — or **Download from URL** for a deposited archive. Switching Run type keeps this study loaded.
-4. **Manifest** (directly under Data input) — sample names are the column headers, filled from the uploaded folders. The **disease** and **species** rows are always shown (`species` is `mouse`, `human`, or `drosophila`, the same value for every sample). **＋** adds an optional metadata row (for example `experiment`). The Web UI writes `metadata.tsv` into the study folder and uses it for tokenize and ISP. `start_state` / `end_state` must match the `disease` values.
+4. **Manifest** (directly under Data input) — sample names are the column headers, filled from the uploaded folders. The **State** and **species** rows are always shown (`species` is `mouse`, `human`, or `drosophila`, the same value for every sample). **＋** adds an optional metadata row (for example `experiment`). The Web UI writes `metadata.tsv` into the study folder (State is the `state` column) and uses it for tokenize and ISP. `start_state` / `end_state` must match the State values.
 5. **Species / model** — input data species vs FT/ISP Geneformer (cross-species uses ortholog conversion). A filled Manifest sets `species.model_organism` from its **species** row.
 6. **Fine-tune batch size** — after calibration, paste (or **Use calibrated**) the recommended `train_batch_size` on the Pipeline screen. **Once chosen, do not change it** for that study: FT batch size changes optimization dynamics and makes runs hard to compare.
-7. **ISP states** — pick **start_state** / **end_state** (the Manifest `disease` values, or folder-name states when there is no manifest) → **Apply setting to Config YAML**. Empty `genes_to_perturb: []` means genome-wide ISP (intentional; can take many hours). Set a gene list in YAML for a targeted run.
-8. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`. Run job stays off until every sample has **disease** and **species**.
+7. **ISP states** — pick **start_state** / **end_state** (the Manifest State values, or folder-name states when there is no manifest) → **Apply setting to Config YAML**. Empty `genes_to_perturb: []` means genome-wide ISP (intentional; can take many hours). Set a gene list in YAML for a targeted run.
+8. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`. Run job stays off until every sample has **State** and **species**.
 
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md).
 
@@ -301,7 +301,7 @@ species:
 
 ## CLI
 
-**Sample metadata.** Copy [`metadata.tsv.example`](metadata.tsv.example) from the repository root into the study directory as `metadata.tsv` and edit it. `sample-id` is the sample folder name. `disease` and `species` are required. `species` is `mouse`, `human`, or `drosophila`, the same on every row, and the same as `species.model_organism`. Add further columns when you need them (`experiment`, `replicate`, `batch`, ...). Tokenize reads `metadata.tsv` in the study root (also `sample-metadata.tsv` or `manifest.tsv`). With no manifest, folder names `Time-Condition-Replicate` still supply `disease`. ISP `start_state` / `end_state` must match the `disease` values exactly. Details: [docs/tokenization.md](docs/tokenization.md#metadata-manifest).
+**Sample metadata.** Copy [`metadata.tsv.example`](metadata.tsv.example) from the repository root into the study directory as `metadata.tsv` and edit it. `sample-id` is the sample folder name. `state` and `species` are required. A file with a `disease` column and no `state` column is read with `disease` as `state`. `species` is `mouse`, `human`, or `drosophila`, the same on every row, and the same as `species.model_organism`. Add further columns when you need them (`experiment`, `replicate`, `batch`, ...). Tokenize reads `metadata.tsv` in the study root (also `sample-metadata.tsv` or `manifest.tsv`). With no manifest, folder names `Time-Condition-Replicate` still supply `state`. ISP `start_state` / `end_state` must match the `state` values exactly. Details: [docs/tokenization.md](docs/tokenization.md#metadata-manifest).
 
 **End-to-end** — edit `[core/config/pipeline.yaml](core/config/pipeline.yaml)`, then:
 
@@ -334,7 +334,7 @@ docker compose run --rm pipeline
 
 | Path                          | Role                                                           |
 | ----------------------------- | -------------------------------------------------------------- |
-| `metadata.tsv.example`        | CLI template for sample metadata (`disease`, `species`, extra columns) |
+| `metadata.tsv.example`        | CLI template for sample metadata (`state`, `species`, extra columns) |
 | `core/`                       | Geneformer library, CLI runners, default YAML (`core/config/`) |
 | `webui/`                      | Streamlit app + upload / remote-data helpers                   |
 | `contracts/`                  | Shared input-layout rules (no GPU / job imports)               |

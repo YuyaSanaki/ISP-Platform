@@ -55,7 +55,7 @@ def _zip_example_layout() -> str:
         "1w-Ctrl-SingleCell/matrix.mtx.gz\n"
         "```\n\n"
         "Optional wrappers inside the zip (`data/`, `StudyBatch/`, etc.) are flattened automatically.\n\n"
-        "Optional `metadata.tsv` in the study root (`sample-id`, `disease`, `species`, "
+        "Optional `metadata.tsv` in the study root (`sample-id`, `state`, `species`, "
         "plus any extra columns) replaces folder-name labels. "
         "The Web UI writes this file from the Manifest table."
     )

@@ -171,7 +171,7 @@ species:
 
 perturbation:
   type: delete
-  state_key: disease
+  state_key: state
   start_state: AD                # match your metadata
   end_state: WT
   genes_to_perturb: []   # [] = genome-wide (very long) or specify gene like "Inr"

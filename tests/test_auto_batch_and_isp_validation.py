@@ -406,7 +406,7 @@ class TestValidatePerturbationStates(unittest.TestCase):
             self.rp._validate_perturbation_states(
                 {
                     "perturbation": {
-                        "state_key": "disease",
+                        "state_key": "state",
                         "start_state": "AD",
                         "end_state": "AD",
                     }
@@ -435,7 +435,7 @@ class TestValidatePerturbationStates(unittest.TestCase):
                         self.rp._validate_perturbation_states(
                             {
                                 "perturbation": {
-                                    "state_key": "disease",
+                                    "state_key": "state",
                                     "start_state": "AD",
                                     "end_state": "Ctrl",
                                 }
@@ -468,13 +468,31 @@ class TestValidatePerturbationStates(unittest.TestCase):
             self.rp._validate_perturbation_states(
                 {
                     "perturbation": {
-                        "state_key": "disease",
+                        "state_key": "state",
                         "start_state": "AD",
                         "end_state": "WT",
                     }
                 },
                 "/tmp/study",
             )
+
+    def test_legacy_disease_keys_point_at_state(self):
+        import data_input_layout as dil
+
+        pipeline = {
+            "perturbation": {"state_key": "disease", "start_state": "AD", "end_state": "WT"},
+            "stages": {"finetune": {"finetune": {"task_type": "disease", "label_column": "disease"}}},
+        }
+        with mock.patch.object(dil, "column_values_from_study", return_value=None):
+            out = self.rp._rename_legacy_state_columns(pipeline, "/tmp/study")
+        self.assertEqual(out["perturbation"]["state_key"], "state")
+        self.assertEqual(out["stages"]["finetune"]["finetune"]["label_column"], "state")
+        self.assertEqual(out["stages"]["finetune"]["finetune"]["task_type"], "state")
+        self.assertEqual(pipeline["perturbation"]["state_key"], "disease")
+
+        with mock.patch.object(dil, "column_values_from_study", return_value=["DCM"]):
+            kept = self.rp._rename_legacy_state_columns(pipeline, "/tmp/study")
+        self.assertEqual(kept["perturbation"]["state_key"], "disease")
 
 
 def _load_streamlit_app_helpers():

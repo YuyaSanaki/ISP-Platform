@@ -28,7 +28,7 @@ Align paths and labels with your tokenized dataset.
 | `paths.output_root` | Parent output directory |
 | `paths.output_time_subdir` | `true` (default): `{output_root}/{YYYYMMDD}/isp_<UTC>/…`; `false` or `ISP_OUTPUT_TIME_SUBDIR=0` for flat layout under `<DATE>/` |
 | `paths.output_subdir` / `ISP_OUTPUT_SUBDIR` | Fixed folder name under `<DATE>` (single segment) |
-| `perturbation.state_key` | Metadata column for states (e.g. `disease`) |
+| `perturbation.state_key` | Metadata column for states (default `state`) |
 | `perturbation.start_state` / `end_state` | **Exact** strings in that column |
 | `perturbation.alt_states` | Alternate end labels, or `[]` |
 | `isp.filter_data` | Optional, e.g. `{"cell_type": ["skeletal_muscle"]}` |

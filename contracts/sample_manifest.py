@@ -3,7 +3,8 @@
 When this file is present, tokenize reads cell metadata from it instead of
 splitting the sample folder name into time / condition / replicate.
 
-Required columns: sample-id, disease, species.
+Required columns: sample-id, state, species.
+A manifest with ``disease`` and no ``state`` column is read with ``disease`` as state.
 Any further columns (for example experiment) are copied onto each cell.
 ``species`` must be a single value for the study (mouse, human, or
 drosophila) and must match ``species.model_organism``.
@@ -27,7 +28,9 @@ MANIFEST_FILENAMES: tuple[str, ...] = (
 # contracts/ does not import core/.
 ALLOWED_SPECIES: frozenset[str] = frozenset({"mouse", "human", "drosophila"})
 
-_REQUIRED = ("sample_id", "disease", "species")
+_REQUIRED = ("sample_id", "state", "species")
+STATE_COLUMN = "state"
+LEGACY_STATE_COLUMN = "disease"
 _ID_HEADERS = frozenset({"sample_id", "sampleid"})
 _PATH_HEADERS = frozenset({"filepath", "absolute_filepath"})
 _COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -111,21 +114,16 @@ def load_sample_manifest(path: str | Path) -> SampleManifest:
         raise SampleManifestError(
             f"the first column of {manifest_path.name} must be sample-id"
         )
-    if "disease" not in seen and "state" not in seen:
-        raise SampleManifestError(f"{manifest_path.name} needs a disease column")
+    if STATE_COLUMN in seen:
+        rename: dict[str, str] = {}
+    elif LEGACY_STATE_COLUMN in seen:
+        rename = {LEGACY_STATE_COLUMN: STATE_COLUMN}
+    else:
+        raise SampleManifestError(f"{manifest_path.name} needs a state column")
     if "species" not in seen:
         raise SampleManifestError(f"{manifest_path.name} needs a species column")
 
-    obs_columns: list[str] = []
-    for key in headers:
-        if key in _PATH_HEADERS:
-            continue
-        if key == "state" and "disease" not in seen:
-            continue
-        obs_columns.append(key)
-    if "disease" not in obs_columns:
-        insert_at = 1 if obs_columns and obs_columns[0] == "sample_id" else 0
-        obs_columns.insert(insert_at, "disease")
+    obs_columns = [rename.get(key, key) for key in headers if key not in _PATH_HEADERS]
 
     by_folder: dict[str, dict[str, str]] = {}
     seen_ids: set[str] = set()
@@ -146,12 +144,10 @@ def load_sample_manifest(path: str | Path) -> SampleManifest:
             )
         seen_ids.add(sample_id)
 
-        disease = values.get("disease", "")
-        if not disease and "state" in values:
-            disease = values["state"]
-        if not disease:
+        values = {rename.get(key, key): value for key, value in values.items()}
+        if not values.get(STATE_COLUMN, ""):
             raise SampleManifestError(
-                f"{manifest_path.name} row {row_index}: disease is empty ({sample_id})"
+                f"{manifest_path.name} row {row_index}: state is empty ({sample_id})"
             )
         species = values.get("species", "").lower()
         if species not in ALLOWED_SPECIES:
@@ -160,16 +156,9 @@ def load_sample_manifest(path: str | Path) -> SampleManifest:
                 f"{manifest_path.name} row {row_index}: species must be one of {allowed}, "
                 f"got {values.get('species', '')!r}"
             )
-        obs = {
-            key: values[key]
-            for key in headers
-            if key not in _PATH_HEADERS and not (key == "state" and "disease" not in seen)
-        }
+        obs = {key: values[key] for key in obs_columns}
         obs["sample_id"] = sample_id
-        obs["disease"] = disease
         obs["species"] = species
-        if "state" in values and "state" in seen and "disease" in seen:
-            obs["state"] = values["state"]
 
         folder = _folder_name(sample_id, values.get("filepath") or values.get("absolute_filepath") or "")
         if not folder:
@@ -279,10 +268,10 @@ def check_manifest_covers_samples(manifest: SampleManifest, sample_names: set[st
 
 
 def manifest_field_order(columns: tuple[str, ...] | list[str]) -> list[str]:
-    """Metadata fields other than sample_id, with disease and species first."""
+    """Metadata fields other than sample_id, with state and species first."""
     fields = [col for col in columns if col != "sample_id"]
     ordered: list[str] = []
-    for name in ("disease", "species"):
+    for name in (STATE_COLUMN, "species"):
         if name in fields:
             ordered.append(name)
     for name in fields:
@@ -294,7 +283,7 @@ def manifest_field_order(columns: tuple[str, ...] | list[str]) -> list[str]:
 def validate_sample_metadata(samples: list[dict[str, str]]) -> str | None:
     """Return an error message, or None when every sample can be written.
 
-    Each dict needs ``sample_id``, ``disease``, and ``species``.
+    Each dict needs ``sample_id``, ``state``, and ``species``.
     ``species`` must be one organism for the whole table.
     """
     if not samples:
@@ -308,8 +297,8 @@ def validate_sample_metadata(samples: list[dict[str, str]]) -> str | None:
         if sample_id in seen_ids:
             return f"Duplicate sample name {sample_id}."
         seen_ids.add(sample_id)
-        if not str(row.get("disease", "")).strip():
-            return f"disease is empty for {sample_id}."
+        if not str(row.get(STATE_COLUMN, "")).strip():
+            return f"State is empty for {sample_id}."
         species = str(row.get("species", "")).strip().lower()
         if species not in ALLOWED_SPECIES:
             allowed = ", ".join(sorted(ALLOWED_SPECIES))

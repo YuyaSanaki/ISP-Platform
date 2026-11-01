@@ -38,7 +38,7 @@ def parse_sample_folder_name(folder_name: str) -> dict[str, str]:
     """
     Parse sample folder names like ``1w-Disease-SingleCell`` or ``1w-Ctrl-SingleCell``.
 
-    Returns time, disease/state (for ISP), genotype, replicate/suffix, sample_id.
+    Returns time, state (for ISP), genotype, replicate/suffix, sample_id.
     """
     name = folder_name.strip()
     parts = name.split("-")
@@ -47,7 +47,6 @@ def parse_sample_folder_name(folder_name: str) -> dict[str, str]:
     suffix = "-".join(parts[2:]) if len(parts) > 2 else ""
     return {
         "time": time,
-        "disease": state,
         "state": state,
         "genotype": state,
         "replicate": suffix,
@@ -65,10 +64,10 @@ def _folder_state_values(study_root: Path) -> list[str]:
 def unique_states_from_samples(study_root: Path) -> list[str]:
     """Sorted ISP state labels for this study.
 
-    With a metadata manifest, these are the ``disease`` values. Otherwise they
+    With a metadata manifest, these are the ``state`` values. Otherwise they
     are the second hyphen-separated field of each sample folder name.
     """
-    from sample_manifest import find_sample_manifest, load_sample_manifest
+    from sample_manifest import STATE_COLUMN, find_sample_manifest, load_sample_manifest
 
     path = find_sample_manifest(study_root)
     if path is not None:
@@ -76,7 +75,7 @@ def unique_states_from_samples(study_root: Path) -> list[str]:
         names = {sample.name for sample in discover_sample_dirs(study_root)}
         return sorted(
             {
-                row["disease"]
+                row[STATE_COLUMN]
                 for folder, row in manifest.by_folder.items()
                 if folder in names
             }
@@ -87,8 +86,8 @@ def unique_states_from_samples(study_root: Path) -> list[str]:
 def column_values_from_study(study_root: Path, column: str) -> list[str] | None:
     """Unique values of one metadata column, or None when this study does not have it.
 
-    ``disease``, ``genotype``, and ``state`` fall back to the folder-name field
-    when there is no manifest. Any other column is read only from a manifest.
+    ``state`` and ``genotype`` fall back to the folder-name field when there is
+    no manifest. Any other column is read only from a manifest.
     """
     from sample_manifest import find_sample_manifest, load_sample_manifest
 
@@ -96,8 +95,6 @@ def column_values_from_study(study_root: Path, column: str) -> list[str] | None:
     path = find_sample_manifest(study_root)
     if path is not None:
         manifest = load_sample_manifest(path)
-        if col == "state" and "state" not in manifest.columns:
-            col = "disease"
         if col not in manifest.columns:
             return None
         names = {sample.name for sample in discover_sample_dirs(study_root)}
@@ -108,16 +105,15 @@ def column_values_from_study(study_root: Path, column: str) -> list[str] | None:
                 if folder in names and row.get(col)
             }
         )
-    if col in {"disease", "genotype", "state"}:
+    if col in {"genotype", "state"}:
         return _folder_state_values(study_root)
     return None
 
 
 # Columns written when extract_metadata_from_path is on (see execute_tokenizer_pipeline).
 FOLDER_DERIVED_LABEL_COLUMNS: tuple[str, ...] = (
-    "disease",
-    "genotype",
     "state",
+    "genotype",
     "time",
     "replicate",
     "sample_id",
@@ -134,7 +130,7 @@ def label_column_candidates_from_study(
 
     Prefers folder-derived metadata that tokenization will attach when the study
     has canonical ``Time-Condition-Replicate`` sample folders. Always includes
-    ``cell_type`` and ``disease`` as common fine-tune targets.
+    ``cell_type`` and ``state`` as common fine-tune targets.
     """
     ordered: list[str] = []
     seen: set[str] = set()
@@ -165,7 +161,7 @@ def label_column_candidates_from_study(
             pass
 
     _add("cell_type")
-    _add("disease")
+    _add("state")
     return ordered
 
 

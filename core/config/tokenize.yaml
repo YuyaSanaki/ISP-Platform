@@ -48,7 +48,7 @@ tokenizer:
     time: "time"
     genotype: "genotype"
     replicate: "replicate"
-    disease: "disease"
+    state: "state"
     sample_id: "sample_id"
     cell_type: "cell_type"
     tissue: "tissue"
@@ -63,12 +63,13 @@ tokenizer:
 
 # Settings for single-cell (barcodes/features/matrix) format
 single_cell_settings:
-  # If true, and no metadata manifest is present, fill time / genotype / disease /
+  # If true, and no metadata manifest is present, fill time / genotype / state /
   # replicate / sample_id by splitting the sample folder name on hyphens.
   extract_metadata_from_path: true
   # Optional TSV (QIIME2-style). When set, or when metadata.tsv, sample-metadata.tsv,
   # or manifest.tsv sits in the study root, cell metadata comes from that file
-  # instead of the folder name. Required columns: sample-id, disease, species.
+  # instead of the folder name. Required columns: sample-id, state, species.
+  # An older manifest with a disease column and no state column is read as state.
   # Further columns are kept. species must match species.model_organism.
   # Template: metadata.tsv.example in the repository root.
   # metadata_manifest: /app/data/Somatoid/metadata.tsv

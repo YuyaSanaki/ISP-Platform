@@ -42,11 +42,11 @@ metadata:
 
 # ── Fine-tuning task ────────────────────────────────────────────────
 finetune:
-  # "disease" or "cell_type" — which column becomes the classification label
-  task_type: disease
+  # "state" or "cell_type" — which column becomes the classification label
+  task_type: state
 
   # Column used as the label source (renamed to "label" internally)
-  label_column: disease
+  label_column: state
 
   # If set, dataset is grouped by this column and fine-tuned per-group.
   # Set to null to train on the entire dataset as one group.

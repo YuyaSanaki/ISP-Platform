@@ -136,8 +136,8 @@ def format_finetune_run_banner(cfg: dict[str, Any], extras: dict[str, Any]) -> s
         f"  run folder:         {extras.get('run_folder', '')}",
         "",
         "  finetune:",
-        f"    task_type:        {ft.get('task_type', 'disease')}",
-        f"    label_column:     {ft.get('label_column', 'disease')}",
+        f"    task_type:        {ft.get('task_type', 'state')}",
+        f"    label_column:     {ft.get('label_column', 'state')}",
         f"    organ_key:        {ft.get('organ_key', None)}",
         f"    rare_threshold:   {ft.get('rare_class_threshold', 0.005)}",
         f"    train_split:      {ft.get('train_split', 0.8)}",
@@ -615,7 +615,7 @@ def main() -> None:
     umap_cfg = cfg.get("umap") or {}
     rt_cfg = cfg.get("runtime") or {}
 
-    task_type = ft_cfg.get("task_type", "disease")
+    task_type = ft_cfg.get("task_type", "state")
     label_column = ft_cfg.get("label_column", task_type)
     organ_key = ft_cfg.get("organ_key")
     rare_threshold = float(ft_cfg.get("rare_class_threshold", 0.005))

@@ -165,7 +165,7 @@ def process_single_cell_to_loom(input_dir, loom_temp_dir, settings, tokenizer_cf
                 meta = parse_sample_folder_name(folder_name)
                 adata.obs["time"] = meta["time"]
                 adata.obs["genotype"] = meta["genotype"]
-                adata.obs["disease"] = meta["disease"]
+                adata.obs["state"] = meta["state"]
                 adata.obs["replicate"] = meta["replicate"]
                 adata.obs["sample_id"] = meta["sample_id"]
             elif tokenizer_cfg.get("custom_attr_name_dict"):

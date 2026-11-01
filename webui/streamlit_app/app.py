@@ -61,7 +61,7 @@ _PERTURB_TYPE_LABELS = {
     "overexpress": "overexpress — move gene to front of ranks",
 }
 _FT_TASK_TYPE_LABELS = {
-    "disease": "disease — classify disease / condition labels",
+    "state": "state — classify cell state / condition labels",
     "cell_type": "cell_type — classify cell-type labels",
 }
 _DEFAULT_FT_EPOCHS = 10
@@ -82,9 +82,11 @@ _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS = 4
 _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE = "manual"  # "auto" | "manual"
 _DEFAULT_ISP_POSTPROCESS_CELLTYPE = True
 _DEFAULT_PERTURB_TYPE = "delete"
-_DEFAULT_STATE_KEY = "disease"
-_DEFAULT_FT_TASK_TYPE = "disease"
-_DEFAULT_FT_LABEL_COLUMN = "disease"
+_DEFAULT_STATE_KEY = "state"
+_DEFAULT_FT_TASK_TYPE = "state"
+_DEFAULT_FT_LABEL_COLUMN = "state"
+# The Manifest shows the state column as "State"; the dataset column is "state".
+_STATE_COLUMN_LABEL = "State"
 _DEFAULT_MAX_CELLS = 300_000
 
 
@@ -979,7 +981,7 @@ def _build_isp_umap_yaml_from_pipeline_run(
             "genes_to_perturb": gene_list,
             "gene_label": gene_label,
             "type": pert_type,
-            "state_key": pert.get("state_key", "disease"),
+            "state_key": pert.get("state_key", _DEFAULT_STATE_KEY),
             "start_state": pert.get("start_state"),
             "end_state": pert.get("end_state"),
         },
@@ -1298,7 +1300,7 @@ def _isp_steps_cfg_from_pipeline_run(
         },
         "species": dict(cfg.get("species") or {}),
         "perturbation": {
-            "state_key": pert.get("state_key", "disease"),
+            "state_key": pert.get("state_key", _DEFAULT_STATE_KEY),
             "start_state": pert.get("start_state"),
             "end_state": pert.get("end_state"),
             "alt_states": list(pert.get("alt_states") or []),
@@ -1678,7 +1680,7 @@ def _render_isp_steps_source_picker() -> None:
     paths = cfg.get("paths") or {}
     st.caption(
         f"ISP states: **{pert.get('start_state', '?')} → {pert.get('end_state', '?')}** "
-        f"(state_key=`{pert.get('state_key', 'disease')}`)"
+        f"(state_key=`{pert.get('state_key', _DEFAULT_STATE_KEY)}`)"
     )
     if paths.get("dataset"):
         st.caption(f"dataset: `{paths.get('dataset')}`")
@@ -3590,7 +3592,7 @@ def _render_perturbation_controls() -> None:
             on_change=_apply_perturbation_controls_to_yaml,
             help=(
                 "Dataset column for start/end labels (`perturbation.state_key`). "
-                "Usually `disease` (folder-derived metadata)."
+                "Usually `state` (Manifest State or the folder-name state)."
             ),
         )
     st.text_area(
@@ -3827,7 +3829,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 | Control | Effect |
 |---------|--------|
 | **perturbation.type** | delete / overexpress |
-| **state_key** | Metadata column for start/end (usually `disease`) |
+| **state_key** | Metadata column for start/end (usually `state`) |
 | **genes_to_perturb** | Empty = all genes; list = targeted ISP |
 | **task_type / label_column** | What the fine-tune classifier learns |
 | **tokenize max_cells** | Cells per tokenized shard (RAM). All shards are used. Cross-species: also cells kept per sample file |
@@ -4834,7 +4836,11 @@ def main() -> None:
         _render_output_browser()
 
 
-_MANIFEST_CORE_FIELDS = ("disease", "species")
+_MANIFEST_CORE_FIELDS = (_DEFAULT_STATE_KEY, "species")
+
+
+def _manifest_row_label(field: str) -> str:
+    return _STATE_COLUMN_LABEL if field == _DEFAULT_STATE_KEY else field
 
 
 def _manifest_optional_field(name: str) -> str:
@@ -4844,7 +4850,7 @@ def _manifest_optional_field(name: str) -> str:
         field = _normalize_header(name)
     except SampleManifestError:
         raise
-    if field in {"sample_id", "disease", "species"}:
+    if field in {"sample_id", _DEFAULT_STATE_KEY, "species"}:
         raise SampleManifestError(f"{field} is already in the table.")
     return field
 
@@ -4856,7 +4862,7 @@ def _manifest_records_from_file(path: Path, sample_names: list[str], organism: s
     fields = manifest_field_order(manifest.columns)
     for name in _MANIFEST_CORE_FIELDS:
         if name not in fields:
-            insert_at = 0 if name == "disease" else min(1, len(fields))
+            insert_at = 0 if name == _DEFAULT_STATE_KEY else min(1, len(fields))
             fields.insert(insert_at, name)
     records: dict[str, dict[str, str]] = {}
     for sample in sample_names:
@@ -4906,7 +4912,7 @@ def _commit_manifest(upload_dir: Path) -> str | None:
     records = st.session_state.get("manifest_records")
     fields = list(st.session_state.get("manifest_fields") or _MANIFEST_CORE_FIELDS)
     if not isinstance(records, dict) or not records:
-        return "Fill **disease** and **species** in the **Manifest** table under Data input."
+        return "Fill **State** and **species** in the **Manifest** table under Data input."
     samples = _manifest_samples_from_records(sample_names, fields, records)
     error = validate_sample_metadata(samples)
     tsv_path = study_root / "metadata.tsv"
@@ -4925,7 +4931,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
 
     st.subheader("Manifest")
     st.caption(
-        "Sample names are the uploaded folders. Fill **disease** and **species** "
+        "Sample names are the uploaded folders. Fill **State** and **species** "
         "(mouse, human, or drosophila, the same value for every sample). "
         "**＋** adds an optional metadata row, such as experiment or batch."
     )
@@ -4960,7 +4966,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
     fields = list(st.session_state.get("manifest_fields") or list(_MANIFEST_CORE_FIELDS))
     for name in _MANIFEST_CORE_FIELDS:
         if name not in fields:
-            fields.insert(0 if name == "disease" else 1, name)
+            fields.insert(0 if name == _DEFAULT_STATE_KEY else 1, name)
     extras = [name for name in fields if name not in _MANIFEST_CORE_FIELDS]
     fields = list(_MANIFEST_CORE_FIELDS) + extras
     records = dict(st.session_state.get("manifest_records") or {})
@@ -4980,9 +4986,10 @@ def _render_manifest_editor(upload_dir: Path) -> None:
         st.session_state["manifest_editor_nonce"] = st.session_state.get("manifest_editor_nonce", 0) + 1
     editor_key = f"manifest_editor_{st.session_state.get('manifest_editor_nonce', 0)}"
 
+    field_by_label = {_manifest_row_label(field): field for field in fields}
     rows = []
     for field in fields:
-        row = {"metadata": field}
+        row = {"metadata": _manifest_row_label(field)}
         for name in sample_names:
             row[name] = records[name].get(field, "")
         rows.append(row)
@@ -4999,7 +5006,8 @@ def _render_manifest_editor(upload_dir: Path) -> None:
     )
     new_records: dict[str, dict[str, str]] = {name: {} for name in sample_names}
     for _, row in edited.iterrows():
-        field = str(row["metadata"]).strip()
+        label = str(row["metadata"]).strip()
+        field = field_by_label.get(label, label)
         if not field:
             continue
         for name in sample_names:
