@@ -1,0 +1,20 @@
+ISP Platform
+Copyright 2026 Yuya Sanaki
+
+This product includes software developed for ISP Platform.
+
+------------------------------------------------------------------------
+Third-party foundation models (not licensed by this NOTICE)
+
+Human and mouse Geneformer model weights and upstream model code are
+separate from the ISP Platform license. Use of those models must follow
+the terms of their original repositories and publications:
+
+- Human Geneformer (ctheodoris/Geneformer): Apache-2.0
+  https://huggingface.co/ctheodoris/Geneformer
+
+- Mouse Geneformer (MPRG / machine-perception-robotics-group):
+  license not specified in the upstream repository at the time of writing.
+  Follow the original paper and repository terms.
+  https://github.com/machine-perception-robotics-group/Mouse-Geneformer
+  https://huggingface.co/datasets/MPRG/Mouse-Genecorpus-20M

@@ -380,6 +380,17 @@ See [docs/architecture.md](docs/architecture.md).
 
 
 
+## License
+
+ISP Platform code is licensed under the [Apache License 2.0](LICENSE). See also [NOTICE](NOTICE).
+
+**Foundation models are separate.** Human and mouse Geneformer weights (and their upstream model code) are not covered by the ISP Platform license alone. Use them under the terms of the original repositories and publications:
+
+| Model | Upstream license (as published) |
+| --- | --- |
+| **Human Geneformer** ([ctheodoris/Geneformer](https://huggingface.co/ctheodoris/Geneformer)) | Apache-2.0 |
+| **Mouse Geneformer** ([MPRG/Mouse-Geneformer](https://github.com/machine-perception-robotics-group/Mouse-Geneformer)) | Not specified upstream; follow the original paper and repository |
+
 ## Upstream / related repos
 
 - **Mouse Geneformer (research):** [machine-perception-robotics-group/Mouse-Geneformer](https://github.com/machine-perception-robotics-group/Mouse-Geneformer) — original pretraining **notebooks** and model publication ([bioRxiv](https://www.biorxiv.org/content/10.1101/2024.09.09.611960v1)). Use that repo for notebook-style exploration; this platform is CLI/Web UI only.
