@@ -425,7 +425,7 @@ def main() -> None:
     alt_state = list(pert.get("alt_states") or [])
     organ_data = pert.get("organ_data", "experiment")
     genes_to_perturb_list = list(pert.get("genes_to_perturb") or [])
-    state_key = pert.get("state_key", "disease")
+    state_key = pert.get("state_key", "state")
     perturb_gene_labels: dict[str, str] = {}
 
     if accelerator.is_main_process:

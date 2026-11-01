@@ -389,7 +389,7 @@ def write_isp_positions(cfg: Mapping[str, Any], out: Path, *, max_cells: int) ->
 
     disable_progress_bar()
     pert = cfg.get("perturbation") or {}
-    state_key = str(pert.get("state_key", "disease"))
+    state_key = str(pert.get("state_key", "state"))
     states = {"start": str(pert["start_state"]), "goal": str(pert["end_state"])}
     filt = (cfg.get("isp") or {}).get("filter_data") or {}
     size = int(backend_from_config(cfg).max_input_size)

@@ -35,7 +35,7 @@ Before fine-tuning you need:
    |--------|-----------|-------|
    | `input_ids` | **Yes** | Rank-encoded gene tokens per cell |
    | `length` | **Yes** | Sequence length |
-   | Label column | **Yes** | E.g. `disease` (with values like `Ctrl`, `Disease`) or `cell_type` |
+   | Label column | **Yes** | E.g. `state` (with values like `Ctrl`, `Disease`) or `cell_type` |
    | Organ/group column | Optional | E.g. `organ_major` — used for per-organ fine-tuning |
 
 2. **The pretrained model** — default: `/app/models/mouse-Geneformer/` (contains `config.json`, `pytorch_model.bin`).
@@ -102,8 +102,8 @@ metadata:
 
 ```yaml
 finetune:
-  task_type: disease           # "disease" or "cell_type"
-  label_column: disease        # column to use as classification labels
+  task_type: state             # "state" or "cell_type"
+  label_column: state          # column to use as classification labels
   organ_key: null              # group by this column, or null for full dataset
   rare_class_threshold: 0.005  # drop classes < 0.5% of total cells
   train_split: 0.8             # 80/20 train/eval split
@@ -112,7 +112,7 @@ finetune:
 
 | Key | Description |
 |-----|-------------|
-| `task_type` | `disease` or `cell_type` — determines the classification objective |
+| `task_type` | `state` or `cell_type`. Determines the classification objective |
 | `label_column` | Which dataset column becomes the label. Must exist (or be created via `metadata`) |
 | `organ_key` | If set (e.g. `organ_major`), fine-tuning runs **per organ group**. Set to `null` to train on the full dataset as one group |
 | `rare_class_threshold` | Classes representing less than this fraction are dropped (prevents training instability) |
@@ -122,8 +122,8 @@ finetune:
 
 | Scenario | `task_type` | `label_column` | `organ_key` |
 |----------|-------------|----------------|-------------|
-| Disease classification, no organ grouping | `disease` | `disease` | `null` |
-| Disease classification, per organ | `disease` | `disease` | `organ_major` |
+| State classification, no organ grouping | `state` | `state` | `null` |
+| State classification, per organ | `state` | `state` | `organ_major` |
 | Cell type classification, per organ | `cell_type` | `cell_type` | `organ_major` |
 | Cell type classification, whole dataset | `cell_type` | `cell_type` | `null` |
 

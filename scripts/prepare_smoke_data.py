@@ -78,7 +78,7 @@ def _subsample_sample(
     *,
     n_cells: int,
     seed: int,
-    disease: str,
+    state: str,
     sample_id: str,
 ) -> "sc.AnnData":
     adata = sc.read_10x_mtx(str(mtx_dir), var_names="gene_ids", make_unique=True)
@@ -91,10 +91,10 @@ def _subsample_sample(
         # read_10x_mtx with var_names=gene_ids keeps symbols in gene_symbols when present
         adata.var["gene_symbols"] = adata.var_names.astype(str)
     adata.obs["n_counts"] = np.asarray(adata.X.sum(axis=1)).ravel()
-    adata.obs["disease"] = disease
+    adata.obs["state"] = state
     adata.obs["sample_id"] = sample_id
     adata.obs["time"] = "1w"
-    adata.obs["genotype"] = disease
+    adata.obs["genotype"] = state
     adata.obs["replicate"] = "1st"
     return adata
 
@@ -148,12 +148,12 @@ def build_smoke(*, n_cells: int, seed: int, force: bool) -> None:
         ("1w-WT-1st", "WT", ROOT / "data" / "1w" / "1w-WT-1st" / "filtered_feature_bc_matrix"),
     ]
 
-    for i, (name, disease, mtx) in enumerate(samples):
+    for i, (name, state, mtx) in enumerate(samples):
         if not mtx.is_dir():
             raise FileNotFoundError(mtx)
         print(f"Subsampling {name} ({n_cells} cells)...")
         adata = _subsample_sample(
-            mtx, n_cells=n_cells, seed=seed + i, disease=disease, sample_id=name
+            mtx, n_cells=n_cells, seed=seed + i, state=state, sample_id=name
         )
 
         mouse_mtx = mouse_root / name / "filtered_feature_bc_matrix"

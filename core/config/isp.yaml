@@ -29,7 +29,7 @@ perturbation:
     # "inhibit" / "activate" (quartile shifts) are not implemented and stop with an error.
   organ_data: AD # output filename prefix
   # Dataset column for cell state labels (start / goal / alt values below refer to this column).
-  state_key: disease
+  state_key: state
   start_state: AD
   end_state: WT
   # Extra state labels (values of state_key) scored besides start and end. With two or more,

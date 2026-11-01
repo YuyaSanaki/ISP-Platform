@@ -216,11 +216,11 @@ Then open **[http://localhost:8502](http://localhost:8502)** locally. Or use the
 1. **Run type** — start with **FT batch size (calibrate)** (optional but recommended on a new GPU), then **Pipeline (E2E)**.
 2. **Study name** — your experiment name (e.g. `MyExperiment`; set **before** uploading the zip).
 3. **Data input** — **data.zip** with sample folders (`Time-State-Suffix/`, e.g. `1w-Ctrl-SingleCell/`, `1w-Disease-SingleCell/`), each with `barcodes.tsv.gz`, `features.tsv.gz`, and `matrix.mtx.gz` — or **Download from URL** for a deposited archive. Switching Run type keeps this study loaded.
-4. **Manifest** (directly under Data input) — one row per uploaded sample folder. **species** is a dropdown (human, mouse, or fly) and stays the same as **ISP model**. **disease** is typed in the same table. **＋** adds an optional metadata column (for example `experiment`). The Web UI writes `metadata.tsv` into the study folder and uses it for tokenize and ISP. `start_state` / `end_state` must match the `disease` values.
+4. **Manifest** (directly under Data input) — one row per uploaded sample folder. **species** is a dropdown (human, mouse, or fly) and stays the same as **ISP model**. **State** is typed in the same table. **＋** adds an optional metadata column (for example `experiment`). The Web UI writes `metadata.tsv` into the study folder (State is the `state` column) and uses it for tokenize and ISP. `start_state` / `end_state` must match the State values.
 5. **Cluster / cell-type / enrichment analysis**, then **ISP model**. The cluster block sits above ISP model and is off unless you turn it on. `n_clusters` defaults to auto. Manifest **species** selects the same-species base model (human Base V2-104M, mouse Base). fly is stored as `drosophila` and has no native checkpoint.
 6. **Fine-tune batch** — above **ISP GPU batch size**. **Auto** (default) keeps an effective batch size of 6. If one GPU pass of 6 cells does not fit the input length, it uses micro-batch and sets cells per pass (4096 tokens: 2 cells × 3 passes). **Manual** keeps the existing standard batch (4–8) and the micro-batch settings as separate choices. A **Methods** box under the control can be copied into the paper. After calibration, paste (or **Use calibrated**) into the manual standard batch. **Once chosen for a study, do not change that standard value**: it changes how many times the weights update.
-7. **ISP start / goal** — dropdowns of Manifest values (`disease: Matrigel`, `experiment: Somatoid`, and any extra column). Both must be from the same column. That column is written as `perturbation.state_key`. It is not a separate control. Empty `genes_to_perturb: []` means genome-wide ISP (intentional; can take many hours). Set a gene list in YAML for a targeted run.
-8. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`. Run job stays off until every sample has **disease** and **species**.
+7. **ISP start / goal** — dropdowns of Manifest values (`State: Matrigel`, `experiment: Somatoid`, and any extra column). Both must be from the same column. That column is written as `perturbation.state_key` (`state` for State). It is not a separate control. Empty `genes_to_perturb: []` means genome-wide ISP (intentional; can take many hours). Set a gene list in YAML for a targeted run.
+8. **Run job** — one E2E job at a time; follow **Logs & status** and **Outputs**. When finished, use **Download figures (.zip)** for PNGs under `output/.../pipeline_*/figures/`. Run job stays off until every sample has **State** and **species**.
 
 Workflow and YAML fields: [docs/pipeline.md](docs/pipeline.md).
 
@@ -311,7 +311,7 @@ species:
 
 ## CLI
 
-**Sample metadata.** Copy [`metadata.tsv.example`](metadata.tsv.example) from the repository root into the study directory as `metadata.tsv` and edit it. `sample-id` is the sample folder name. `disease` and `species` are required. `species` is `mouse`, `human`, or `drosophila`, the same on every row, and the same as `species.model_organism`. Add further columns when you need them (`experiment`, `replicate`, `batch`, ...). Tokenize reads `metadata.tsv` in the study root (also `sample-metadata.tsv` or `manifest.tsv`). With no manifest, folder names `Time-Condition-Replicate` still supply `disease`. ISP `start_state` / `end_state` must match the `disease` values exactly. Details: [docs/tokenization.md](docs/tokenization.md#metadata-manifest).
+**Sample metadata.** Copy [`metadata.tsv.example`](metadata.tsv.example) from the repository root into the study directory as `metadata.tsv` and edit it. `sample-id` is the sample folder name. `state` and `species` are required. A file with a `disease` column and no `state` column is read with `disease` as `state`. `species` is `mouse`, `human`, or `drosophila`, the same on every row, and the same as `species.model_organism`. Add further columns when you need them (`experiment`, `replicate`, `batch`, ...). Tokenize reads `metadata.tsv` in the study root (also `sample-metadata.tsv` or `manifest.tsv`). With no manifest, folder names `Time-Condition-Replicate` still supply `state`. ISP `start_state` / `end_state` must match the `state` values exactly. Details: [docs/tokenization.md](docs/tokenization.md#metadata-manifest).
 
 **End-to-end** — edit `[core/config/pipeline.yaml](core/config/pipeline.yaml)`, then:
 
@@ -353,7 +353,7 @@ docker compose run --rm pipeline
 
 | Path                          | Role                                                           |
 | ----------------------------- | -------------------------------------------------------------- |
-| `metadata.tsv.example`        | CLI template for sample metadata (`disease`, `species`, extra columns) |
+| `metadata.tsv.example`        | CLI template for sample metadata (`state`, `species`, extra columns) |
 | `core/`                       | Geneformer library, CLI runners, default YAML (`core/config/`) |
 | `webui/`                      | Streamlit app + upload / remote-data helpers                   |
 | `contracts/`                  | Shared input-layout rules (no GPU / job imports)               |

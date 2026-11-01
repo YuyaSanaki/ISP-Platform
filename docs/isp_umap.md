@@ -28,7 +28,7 @@ Key configurations to note:
 | `umap.pca_components` | `0` = direct UMAP on embeddings (default). `50` = PCA(50)→UMAP (Fig.2/3/4 manuscript style). |
 | `perturbation.genes_to_perturb` | One or more gene symbols / Ensembl IDs perturbed **together** (group KD/OE). |
 | `perturbation.type` | `delete` (KD) or `overexpress` (length-preserving OE; Fig.3 OSKM4-style). |
-| `perturbation.state_key` | Label column that divides your cells (e.g., `disease`). |
+| `perturbation.state_key` | Label column that divides your cells (default `state`). |
 | `perturbation.start_state` | Condition you are perturbing (e.g. `Disease`). |
 | `perturbation.end_state` | Condition you are comparing against (e.g. `Ctrl`). |
 | `postprocess.enabled` | Optional `cluster_coexpr_analysis/` after the main UMAP (**default `false`**). |
@@ -115,7 +115,7 @@ One row per **start-state** cell (e.g. each `Disease` cell in the run), with how
 | `umap1_after` / `umap2_after` | UMAP position after perturbation |
 | `umap_shift_l2` | L2 distance between before/after positions in UMAP space (matches the grey arrows on the plot) |
 
-Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `disease`, and platform `cell_type` / `celltype_annotator` when tokenize annotation ran) are included in the CSV. When postprocess cell-type is on, those platform labels are used (`prefer_metadata_celltype: auto`).
+Dataset metadata columns present on the tokenized `.dataset` (e.g. `sample_id`, `state`, and platform `cell_type` / `celltype_annotator` when tokenize annotation ran) are included in the CSV. When postprocess cell-type is on, those platform labels are used (`prefer_metadata_celltype: auto`).
 
 ## Troubleshooting
 

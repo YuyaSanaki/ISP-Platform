@@ -61,7 +61,7 @@ _PERTURB_TYPE_LABELS = {
     "overexpress": "overexpress — move gene to front of ranks",
 }
 _FT_TASK_TYPE_LABELS = {
-    "disease": "disease — classify disease / condition labels",
+    "state": "state — classify cell state / condition labels",
     "cell_type": "cell_type — classify cell-type labels",
 }
 _DEFAULT_FT_EPOCHS = 10
@@ -82,9 +82,11 @@ _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS = 4
 _DEFAULT_ISP_POSTPROCESS_N_CLUSTERS_MODE = "auto"  # "auto" | "manual"
 _DEFAULT_ISP_POSTPROCESS_CELLTYPE = True
 _DEFAULT_PERTURB_TYPE = "delete"
-_DEFAULT_STATE_KEY = "disease"
-_DEFAULT_FT_TASK_TYPE = "disease"
-_DEFAULT_FT_LABEL_COLUMN = "disease"
+_DEFAULT_STATE_KEY = "state"
+_DEFAULT_FT_TASK_TYPE = "state"
+_DEFAULT_FT_LABEL_COLUMN = "state"
+# Manifest and ISP menus show the state column as "State"; the dataset column is "state".
+_STATE_COLUMN_LABEL = "State"
 _DEFAULT_MAX_CELLS = 300_000
 
 
@@ -992,7 +994,7 @@ def _build_isp_umap_yaml_from_pipeline_run(
             "genes_to_perturb": gene_list,
             "gene_label": gene_label,
             "type": pert_type,
-            "state_key": pert.get("state_key", "disease"),
+            "state_key": pert.get("state_key", _DEFAULT_STATE_KEY),
             "start_state": pert.get("start_state"),
             "end_state": pert.get("end_state"),
         },
@@ -1311,7 +1313,7 @@ def _isp_steps_cfg_from_pipeline_run(
         },
         "species": dict(cfg.get("species") or {}),
         "perturbation": {
-            "state_key": pert.get("state_key", "disease"),
+            "state_key": pert.get("state_key", _DEFAULT_STATE_KEY),
             "start_state": pert.get("start_state"),
             "end_state": pert.get("end_state"),
             "alt_states": list(pert.get("alt_states") or []),
@@ -1691,7 +1693,7 @@ def _render_isp_steps_source_picker() -> None:
     paths = cfg.get("paths") or {}
     st.caption(
         f"ISP states: **{pert.get('start_state', '?')} → {pert.get('end_state', '?')}** "
-        f"(state_key=`{pert.get('state_key', 'disease')}`)"
+        f"(state_key=`{pert.get('state_key', _DEFAULT_STATE_KEY)}`)"
     )
     if paths.get("dataset"):
         st.caption(f"dataset: `{paths.get('dataset')}`")
@@ -2952,11 +2954,23 @@ def _split_isp_state_token(token: object) -> tuple[str, str]:
     return "", text
 
 
+def _manifest_column_label(column: str) -> str:
+    return _STATE_COLUMN_LABEL if column == _DEFAULT_STATE_KEY else column
+
+
 def _isp_choice_label(token: str) -> str:
     column, value = _split_isp_state_token(token)
     if column:
-        return f"{column}: {value}"
+        return f"{_manifest_column_label(column)}: {value}"
     return value or token
+
+
+def _state_token(value: object) -> str:
+    """A start / goal value from the state column, as a menu token."""
+    text = str(value or "")
+    if not text or _ISP_CHOICE_SEP in text:
+        return text
+    return _isp_state_token(_DEFAULT_STATE_KEY, text)
 
 
 def _manifest_isp_choices() -> list[str]:
@@ -3025,10 +3039,13 @@ def _sync_isp_state_selectors(
     if end_val not in options:
         options = sorted(set(options) | {end_val})
 
+    options = [_state_token(value) for value in options if value]
+    start_val = _state_token(start_val)
+    end_val = _state_token(end_val)
     st.session_state["pipeline_isp_state_options"] = options
-    if force or "pipeline_isp_start_state" not in st.session_state:
+    if force or st.session_state.get("pipeline_isp_start_state") not in options:
         st.session_state["pipeline_isp_start_state"] = start_val
-    if force or "pipeline_isp_end_state" not in st.session_state:
+    if force or st.session_state.get("pipeline_isp_end_state") not in options:
         st.session_state["pipeline_isp_end_state"] = end_val
 
 
@@ -5440,7 +5457,7 @@ def main() -> None:
         _render_output_browser()
 
 
-_MANIFEST_CORE_FIELDS = ("disease", "species")
+_MANIFEST_CORE_FIELDS = (_DEFAULT_STATE_KEY, "species")
 _MANIFEST_SPECIES_OPTIONS = ("human", "mouse", "drosophila")
 _MANIFEST_SPECIES_LABELS = {"human": "human", "mouse": "mouse", "drosophila": "fly"}
 
@@ -5461,9 +5478,9 @@ def _manifest_optional_field(name: str) -> str:
         field = _normalize_header(name)
     except SampleManifestError:
         raise
-    if field in {"sample_id", "disease", "species"}:
+    if field in {"sample_id", _DEFAULT_STATE_KEY, "species"}:
         raise SampleManifestError(
-            f"{field} is already in the Manifest. "
+            f"{_manifest_column_label(field)} is already in the Manifest. "
             "species is the dropdown (human, mouse, or fly)."
         )
     return field
@@ -5476,7 +5493,7 @@ def _manifest_records_from_file(path: Path, sample_names: list[str], organism: s
     fields = manifest_field_order(manifest.columns)
     for name in _MANIFEST_CORE_FIELDS:
         if name not in fields:
-            insert_at = 0 if name == "disease" else min(1, len(fields))
+            insert_at = 0 if name == _DEFAULT_STATE_KEY else min(1, len(fields))
             fields.insert(insert_at, name)
     records: dict[str, dict[str, str]] = {}
     for sample in sample_names:
@@ -5526,7 +5543,7 @@ def _commit_manifest(upload_dir: Path) -> str | None:
     records = st.session_state.get("manifest_records")
     fields = list(st.session_state.get("manifest_fields") or _MANIFEST_CORE_FIELDS)
     if not isinstance(records, dict) or not records:
-        return "Fill **disease** and **species** in the **Manifest** table under Data input."
+        return "Fill **State** and **species** in the **Manifest** table under Data input."
     samples = _manifest_samples_from_records(sample_names, fields, records)
     error = validate_sample_metadata(samples)
     tsv_path = study_root / "metadata.tsv"
@@ -5547,7 +5564,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
     st.caption(
         "Sample names are the uploaded folders, one row each. "
         "**species** is the dropdown above the table (human, mouse, or fly) and stays the same as **ISP model**. "
-        "**disease** is typed in the table. "
+        "**State** is typed in the table. "
         "**＋** adds an optional metadata column, such as experiment or batch."
     )
     study_root = _compute_tokenize_input_dir(upload_dir)
@@ -5581,7 +5598,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
     fields = list(st.session_state.get("manifest_fields") or list(_MANIFEST_CORE_FIELDS))
     for name in _MANIFEST_CORE_FIELDS:
         if name not in fields:
-            fields.insert(0 if name == "disease" else 1, name)
+            fields.insert(0 if name == _DEFAULT_STATE_KEY else 1, name)
     extras = [name for name in fields if name not in _MANIFEST_CORE_FIELDS]
     fields = list(_MANIFEST_CORE_FIELDS) + extras
     records = dict(st.session_state.get("manifest_records") or {})
@@ -5656,7 +5673,7 @@ def _render_manifest_editor(upload_dir: Path) -> None:
     }
     for field in editor_fields:
         if field != "species":
-            column_config[field] = st.column_config.TextColumn(field)
+            column_config[field] = st.column_config.TextColumn(_manifest_column_label(field))
     edited = st.data_editor(
         pd.DataFrame(table_rows),
         disabled=["sample", "species"],
@@ -5933,17 +5950,19 @@ def _render_analysis_panel() -> None:
                 if upload_states:
                     previous = list(st.session_state.get("pipeline_detected_states") or [])
                     st.session_state["pipeline_detected_states"] = upload_states
-                    current = st.session_state.get("pipeline_isp_start_state")
+                    _current_col, current = _split_isp_state_token(
+                        st.session_state.get("pipeline_isp_start_state")
+                    )
                     force = bool(previous) and previous != list(upload_states) and current not in upload_states
                     _sync_isp_state_selectors(upload_states, force=force)
-                elif "pipeline_isp_start_state" not in st.session_state:
+                else:
                     _sync_isp_state_selectors(
                         st.session_state.get("pipeline_detected_states"),
                         force=False,
                     )
                 isp_options = st.session_state.get("pipeline_isp_state_options") or [
-                    "Disease",
-                    "Ctrl",
+                    _state_token("Disease"),
+                    _state_token("Ctrl"),
                 ]
             c_start, c_end = st.columns(2)
             with c_start:

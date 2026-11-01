@@ -14,7 +14,7 @@ runtime:
   forward_batch_size: 8
 perturbation:
   type: delete
-  state_key: disease
+  state_key: state
   start_state: AD
   end_state: WT
   genes_to_perturb:

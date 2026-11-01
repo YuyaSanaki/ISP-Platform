@@ -176,7 +176,7 @@ def _write_case_config(case: dict, cfg_path: Path) -> None:
         },
         "perturbation": {
             "type": "delete",
-            "state_key": "disease",
+            "state_key": "state",
             "start_state": "AD",
             "end_state": "WT",
             "genes_to_perturb": case["genes_to_perturb"],

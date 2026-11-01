@@ -468,7 +468,7 @@ def build_isp_umap_config(
             "genes_to_perturb": gene_list,
             "gene_label": label,
             "type": pert.get("type", "delete"),
-            "state_key": pert.get("state_key", "disease"),
+            "state_key": pert.get("state_key", "state"),
             "start_state": pert["start_state"],
             "end_state": pert["end_state"],
         },

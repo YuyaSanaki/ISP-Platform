@@ -74,7 +74,7 @@ perturbation:
   # "overexpress": move gene to front of rank value encoding
   # "inhibit" / "activate" (quartile shifts) are not implemented and stop with an error.
   organ_data: null
-  state_key: disease
+  state_key: state
   start_state: Disease
   end_state: WT
   alt_states: []

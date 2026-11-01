@@ -54,7 +54,7 @@ Or nested under an experiment name:
 
 ### Sample folder names
 
-Use **three hyphen-separated segments**: `Time-Condition-Replicate` (e.g. `1w-Disease-SingleCell`). The **second segment** is the condition/state (e.g. `Disease`, `Ctrl`) and must match ISP `perturbation.start_state` / `end_state` when mapped to `disease` via tokenize metadata.
+Use **three hyphen-separated segments**: `Time-Condition-Replicate` (e.g. `1w-Disease-SingleCell`). The **second segment** is the condition/state (e.g. `Disease`, `Ctrl`) and must match ISP `perturbation.start_state` / `end_state`. Tokenize writes it as the `state` column.
 
 ### Raw counts
 
@@ -89,7 +89,7 @@ runtime:
 
 perturbation:
   type: delete  # delete | overexpress
-  state_key: disease
+  state_key: state
   start_state: Disease   # must match 2nd segment of sample folder names
   end_state: Ctrl
   alt_states: []
@@ -136,8 +136,8 @@ Copied into the generated ISP config. Same keys as [`core/config/isp.yaml`](../c
 | Field | Role |
 |-------|------|
 | `type` | Perturbation mode: `delete` (remove gene from rank encoding) or `overexpress` (gene to front). `inhibit` / `activate` (quartile shifts) are not implemented and stop with an error |
-| `state_key` | Metadata column for states (e.g. `disease`) |
-| `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (manifest `disease` values when a metadata TSV is present, otherwise folder names when `extract_metadata_from_path` is on) |
+| `state_key` | Metadata column for states (default `state`) |
+| `start_state` / `end_state` | **Exact** strings as in the tokenized dataset (manifest `state` values when a metadata TSV is present, otherwise folder names when `extract_metadata_from_path` is on) |
 | `organ_data` | Optional output filename prefix |
 | `genes_to_perturb` | Optional gene list; empty = genome-wide. E2E always runs **TOP1 significant ISP UMAP** once under `{run}/isp_umap/` (largest shift toward goal among Sig == 1 genes with `N_Detections` ≥ 20) (full trajectory UMAP: use Run type **ISP UMAP**) |
 

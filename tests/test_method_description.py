@@ -51,7 +51,7 @@ class TestMethodDescription(unittest.TestCase):
         self.assertIn("ISP mode was Genome-wide delete.", text)
         self.assertNotIn("Each gene token", text)
         self.assertNotIn("Every gene in the model vocabulary", text)
-        self.assertIn("Start was Disease and Goal was WT (disease).", text)
+        self.assertIn("Start was Disease and Goal was WT (state).", text)
         self.assertIn("Fine-tuning used a batch size of 6.", text)
         self.assertNotIn("tokenize, fine-tune", text)
         self.assertNotIn("Token length", text)

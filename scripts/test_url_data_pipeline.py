@@ -118,7 +118,7 @@ def main() -> int:
         "runtime": {"nproc": 2, "max_cells": 5000, "forward_batch_size": 8},
         "perturbation": {
             "type": "delete",
-            "state_key": "disease",
+            "state_key": "state",
             "start_state": start_state,
             "end_state": end_state,
             "genes_to_perturb": ["Igfbp2"],

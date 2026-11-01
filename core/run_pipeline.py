@@ -44,7 +44,7 @@ from run_provenance import update_service_provenance, write_service_provenance
 
 
 # state_key values that tokenize fills from the sample folder name (Time-State-Suffix)
-_PATH_DERIVED_STATE_KEYS = frozenset({"disease", "genotype", "state"})
+_PATH_DERIVED_STATE_KEYS = frozenset({"genotype", "state"})
 
 
 def _utc_pipeline_folder_name(now_utc: datetime) -> str:
@@ -63,6 +63,39 @@ def _report_run_dir(run_dir: Path) -> None:
         Path(target).write_text(f"{run_dir.resolve()}\n", encoding="utf-8")
     except OSError as exc:
         print(f"WARNING: could not write {RUN_DIR_FILE_ENV}={target}: {exc}", flush=True)
+
+
+def _rename_legacy_state_columns(pipeline: dict, study_root: str) -> dict:
+    """Point ``disease`` at ``state`` when tokenize will not write a ``disease`` column.
+
+    Tokenize writes the manifest state (or the folder-name state) as ``state``. A YAML
+    saved before the rename can still name ``disease`` as the ISP state_key or the
+    fine-tune label column.
+    """
+    from data_input_layout import column_values_from_study
+
+    if column_values_from_study(Path(study_root), "disease") is not None:
+        return pipeline
+    pipeline = dict(pipeline)
+    perturbation = dict(pipeline.get("perturbation") or {})
+    if str(perturbation.get("state_key") or "").strip() == "disease":
+        perturbation["state_key"] = "state"
+        pipeline["perturbation"] = perturbation
+        print("perturbation.state_key disease → state (tokenize writes the state column).")
+    stages = dict(pipeline.get("stages") or {})
+    ft_stage = dict(stages.get("finetune") or {})
+    ft_block = dict(ft_stage.get("finetune") or {})
+    changed = False
+    for key in ("task_type", "label_column"):
+        if str(ft_block.get(key) or "").strip() == "disease":
+            ft_block[key] = "state"
+            changed = True
+            print(f"stages.finetune.finetune.{key} disease → state (tokenize writes the state column).")
+    if changed:
+        ft_stage["finetune"] = ft_block
+        stages["finetune"] = ft_stage
+        pipeline["stages"] = stages
+    return pipeline
 
 
 def _validate_perturbation_states(pipeline: dict, study_root: str) -> None:
@@ -369,6 +402,8 @@ def main() -> None:
     _report_run_dir(run_dir)
 
     resolved = resolve_pipeline_paths(pipeline, run_dir)
+    if not args.skip_tokenize and str(data.get("input_type") or "").strip() == "single-cell":
+        pipeline = _rename_legacy_state_columns(pipeline, resolved["input_dir"])
     # ISP is optional for some E2E workflows (UMAP-only preview), so avoid
     # blocking on perturbation start/end state validation when it is skipped.
     if not args.skip_isp:
