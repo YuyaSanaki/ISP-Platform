@@ -27,7 +27,7 @@ Observed Human Geneformer ISP peak VRAM: about **35–41 GiB** (fits one H100 
 
 | File | Role |
 | --- | --- |
-| [`env.sh`](env.sh) | Shared `ISP_ROOT` / conda activate |
+| [`env.sh`](env.sh) | Shared `ISP_ROOT`. Uses that conda env's `python3` on `PATH` when the env already exists |
 | [`setup_env.sh`](setup_env.sh) | Create conda env `isp` + PyTorch + deps |
 | [`download_models.sh`](download_models.sh) | Download weights, dicts, ortholog tables |
 | [`smoke_cuda.sh`](smoke_cuda.sh) | Check GPU + `torch.cuda` |
