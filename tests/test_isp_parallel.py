@@ -14,6 +14,7 @@ for _p in (ROOT / "core", ROOT / "contracts"):
 
 from isp_parallel import (  # noqa: E402
     ChunkMergeError,
+    apply_backend_input_size,
     centroid_signature,
     chunk_config_sha256,
     chunk_shares_output_folder,
@@ -129,6 +130,20 @@ class TestSignatures(unittest.TestCase):
         right["perturbation"] = {**right["perturbation"], "start_state": "Other"}
         self.assertNotEqual(chunk_config_sha256(left, "auto"), chunk_config_sha256(right, "auto"))
         self.assertNotEqual(chunk_config_sha256(left, "auto"), chunk_config_sha256(left, 64))
+
+    def test_omitted_input_size_is_part_of_the_hash_once_the_backend_fills_it(self):
+        cfg = _cfg()
+        del cfg["model"]["max_input_size"]
+        bare = chunk_config_sha256(cfg, 4)
+        previous = apply_backend_input_size(cfg, 2048)
+        self.assertIsNone(previous)
+        self.assertEqual(cfg["model"]["max_input_size"], 2048)
+        filled = chunk_config_sha256(cfg, 4)
+        self.assertNotEqual(filled, bare)
+        other = _cfg()
+        del other["model"]["max_input_size"]
+        apply_backend_input_size(other, 2048)
+        self.assertEqual(chunk_config_sha256(other, 4), filled)
 
     def test_centroid_hash_ignores_sub_millesimal_noise(self):
         base = {"Disease": [1.0, -0.5, 0.25], "Ctrl": [0.1, 0.2, 0.3]}

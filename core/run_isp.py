@@ -49,6 +49,7 @@ from geneformer.species_context import (
 )
 
 from isp_parallel import (
+    apply_backend_input_size,
     chunk_config_sha256,
     chunk_shares_output_folder,
     chunk_tag,
@@ -523,9 +524,7 @@ def main() -> None:
 
     species = species_from_config(cfg)
     backend = backend_from_config(cfg)
-    cfg.setdefault("model", {})
-    yaml_mis = cfg["model"].get("max_input_size")
-    cfg["model"]["max_input_size"] = int(backend.max_input_size)
+    yaml_mis = apply_backend_input_size(cfg, backend.max_input_size)
     if yaml_mis is not None and int(yaml_mis) != int(backend.max_input_size):
         print(
             f"  NOTE: model.max_input_size {yaml_mis} → {backend.max_input_size} "
