@@ -69,12 +69,52 @@ _h100_source_conda() {
 }
 
 h100_activate() {
+  # Prefer the env's bin/ on PATH. On Pegasus, `conda activate` under `set -u`
+  # dies in about 5s: Intel oneAPI deactivate.d reads unset OCL_ICD_* variables,
+  # and that abort does not run an ERR trap. `set +u` around activate is not
+  # enough when the activate scripts turn nounset back on.
+  local _env_bin="${HOME}/.conda/envs/${CONDA_ENV}/bin"
+  if [[ -x "${_env_bin}/python3" ]]; then
+    export PATH="${_env_bin}:${PATH}"
+    echo "[H100] using ${_env_bin}/python3 (PATH; skip conda activate)"
+    return 0
+  fi
   _h100_source_conda || return 1
-  # Site IntelPython deactivate.d hooks reference unset OCL_ICD_* vars; tolerate
-  # that when the caller has `set -u` (Pegasus job scripts).
   set +u
   conda activate "${CONDA_ENV}"
-  set -u
+  set +u
+}
+
+# Record the last shell command so a nounset abort or `set -e` exit names a line.
+# ERR alone misses the Intel oneAPI failure above. Call once, before h100_activate.
+h100_install_fail_trace() {
+  # A function, not a trap string: only then BASH_LINENO is the caller line.
+  h100_debug_trace() {
+    case $BASH_COMMAND in
+      h100_on_fail_exit|h100_on_fail_exit\ *|smoke_on_exit|smoke_on_exit\ *)
+        H100_FAIL_LINE=$H100_LAST_LINE
+        H100_FAIL_CMD=$H100_LAST_CMD
+        return 0
+        ;;
+    esac
+    # Bash emits one extra DEBUG hit on the way out, line 1, repeating the
+    # last command. Keep the real line.
+    if [[ "${BASH_LINENO[0]:-0}" -le 1 && -n "${H100_LAST_CMD:-}" && "$H100_LAST_CMD" == "$BASH_COMMAND" ]]; then
+      return 0
+    fi
+    H100_LAST_LINE=${BASH_LINENO[0]:-?}
+    H100_LAST_CMD=$BASH_COMMAND
+  }
+  h100_on_fail_exit() {
+    local rc="$1"
+    if [[ "$rc" -eq 0 ]]; then
+      return 0
+    fi
+    printf 'H100_FAIL rc=%s line=%s cmd=%s\n' "$rc" "${H100_FAIL_LINE:-${H100_LAST_LINE:-?}}" "${H100_FAIL_CMD:-${H100_LAST_CMD:-?}}" >&2
+  }
+  trap h100_debug_trace DEBUG
+  # $? must be read in the trap text. A function body sees the DEBUG trap's status.
+  trap 'h100_on_fail_exit $?' EXIT
 }
 
 echo "[H100] ISP_ROOT=${ISP_ROOT}  CONDA_ENV=${CONDA_ENV}"
