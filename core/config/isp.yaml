@@ -59,6 +59,12 @@ isp:
   # State centroids: null = first max_ncells cells pooled over all states (earlier releases;
   # a small goal state can contribute few cells). An int = up to that many cells per state.
   max_ncells_per_state: null
+  # Parallel mode is off unless both id and count are set (CLI and env override this).
+  # It splits start-state cells across independent processes. Stats are written later
+  # by core/run_isp_merge.py. Leave this unset for the default single-process run.
+  # chunk:
+  #   id: 0
+  #   count: 4
 
 stats:
   mode: goal_state_shift # goal_state_shift | vs_null | mixture_model | aggregate_data

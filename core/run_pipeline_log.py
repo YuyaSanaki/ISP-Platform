@@ -208,6 +208,7 @@ def format_isp_run_banner(cfg: dict[str, Any], extras: dict[str, Any]) -> str:
         f"  isp_results:        {extras.get('isp_out', '')}",
         f"  ispstats_results:   {extras.get('stats_out', '')}",
         f"  output_prefix:      {extras.get('output_prefix', '')}",
+        f"  parallel chunk:     {extras.get('parallel_chunk', 'off (single process)')}",
         "",
         "  perturbation:",
         f"    type:             {pert.get('type', 'delete')}",

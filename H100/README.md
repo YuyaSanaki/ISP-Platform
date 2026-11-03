@@ -34,6 +34,10 @@ Observed Human Geneformer ISP peak VRAM: about **35–41 GiB** (fits one H100 
 | [`run_pipeline.sh`](run_pipeline.sh) | Run `core/run_pipeline.py` |
 | [`job_slurm.sh`](job_slurm.sh) | Example Slurm job |
 | [`job_pbs.sh`](job_pbs.sh) | Example PBS-style job |
+| [`run_isp_chunks_local.sh`](run_isp_chunks_local.sh) | Parallel ISP, one process per local GPU |
+| [`submit_isp_chunks.sh`](submit_isp_chunks.sh) | Pegasus: one `gen_S` job per chunk |
+| [`submit_isp_merge.sh`](submit_isp_merge.sh) | Pegasus: statistics after the chunks finish |
+| [`job_isp_chunks_slurm.sh`](job_isp_chunks_slurm.sh) | Slurm array for the same chunked run |
 
 Scripts are marked executable in git (`100755`). Prefer invoking with **`bash`** (portable on HPC); `./H100/….sh` also works after clone:
 
@@ -208,6 +212,25 @@ qstat
 ```
 
 Both call `run_pipeline.sh` after activating conda. Keep large logs under `$WORK/logs/`.
+
+### Parallel genome-wide ISP
+
+The default ISP run is still one process and writes statistics itself. Parallel mode is a separate choice. It splits start-state cells across processes. It does not use distributed data parallel, and it does not use Pegasus `gen_M` or `gen_L` (those request many nodes for one job). Each Pegasus job is `gen_S`, one H100, device 0.
+
+```bash
+# This machine, one process per GPU. Merges if every chunk exits 0.
+bash "$H100_DIR/run_isp_chunks_local.sh" /path/to/isp.yaml
+
+# Pegasus. Default 8 jobs, walltime 04:00:00. Merge is a second qsub.
+export ISP_CONFIG=/work/LABGENPH/yuya_1/.../my_isp.yaml
+bash "$H100_DIR/submit_isp_chunks.sh" 8
+# after qstat shows isp_c* finished:
+#   ISP_CONFIG=... CHUNK_COUNT=8 RUN_SUBDIR=... ISP_OUTPUT_DATE=... bash "$H100_DIR/submit_isp_merge.sh"
+```
+
+Set `runtime.forward_batch_size` to a number when you compare runs. On an H100, 512 can run out of memory. Batches from 8 to 256 took about the same time per cell (2026-10-29), so a larger batch is not how this screen gets faster. For `max_ncells: 2000`, eight chunks, ask for `04:00:00`. A screen that would take about 30 hours on one H100 is about 4 hours per chunk at 8-way, before queue wait. Many jobs at once can add a few tens of percent on the shared filesystem.
+
+Use a new `--output-subdir` for each parallel run. The start-cell count after `max_ncells` must be at least the chunk count.
 
 ### Step 8 — Outputs
 
