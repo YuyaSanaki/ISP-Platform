@@ -16,6 +16,7 @@ from isp_parallel import (  # noqa: E402
     ChunkMergeError,
     centroid_signature,
     chunk_config_sha256,
+    chunk_shares_output_folder,
     clear_chunk_outputs,
     parse_chunk_spec,
     reject_parallel_mode,
@@ -62,6 +63,11 @@ def _cfg(**overrides):
 
 
 class TestChunkSpec(unittest.TestCase):
+    def test_shared_folder_is_subdir_or_flat_output(self):
+        self.assertFalse(chunk_shares_output_folder(None, True))
+        self.assertTrue(chunk_shares_output_folder("run1", True))
+        self.assertTrue(chunk_shares_output_folder(None, False))
+
     def test_default_is_single_process(self):
         self.assertIsNone(parse_chunk_spec())
         self.assertIsNone(parse_chunk_spec(env_id="", env_count=""))

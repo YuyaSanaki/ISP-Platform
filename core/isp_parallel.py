@@ -68,6 +68,15 @@ def parse_chunk_spec(
     return None
 
 
+def chunk_shares_output_folder(explicit_subdir: str | None, auto_time_subdir: bool) -> bool:
+    """True when every chunk writes one folder.
+
+    A fixed subdir name does that. Turning off the automatic time folder does too,
+    which is how Pipeline (E2E) keeps every chunk in the pipeline run directory.
+    """
+    return bool(explicit_subdir) or not auto_time_subdir
+
+
 def yaml_chunk_pair(cfg: Mapping[str, Any] | None) -> tuple[Any, Any]:
     isp = (cfg or {}).get("isp") or {}
     chunk = isp.get("chunk") or {}

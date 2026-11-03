@@ -71,6 +71,8 @@ python3 core/run_isp_merge.py --config /path/to/isp.yaml --chunk-count N --outpu
 
 The merge checks the chunk markers, then runs statistics once on the combined pickles. On one machine, `bash H100/run_isp_chunks_local.sh /path/to/isp.yaml` starts one process per GPU and merges if all of them succeed. On Pegasus, use `gen_S` (one H100 per job), not `gen_M` or `gen_L`: `bash H100/submit_isp_chunks.sh 8`, then `bash H100/submit_isp_merge.sh` after those jobs finish. Slurm sites use `H100/job_isp_chunks_slurm.sh`.
 
+Pipeline (E2E) in the Web UI has the same choice. **ISP execution** stays **Single process** until you select **Parallel** and a chunk count. Parallel is genome-wide only. The pipeline run folder is already the shared folder, because that stage turns the time subfolder off, so the chunks do not need `--output-subdir`. The merge writes statistics into that folder, then the usual TOP1 UMAP runs. One chunk runs on each GPU the container can see. Further chunks wait. The default Compose service requests one GPU.
+
 **Alternate configs:**
 
 ```bash

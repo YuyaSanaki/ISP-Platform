@@ -17,6 +17,7 @@ Speed on DGX / large GPUs:
   - Multi-GPU inside one launch: accelerate launch --num_processes <ngpu> run_isp.py [--config ...]
   - Parallel mode (opt-in, one process per chunk): --chunk-id / --chunk-count, then core/run_isp_merge.py.
     The default, with both unset, is still a single process that writes stats itself.
+    Chunks share a folder via --output-subdir, or by turning the time subfolder off.
 """
 from __future__ import annotations
 
@@ -49,6 +50,7 @@ from geneformer.species_context import (
 
 from isp_parallel import (
     chunk_config_sha256,
+    chunk_shares_output_folder,
     chunk_tag,
     clear_chunk_outputs,
     parse_chunk_spec,
@@ -571,17 +573,18 @@ def main() -> None:
             os.environ.get("ISP_OUTPUT_SUBDIR"),
             paths,
         )
-        if chunk is not None and not explicit_subdir:
-            raise ValueError(
-                "Parallel ISP needs one shared run folder. Pass --output-subdir NAME "
-                "(or ISP_OUTPUT_SUBDIR, or paths.output_subdir) so every chunk writes "
-                "the same directory instead of its own time folder."
-            )
         use_auto_time = _want_auto_time_subdir(
             paths,
             os.environ.get("ISP_OUTPUT_TIME_SUBDIR"),
             args.no_output_time_subdir,
         )
+        if chunk is not None and not chunk_shares_output_folder(explicit_subdir, use_auto_time):
+            raise ValueError(
+                "Parallel ISP needs one shared run folder. Pass --output-subdir NAME "
+                "(or ISP_OUTPUT_SUBDIR, or paths.output_subdir) so every chunk writes "
+                "the same directory instead of its own time folder. "
+                "A run that already disables the time subfolder can omit the name."
+            )
         run_folder = ""
         if explicit_subdir:
             run_folder = explicit_subdir

@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -102,7 +105,7 @@ class TestSubprocessRelay(unittest.TestCase):
 class _PipelineHarness:
     """Drive run_pipeline.main() with stage subprocesses replaced by callbacks."""
 
-    def __init__(self, rp, tmp: Path, *, isp_perturbation: dict, on_stage=None):
+    def __init__(self, rp, tmp: Path, *, isp_perturbation: dict, on_stage=None, pipeline=None):
         self.rp = rp
         self.run_dir = tmp / "run"
         self.run_dir.mkdir()
@@ -119,7 +122,9 @@ class _PipelineHarness:
             "pipeline_run_dir": str(self.run_dir),
         }
         self.isp_cfg = {"perturbation": dict(isp_perturbation)}
+        self.pipeline = pipeline or {}
         self.on_stage = on_stage or (lambda label, cmd: None)
+        self.envs: list[dict] = []
         self.commands: list[tuple[str, list[str]]] = []
         self.provenance = mock.Mock()
         self.events: list[tuple[str, object]] = []
@@ -136,22 +141,30 @@ class _PipelineHarness:
             raise FileNotFoundError(f"not found: {path}")
         return path
 
+    def _load_yaml(self, _path):
+        body = {
+            "data": {"input_dir": "/data/study"},
+            "paths": {"output_root": str(self.output_root)},
+        }
+        for key, value in self.pipeline.items():
+            if key in body and isinstance(body[key], dict) and isinstance(value, dict):
+                merged = dict(body[key])
+                merged.update(value)
+                body[key] = merged
+            else:
+                body[key] = value
+        return body
+
     def _fake_run(self, cmd, env, label):
         self.commands.append((label, list(cmd)))
+        self.envs.append(dict(env))
         self.on_stage(label, cmd)
 
     def main(self, *argv: str) -> None:
         rp = self.rp
         patches = [
             mock.patch.object(sys, "argv", ["run_pipeline.py", "--config", str(self.config), *argv]),
-            mock.patch.object(
-                rp,
-                "load_yaml",
-                lambda p: {
-                    "data": {"input_dir": "/data/study"},
-                    "paths": {"output_root": str(self.output_root)},
-                },
-            ),
+            mock.patch.object(rp, "load_yaml", self._load_yaml),
             mock.patch.object(rp, "resolve_pipeline_paths", lambda pipeline, run_dir: dict(self.resolved)),
             mock.patch.object(rp, "remove_tokenized_outputs", lambda *a, **k: []),
             mock.patch.object(rp, "resolve_tokenized_dataset", lambda *a, **k: self._existing("dataset_path")),
@@ -240,8 +253,10 @@ class TestE2EIspUmapChoice(unittest.TestCase):
     def setUpClass(cls):
         cls.rp = _load_run_pipeline()
 
-    def _harness(self, tmp: Path, perturbation: dict, on_stage=None) -> _PipelineHarness:
-        h = _PipelineHarness(self.rp, tmp, isp_perturbation=perturbation, on_stage=on_stage)
+    def _harness(self, tmp: Path, perturbation: dict, on_stage=None, pipeline=None) -> _PipelineHarness:
+        h = _PipelineHarness(
+            self.rp, tmp, isp_perturbation=perturbation, on_stage=on_stage, pipeline=pipeline
+        )
         Path(h.resolved["dataset_path"]).mkdir(parents=True)
         Path(h.resolved["finetune_model_dir"]).mkdir(parents=True)
         return h
@@ -348,6 +363,196 @@ class TestReportRunDir(unittest.TestCase):
             with mock.patch.dict("os.environ", {}, clear=True):
                 self.rp._report_run_dir(Path(tmp))
             self.assertEqual(list(Path(tmp).iterdir()), [])
+
+
+class TestParallelIspStage(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rp = _load_run_pipeline()
+
+    def test_cuda_ids_come_from_the_environment(self):
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}, clear=False):
+            self.assertEqual(self.rp.cuda_device_ids(), ["0", "1"])
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "none"}, clear=False):
+            self.assertEqual(self.rp.cuda_device_ids(), [])
+
+    def test_plan_stays_one_accelerate_launch_until_parallel_is_on(self):
+        cfg = Path("/tmp/isp.yaml")
+        run = Path("/tmp/run")
+        with mock.patch.dict(os.environ, {"ISP_NUM_GPUS": "1"}, clear=False):
+            plan = self.rp.isp_stage_plan({}, {"perturbation": {}}, cfg, run)
+        self.assertEqual(len(plan), 1)
+        label, cmd, overlay = plan[0]
+        self.assertEqual(label, "ISP")
+        self.assertEqual(cmd[0], "accelerate")
+        self.assertEqual(overlay, {})
+        self.assertIn("--no-output-time-subdir", cmd)
+        off = self.rp.isp_stage_plan(
+            {"stages": {"isp": {"parallel": {"enabled": False, "chunk_count": 8}}}},
+            {"perturbation": {"genes_to_perturb": ["GATA4"]}},
+            cfg,
+            run,
+        )
+        self.assertEqual(off[0][0], "ISP")
+        self.assertEqual(off[0][1][0], "accelerate")
+
+    def test_plan_splits_genome_wide_and_refuses_a_gene_list(self):
+        pipeline = {"stages": {"isp": {"parallel": {"enabled": True, "chunk_count": 3}}}}
+        cfg = Path("/tmp/isp.yaml")
+        run = Path("/tmp/run")
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}, clear=False):
+            plan = self.rp.isp_stage_plan(pipeline, {"perturbation": {"genes_to_perturb": []}}, cfg, run)
+        self.assertEqual(
+            [item[0] for item in plan],
+            ["ISP chunk 1/3", "ISP chunk 2/3", "ISP chunk 3/3", "ISP merge"],
+        )
+        for index, (_label, cmd, overlay) in enumerate(plan[:3]):
+            self.assertNotIn("accelerate", cmd)
+            self.assertEqual(cmd[cmd.index("--chunk-id") + 1], str(index))
+            self.assertEqual(cmd[cmd.index("--chunk-count") + 1], "3")
+            self.assertIn("--no-output-time-subdir", cmd)
+            self.assertIn("--no-output-date-subdir", cmd)
+            self.assertEqual(overlay["CUDA_VISIBLE_DEVICES"], "0" if index % 2 == 0 else "1")
+        merge = plan[-1][1]
+        self.assertTrue(str(merge[1]).endswith("run_isp_merge.py"))
+        self.assertEqual(merge[merge.index("--run-dir") + 1], str(run))
+        self.assertEqual(merge[merge.index("--chunk-count") + 1], "3")
+        with self.assertRaises(ValueError):
+            self.rp.isp_stage_plan(
+                pipeline,
+                {"perturbation": {"genes_to_perturb": ["GATA4"]}},
+                cfg,
+                run,
+            )
+        with self.assertRaises(ValueError):
+            self.rp.parallel_chunk_count(
+                {"stages": {"isp": {"parallel": {"enabled": True, "chunk_count": 1}}}}
+            )
+
+    def test_pipeline_launches_chunks_then_merge_in_the_run_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def on_stage(label, cmd):
+                if label == "ISP merge":
+                    stats = h.run_dir / "ispstats_results"
+                    stats.mkdir()
+                    (stats / "significant_genes.csv").write_text(
+                        "Gene_name,Ensembl_ID,Shift_to_goal_end,N_Detections\n"
+                        "NKX2-5,ENSG00000183072,0.05,40\n",
+                        encoding="utf-8",
+                    )
+
+            h = _PipelineHarness(
+                self.rp,
+                Path(tmp),
+                isp_perturbation={"type": "delete", "genes_to_perturb": []},
+                on_stage=on_stage,
+                pipeline={"stages": {"isp": {"parallel": {"enabled": True, "chunk_count": 2}}}},
+            )
+            Path(h.resolved["dataset_path"]).mkdir(parents=True)
+            Path(h.resolved["finetune_model_dir"]).mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0"}, clear=False):
+                h.main("--run-dir", str(h.run_dir), "--skip-tokenize", "--skip-finetune")
+            self.assertEqual(
+                h.labels(),
+                ["ISP chunk 1/2", "ISP chunk 2/2", "ISP merge", "ISP UMAP (TOP1 significant)"],
+            )
+            chunk_cmds = [cmd for label, cmd in h.commands if label.startswith("ISP chunk")]
+            self.assertTrue(all("accelerate" not in cmd for cmd in chunk_cmds))
+            self.assertEqual(
+                [env.get("CUDA_VISIBLE_DEVICES") for env in h.envs[:2]],
+                ["0", "0"],
+            )
+            merge = next(cmd for label, cmd in h.commands if label == "ISP merge")
+            self.assertEqual(merge[merge.index("--run-dir") + 1], str(h.run_dir))
+            self.assertEqual(h.final_status, "completed")
+
+    def test_gene_list_parallel_stops_before_isp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            h = _PipelineHarness(
+                self.rp,
+                Path(tmp),
+                isp_perturbation={"genes_to_perturb": ["GATA4"]},
+                pipeline={"stages": {"isp": {"parallel": {"enabled": True, "chunk_count": 2}}}},
+            )
+            Path(h.resolved["dataset_path"]).mkdir(parents=True)
+            Path(h.resolved["finetune_model_dir"]).mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                h.main("--run-dir", str(h.run_dir), "--skip-tokenize", "--skip-finetune")
+            self.assertEqual(h.commands, [])
+            self.assertEqual(h.final_status, "failed")
+
+    def test_two_gpus_run_together_and_a_failure_skips_merge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            started = [root / "a", root / "b"]
+            release = root / "release"
+            wait_code = (
+                "import os, pathlib, time\n"
+                "pathlib.Path(os.environ['STARTED']).write_text('up')\n"
+                "release = pathlib.Path(os.environ['RELEASE'])\n"
+                "while not release.exists():\n"
+                "    time.sleep(0.02)\n"
+                "print('done')\n"
+            )
+            plan = [
+                (
+                    "ISP chunk 1/2",
+                    [sys.executable, "-c", wait_code],
+                    {"CUDA_VISIBLE_DEVICES": "0", "STARTED": str(started[0]), "RELEASE": str(release)},
+                ),
+                (
+                    "ISP chunk 2/2",
+                    [sys.executable, "-c", wait_code],
+                    {"CUDA_VISIBLE_DEVICES": "1", "STARTED": str(started[1]), "RELEASE": str(release)},
+                ),
+                ("ISP merge", [sys.executable, "-c", "print('merged')"], {}),
+            ]
+            flag = {"ok": False}
+
+            def releaser():
+                deadline = time.time() + 3
+                while time.time() < deadline:
+                    if all(path.is_file() for path in started):
+                        flag["ok"] = True
+                        release.write_text("go")
+                        return
+                    time.sleep(0.02)
+                release.write_text("go")
+
+            thread = threading.Thread(target=releaser, daemon=True)
+            thread.start()
+            cap = io.StringIO()
+            with mock.patch.object(sys, "stdout", cap):
+                self.rp._run_isp_plan(plan, os.environ.copy())
+            thread.join(timeout=5)
+            self.assertTrue(flag["ok"])
+            self.assertIn("merged", cap.getvalue())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = [
+                (
+                    "ISP chunk 1/2",
+                    [sys.executable, "-c", "import sys; print('boom'); sys.exit(2)"],
+                    {"CUDA_VISIBLE_DEVICES": "4"},
+                ),
+                (
+                    "ISP chunk 2/2",
+                    [sys.executable, "-c", "import os, time; time.sleep(30); print(os.environ['MARKER'])"],
+                    {"CUDA_VISIBLE_DEVICES": "5", "MARKER": "RAN_CHUNK_2"},
+                ),
+                ("ISP merge", [sys.executable, "-c", "print('merged')"], {}),
+            ]
+            cap = io.StringIO()
+            started_at = time.time()
+            with mock.patch.object(sys, "stdout", cap):
+                with self.assertRaises(subprocess.CalledProcessError) as ctx:
+                    self.rp._run_isp_plan(plan, os.environ.copy())
+            self.assertEqual(ctx.exception.returncode, 2)
+            self.assertLess(time.time() - started_at, 10)
+            text = cap.getvalue()
+            self.assertIn("boom", text)
+            self.assertNotIn("merged", text)
+            self.assertNotIn("RAN_CHUNK_2", text)
 
 
 if __name__ == "__main__":

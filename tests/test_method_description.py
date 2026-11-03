@@ -49,6 +49,7 @@ class TestMethodDescription(unittest.TestCase):
         self.assertIn("Mouse Geneformer base.", text)
         self.assertNotIn("about 33 million", text)
         self.assertIn("ISP mode was Genome-wide delete.", text)
+        self.assertNotIn("split across", text)
         self.assertNotIn("Each gene token", text)
         self.assertNotIn("Every gene in the model vocabulary", text)
         self.assertIn("Start was Disease and Goal was WT (state).", text)
@@ -279,6 +280,27 @@ class TestMethodDescription(unittest.TestCase):
         )
         self.assertIn("The input species was human.", text)
         self.assertIn("Start was A and Goal was B", text)
+        wide = {
+            "perturbation": {"type": "delete", "genes_to_perturb": []},
+            "stages": {"isp": {"parallel": {"enabled": True, "chunk_count": 4}}},
+        }
+        wide_text = format_method_description(
+            facts_from_config(wide, version="1.4.1", run_kind=RUN_KIND_E2E)
+        )
+        self.assertIn(
+            "Start cells were split across 4 processes, "
+            "and statistics were computed once after they finished.",
+            wide_text,
+        )
+        _assert_methods_punctuation(self, wide_text)
+        listed = apply_form_overrides(
+            wide,
+            {"isp_parallel": False, "genes": ["GATA4"], "pert_type": "delete"},
+        )
+        listed_text = format_method_description(
+            facts_from_config(listed, version="1.4.1", run_kind=RUN_KIND_E2E)
+        )
+        self.assertNotIn("split across", listed_text)
         self.assertIn("current form", " ".join(notes))
         self.assertTrue(any("Token lengths" in note for note in notes))
         _assert_methods_punctuation(self, text)

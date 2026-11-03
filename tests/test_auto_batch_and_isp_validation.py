@@ -335,6 +335,7 @@ class TestAutoBatchSize(unittest.TestCase):
                 "runtime": {"forward_batch_size": "auto", "nproc": 2},
                 "perturbation": {},
                 "species": {"model_organism": "mouse", "model": "mouse_geneformer"},
+                "stages": {"isp": {"parallel": {"enabled": True, "chunk_count": 4}}},
             }
             resolved = {
                 "dataset_path": "/tmp/ds",
@@ -350,6 +351,7 @@ class TestAutoBatchSize(unittest.TestCase):
                 num_classes=2,
             )
             self.assertEqual(cfg["runtime"]["forward_batch_size"], "auto")
+            self.assertNotIn("parallel", cfg)
         finally:
             for key, mod in saved.items():
                 if mod is None:
@@ -1216,6 +1218,38 @@ class TestPipelineRunZip(unittest.TestCase):
                 self.assertNotIn("checkpoint-", joined)
                 self.assertNotIn("loom_files", joined)
                 self.assertNotIn("HUGE_TOKENIZED", joined)
+        finally:
+            _restore_modules(saved)
+
+
+class TestParallelIspYamlControls(unittest.TestCase):
+    def test_single_is_default_and_parallel_is_opt_in(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = "data:\n  input_dir: /app/data/x\n"
+            st.session_state["pipeline_isp_execution"] = app._ISP_EXEC_SINGLE
+            st.session_state["pipeline_isp_chunk_count"] = 4
+            st.session_state["pipeline_genes_to_perturb_text"] = ""
+            app._apply_perturbation_controls_to_yaml()
+            cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            parallel = cfg["stages"]["isp"]["parallel"]
+            self.assertFalse(parallel["enabled"])
+            self.assertEqual(parallel["chunk_count"], 4)
+
+            st.session_state["pipeline_isp_execution"] = app._ISP_EXEC_PARALLEL
+            st.session_state["pipeline_isp_chunk_count"] = 3
+            app._apply_perturbation_controls_to_yaml()
+            cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            parallel = cfg["stages"]["isp"]["parallel"]
+            self.assertTrue(parallel["enabled"])
+            self.assertEqual(parallel["chunk_count"], 3)
+
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = __import__("yaml").dump(cfg)
+            app._sync_ft_isp_advanced_from_yaml()
+            self.assertEqual(st.session_state["pipeline_isp_execution"], app._ISP_EXEC_PARALLEL)
+            self.assertEqual(st.session_state["pipeline_isp_chunk_count"], 3)
         finally:
             _restore_modules(saved)
 
