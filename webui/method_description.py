@@ -76,6 +76,7 @@ class MethodFacts:
     isp_mode: str | None = None
     genes: tuple[str, ...] = ()
     genome_wide: bool = False
+    parallel_chunks: int | None = None
     state_key: str | None = None
     start: str | None = None
     goal: str | None = None
@@ -220,6 +221,19 @@ def length_stats_for_run(
     return stats
 
 
+def _parallel_chunks(cfg: Mapping[str, Any]) -> int | None:
+    stages = cfg.get("stages") if isinstance(cfg.get("stages"), Mapping) else None
+    isp = stages.get("isp") if isinstance(stages, Mapping) else None
+    parallel = isp.get("parallel") if isinstance(isp, Mapping) else None
+    if not isinstance(parallel, Mapping) or not parallel.get("enabled"):
+        return None
+    try:
+        count = int(parallel.get("chunk_count") or 0)
+    except (TypeError, ValueError):
+        return None
+    return count if count >= 2 else None
+
+
 def facts_from_config(
     cfg: Mapping[str, Any] | None,
     *,
@@ -263,6 +277,7 @@ def facts_from_config(
         facts.isp_mode = mode or None
         facts.genes = _clean_genes(pert.get("genes_to_perturb"))
         facts.genome_wide = not facts.genes
+        facts.parallel_chunks = _parallel_chunks(cfg) if facts.genome_wide else None
         facts.state_key = str(pert.get("state_key") or "").strip() or None
         facts.start = str(pert.get("start_state") or "").strip() or None
         facts.goal = str(pert.get("end_state") or "").strip() or None
@@ -393,6 +408,16 @@ def _isp_sentences(facts: MethodFacts) -> list[str]:
         wide = facts.genome_wide and facts.run_kind != RUN_KIND_ISP_UMAP
         label = f"Genome-wide {facts.isp_mode}" if wide else facts.isp_mode
         sentences.append(f"ISP mode was {label}.")
+    if (
+        facts.run_kind == RUN_KIND_E2E
+        and facts.genome_wide
+        and facts.parallel_chunks
+        and facts.parallel_chunks >= 2
+    ):
+        sentences.append(
+            f"Start cells were split across {facts.parallel_chunks} processes, "
+            "and statistics were computed once after they finished."
+        )
     if facts.run_kind == RUN_KIND_ISP_UMAP:
         return sentences
     if facts.genes and not facts.genome_wide:
@@ -697,6 +722,23 @@ def apply_form_overrides(
         pert["state_key"] = form["state_key"]
     if pert:
         out["perturbation"] = pert
+
+    if "isp_parallel" in form or "isp_chunk_count" in form:
+        stages = dict(out.get("stages") or {})
+        isp = dict(stages.get("isp") or {})
+        parallel = dict(isp.get("parallel") or {})
+        if "isp_parallel" in form:
+            parallel["enabled"] = bool(form.get("isp_parallel"))
+        if form.get("isp_chunk_count"):
+            try:
+                count = int(form["isp_chunk_count"])
+            except (TypeError, ValueError):
+                count = 0
+            if count >= 2:
+                parallel["chunk_count"] = count
+        isp["parallel"] = parallel
+        stages["isp"] = isp
+        out["stages"] = stages
 
     runtime = dict(out.get("runtime") or {})
     if form.get("ft_batch_choice"):

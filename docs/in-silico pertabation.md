@@ -53,13 +53,25 @@ docker compose run --rm isp
 
 Runs `accelerate launch --num_processes 1 /app/core/run_isp.py --config /app/core/config/isp.yaml`.
 
-**Multiple GPUs:**
+**Multiple GPUs in one launch (Accelerate):**
 
 ```bash
 ISP_NUM_GPUS=4 docker compose run --rm isp
 ```
 
-Statistics and figures are consolidated on the **main** process only.
+Statistics and figures are consolidated on the **main** process only. This is separate from parallel mode. Do not combine them.
+
+**Parallel mode (opt-in):** unset chunk flags keep the single-process run above. Set both `--chunk-id` and `--chunk-count` (or `ISP_CHUNK_ID` / `ISP_CHUNK_COUNT`, or `isp.chunk` in YAML) to split the start-state cells across independent processes. Chunk 0 takes cells 0, N, 2N, ... after the usual length sort, so one chunk does not receive only the longest cells. Each process loads the model on `CUDA_VISIBLE_DEVICES` (device 0 inside that process), recomputes the state centroids, writes its own `*_chunk{id}of{count}_*_raw.pickle` files, and skips statistics.
+
+Give every chunk the same `--output-subdir`. A new name keeps pickle files from an older run out of the folder. Genome-wide delete or overexpress only: a gene list, `combos`, or an anchor gene is rejected. After every chunk has finished:
+
+```bash
+python3 core/run_isp_merge.py --config /path/to/isp.yaml --chunk-count N --output-subdir RUN_NAME
+```
+
+The merge checks the chunk markers, then runs statistics once on the combined pickles. On one machine, `bash H100/run_isp_chunks_local.sh /path/to/isp.yaml` starts one process per GPU and merges if all of them succeed. On Pegasus, use `gen_S` (one H100 per job), not `gen_M` or `gen_L`: `bash H100/submit_isp_chunks.sh 8`, then `bash H100/submit_isp_merge.sh` after those jobs finish. Slurm sites use `H100/job_isp_chunks_slurm.sh`.
+
+Pipeline (E2E) in the Web UI has the same choice. **ISP execution** stays **Single process** until you select **Parallel** and a chunk count. Parallel is genome-wide only. The pipeline run folder is already the shared folder, because that stage turns the time subfolder off, so the chunks do not need `--output-subdir`. The merge writes statistics into that folder, then the usual TOP1 UMAP runs. One chunk runs on each GPU the container can see. Further chunks wait. The default Compose service requests one GPU.
 
 **Alternate configs:**
 
@@ -87,7 +99,7 @@ With `goal_state_shift` stats (the default) and all genes perturbed, the stats t
 | `Shift_to_goal_end` | Mean over cells of the per-cell goal-state shift: cosine similarity of the perturbed cell embedding to the goal-state embedding minus that of the unperturbed cell (positive = toward `end_state`) |
 | `Shift_to_alt_end` | Same toward the alternate end state (only with `alt_states`) |
 | `N_Detections` | Number of those cells whose encoding contains the gene, i.e. the number of per-cell shifts averaged into `Shift_to_goal_end`. At most the number of perturbed start-state cells (≤ `isp.max_ncells`) |
-| `Goal_end_vs_random_pval` | Wilcoxon rank-sum p-value of the gene's per-cell shifts against the pooled per-cell shifts of all perturbed genes (sampled down to 100,000 values, seed 42) |
+| `Goal_end_vs_random_pval` | Wilcoxon rank-sum p-value of the gene's per-cell shifts against the pooled per-cell shifts of all perturbed genes (the pool is sorted, then sampled down to 100,000 values with seed 42) |
 | `Goal_end_FDR` | Benjamini–Hochberg correction of `Goal_end_vs_random_pval` over all genes |
 | `Sig` | 1 if `Goal_end_FDR` < 0.05, otherwise 0 |
 
@@ -132,6 +144,7 @@ On the **main process** only, `run_isp.py` prints a **config summary** (dataset 
 - **Captured:** stdout/stderr after the tee is installed — prints, HuggingFace progress bars, etc. (UTF-8 text).
 - **Not captured:** `accelerate launch` startup before Python attaches the tee.
 - **Multi-GPU:** only the **main** process writes `isp_run.log`; other ranks print to the terminal only.
+- **Parallel chunks:** each chunk writes `isp_run_chunk{id}of{count}.log`, `isp_config_used_chunk{id}of{count}.yaml` and `isp_run_metadata_chunk{id}of{count}.yaml` in the shared run folder.
 - **Append vs. rotate:** reusing the same output folder **appends** to `isp_run.log`. Default layout uses a new `isp_<UTC>/` per launch. When size exceeds `ISP_LOG_MAX_BYTES`, the log rotates to `.log.1`, `.2`, … up to `ISP_LOG_BACKUP_COUNT`.
 - **Provenance:** `*_config_used.yaml` and `*_run_metadata.yaml` are the config snapshot; `.log` is console history for debugging.
 

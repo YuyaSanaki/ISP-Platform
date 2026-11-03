@@ -419,6 +419,9 @@ def build_isp_config(
     cfg["model"]["num_classes"] = num_classes
     cfg["species"] = dict(resolved.get("species") or {})
     cfg["model"]["max_input_size"] = resolved.get("max_input_size", cfg["model"].get("max_input_size", 2048))
+    # The pipeline orchestrator owns parallel launch. Chunk identity is a CLI flag
+    # on each process, not a field of the generated ISP config.
+    cfg.pop("parallel", None)
     rt = pipeline_runtime(pipeline)
     if rt:
         cfg.setdefault("runtime", {})

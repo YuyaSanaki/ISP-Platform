@@ -102,6 +102,11 @@ stages:
       warmup_ratio: null
       warmup_steps: 500
   isp:
+    # Web UI "ISP execution". Omit, or enabled: false, for the single process.
+    # Parallel is genome-wide only (perturbation.genes_to_perturb empty).
+    # parallel:
+    #   enabled: false
+    #   chunk_count: 2
     # Per-cell trajectory UMAP is a separate Web UI run type (ISP UMAP), not E2E.
     umap:
       enabled: false

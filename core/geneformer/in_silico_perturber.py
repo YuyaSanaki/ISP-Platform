@@ -82,6 +82,19 @@ import sys
 
 logger = logging.getLogger(__name__)
 
+
+def _isp_parallel():
+    """Load isp_parallel from core/ without a package cycle at import time."""
+    import importlib
+
+    try:
+        return importlib.import_module("isp_parallel")
+    except ModuleNotFoundError:
+        core = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if core not in sys.path:
+            sys.path.insert(0, core)
+        return importlib.import_module("isp_parallel")
+
 accelerator = Accelerator()
 ISP_device = accelerator.device
 
@@ -1220,6 +1233,7 @@ class InSilicoPerturber:
         model_input_size=2048,
         legacy_padding_mean=None,
         max_ncells_per_state=None,
+        cell_shard=None,
     ):
         """
         Initialize in silico perturber.
@@ -1310,6 +1324,11 @@ class InSilicoPerturber:
             behaviour: centroids use the first max_ncells cells pooled over all states, so a
             small goal or alt state can contribute few cells. An int takes up to that many
             cells from each state instead (as the State-feedback runners do).
+        cell_shard : None, (int, int)
+            Opt-in parallel mode. ``(index, count)`` keeps start cells whose position
+            after the length sort satisfies ``i % count == index``. Omit it for the
+            default single-process run. Cannot be combined with ``cell_inds_to_perturb``,
+            group mode, combos, an anchor gene, or a multi-process accelerate launch.
         """
 
         self.perturb_type = perturb_type
@@ -1338,6 +1357,13 @@ class InSilicoPerturber:
         self.cell_states_to_model = cell_states_to_model
         self.max_ncells = max_ncells
         self.max_ncells_per_state = max_ncells_per_state
+        self.cell_shard = _isp_parallel().validate_cell_shard(cell_shard)
+        self.written_pickle_names = []
+        self.parallel_n_cells = None
+        self.parallel_n_cells_before_shard = None
+        self.parallel_chunk_tag = None
+        self.centroid_sha256 = None
+        self.centroid_l2 = None
         self.cell_inds_to_perturb = cell_inds_to_perturb
         self.emb_layer = emb_layer
         self.forward_batch_size = forward_batch_size
@@ -1527,6 +1553,13 @@ class InSilicoPerturber:
                 )
                 raise
 
+    def _dump_raw_pickle(self, path, payload):
+        with open(path, "wb") as fp:
+            pickle.dump(payload, fp)
+        name = os.path.basename(path)
+        if name not in self.written_pickle_names:
+            self.written_pickle_names.append(name)
+
     def perturb_data(self, 
                      model_directory,
                      input_data_file,
@@ -1570,6 +1603,7 @@ class InSilicoPerturber:
 
         if self.cell_states_to_model is None:
             state_embs_dict = None
+            self.centroid_sha256, self.centroid_l2 = _isp_parallel().centroid_signature(None)
             logger.info(
                 "Perturbing cells — the progress bar below shows ETA for the full perturbation pass."
             )
@@ -1601,6 +1635,7 @@ class InSilicoPerturber:
                                                       self.pad_token_id,
                                                       self.forward_batch_size,
                                                       self.nproc)
+            self.centroid_sha256, self.centroid_l2 = _isp_parallel().centroid_signature(state_embs_dict)
             # filter for start state cells
             start_state = self.cell_states_to_model["start_state"]
             def filter_for_origin(example):
@@ -1656,7 +1691,35 @@ class InSilicoPerturber:
         cos_sims_dict = defaultdict(list)
         pickle_batch = -1
         filtered_input_data = downsample_and_sort(filtered_input_data, self.max_ncells)
-        
+        self.written_pickle_names = []
+
+        if self.cell_shard is not None:
+            parallel = _isp_parallel()
+            n_processes = getattr(accelerator, "num_processes", 1)
+            parallel.assert_parallel_shard_allowed(
+                perturb_group=bool(self.perturb_group),
+                combos=int(self.combos or 0),
+                anchor_token=self.anchor_token,
+                cell_inds_to_perturb=self.cell_inds_to_perturb,
+                num_processes=int(n_processes or 1),
+            )
+            shard_index, shard_count = self.cell_shard
+            n_before = len(filtered_input_data)
+            indices = parallel.stride_cell_indices(n_before, shard_index, shard_count)
+            filtered_input_data = filtered_input_data.select(indices)
+            self.parallel_n_cells_before_shard = n_before
+            self.parallel_n_cells = len(indices)
+            self.parallel_chunk_tag = parallel.chunk_tag(shard_index, shard_count)
+            output_path_prefix = (
+                f"{output_directory}in_silico_{self.perturb_type}_{output_prefix}"
+                f"_{self.parallel_chunk_tag}_dict_1Kbatch"
+            )
+            print(
+                f"Parallel chunk {shard_index} of {shard_count}: "
+                f"{self.parallel_n_cells} of {n_before} start cells (stride)",
+                flush=True,
+            )
+
         # Determine cell bounds across distributed nodes via accelerate
         if self.cell_inds_to_perturb == "all" and accelerator.num_processes > 1:
             total_cells = len(filtered_input_data)
@@ -1763,8 +1826,7 @@ class InSilicoPerturber:
                         data_list += [data_item[j].item()]
                     cos_sims_dict[(perturbed_genes, "cell_emb")] += [tuple(data_list)]
             
-            with open(f"{output_path_prefix}_raw.pickle", "wb") as fp:
-                pickle.dump(cos_sims_dict, fp)
+            self._dump_raw_pickle(f"{output_path_prefix}_raw.pickle", cos_sims_dict)
 
         # make perturbation batch w/ multiple perturbations in single cell
         if self.perturb_group == False:
@@ -1967,8 +2029,9 @@ class InSilicoPerturber:
 
                     # save dict to disk every 100 cells
                     if (i/100).is_integer():
-                        with open(f"{output_path_prefix}{pickle_batch}_raw.pickle", "wb") as fp:
-                            pickle.dump(cos_sims_dict, fp)
+                        self._dump_raw_pickle(
+                            f"{output_path_prefix}{pickle_batch}_raw.pickle", cos_sims_dict
+                        )
                     # reset and clear memory every 1000 cells
                     if (i/1000).is_integer():
                         pickle_batch = pickle_batch+1
@@ -1995,5 +2058,4 @@ class InSilicoPerturber:
                 enable_progress_bars()
 
             # save remainder cells
-            with open(f"{output_path_prefix}{pickle_batch}_raw.pickle", "wb") as fp:
-                pickle.dump(cos_sims_dict, fp)
+            self._dump_raw_pickle(f"{output_path_prefix}{pickle_batch}_raw.pickle", cos_sims_dict)

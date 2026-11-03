@@ -61,7 +61,8 @@ def read_dictionaries(input_data_directory, cell_or_gene_emb, anchor_token):
     file_found = 0
     file_path_list = []
     dict_list = []
-    for file in os.listdir(input_data_directory):
+    # Sorted names keep the load order stable across chunked and single-process runs.
+    for file in sorted(os.listdir(input_data_directory)):
         # process only _raw.pickle files
         if file.endswith("_raw.pickle"):
             file_found = 1
@@ -113,6 +114,19 @@ def n_detections(token, dict_list, mode, anchor_token):
 
 def get_fdr(pvalues):
     return list(smt.multipletests(pvalues, alpha=0.05, method="fdr_bh")[1])
+
+
+def _stable_downsample(values, k=100_000, seed=42):
+    """Downsample a null pool without depending on the order values were concatenated.
+
+    The pool is sorted first, then drawn with a private RNG. File order and chunk
+    order therefore do not change the sample. Values at or under ``k`` are returned
+    sorted, which does not change rank-sum tests.
+    """
+    ordered = sorted(values)
+    if len(ordered) <= k:
+        return ordered
+    return random.Random(seed).sample(ordered, k)
 
 def get_impact_component(test_value, gaussian_mixture_model):
     impact_border = gaussian_mixture_model.means_[0][0]
@@ -188,6 +202,9 @@ def isp_stats_to_goal_state(cos_sims_df, dict_list, cell_states_to_model, genes_
         return cos_sims_full_df     
             
     elif genes_perturbed == "all":
+        # Gene order fixes Benjamini-Hochberg tie breaks when pickle files arrive in
+        # different orders. The final table is still sorted by significance and shift.
+        cos_sims_df = cos_sims_df.sort_values("Gene", kind="mergesort").reset_index(drop=True)
         random_tuples = []
         for i in trange(cos_sims_df.shape[0]):
             token = cos_sims_df["Gene"][i]
@@ -195,18 +212,13 @@ def isp_stats_to_goal_state(cos_sims_df, dict_list, cell_states_to_model, genes_
                 random_tuples += dict_i.get((token, "cell_emb"),[])
         _check_shift_tuple_lengths(random_tuples, alt_states)
 
-        goal_end_random_megalist = [shifts[1] for shifts in random_tuples]
-        alt_end_random_megalists = [[shifts[2 + i] for shifts in random_tuples]
-                                    for i in range(len(alt_states))]
-
-        # downsample to improve speed of ranksums
-        if len(goal_end_random_megalist) > 100_000:
-            random.seed(42)
-            goal_end_random_megalist = random.sample(goal_end_random_megalist, k=100_000)
-        for i, alt_end_random_megalist in enumerate(alt_end_random_megalists):
-            if len(alt_end_random_megalist) > 100_000:
-                random.seed(42)
-                alt_end_random_megalists[i] = random.sample(alt_end_random_megalist, k=100_000)
+        goal_end_random_megalist = _stable_downsample(
+            [shifts[1] for shifts in random_tuples]
+        )
+        alt_end_random_megalists = [
+            _stable_downsample([shifts[2 + i] for shifts in random_tuples])
+            for i in range(len(alt_states))
+        ]
 
         names = (["Gene",
                   "Gene_name",
@@ -226,14 +238,15 @@ def isp_stats_to_goal_state(cos_sims_df, dict_list, cell_states_to_model, genes_
             for dict_i in dict_list:
                 cos_shift_data += dict_i.get((token, "cell_emb"),[])
 
-            goal_end_cos_sim_megalist = [shifts[1] for shifts in cos_shift_data]
+            # Sorted before the mean so chunk concatenation order cannot change the sum.
+            goal_end_cos_sim_megalist = sorted(shifts[1] for shifts in cos_shift_data)
             mean_goal_end = np.mean(goal_end_cos_sim_megalist)
             pval_goal_end = ranksums(goal_end_random_megalist,goal_end_cos_sim_megalist).pvalue
 
             mean_alt_ends = []
             pval_alt_ends = []
             for j, alt_end_random_megalist in enumerate(alt_end_random_megalists):
-                alt_end_cos_sim_megalist = [shifts[2 + j] for shifts in cos_shift_data]
+                alt_end_cos_sim_megalist = sorted(shifts[2 + j] for shifts in cos_shift_data)
                 mean_alt_ends.append(np.mean(alt_end_cos_sim_megalist))
                 pval_alt_ends.append(ranksums(alt_end_random_megalist,alt_end_cos_sim_megalist).pvalue)
 

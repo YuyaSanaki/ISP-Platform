@@ -15,11 +15,14 @@ import argparse
 import codecs
 import json
 import os
+import queue
 import subprocess
 import sys
 import csv
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping
 
 import yaml
 
@@ -169,6 +172,298 @@ def _run_subprocess(cmd: list[str], env: dict[str, str], label: str) -> None:
     if returncode != 0:
         raise subprocess.CalledProcessError(returncode, cmd)
     print(f"\n>>> {label} finished OK.\n", flush=True)
+
+
+def cuda_device_ids() -> list[str]:
+    """GPU ids this process can use. Empty when CUDA is turned off."""
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if raw is not None:
+        text = raw.strip()
+        if text.lower() in {"", "none", "void", "-1"}:
+            return []
+        return [part.strip() for part in text.split(",") if part.strip()]
+    try:
+        completed = subprocess.run(
+            ["nvidia-smi", "-L"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ["0"]
+    ids: list[str] = []
+    for line in completed.stdout.splitlines():
+        if not line.startswith("GPU ") or ":" not in line:
+            continue
+        number = line.split(":", 1)[0].replace("GPU", "").strip()
+        if number.isdigit():
+            ids.append(number)
+    return ids or ["0"]
+
+
+def parallel_chunk_count(pipeline: Mapping) -> int | None:
+    """None is the single process. An int of at least 2 is parallel ISP."""
+    stages = pipeline.get("stages") if isinstance(pipeline, Mapping) else None
+    isp = stages.get("isp") if isinstance(stages, Mapping) else None
+    block = isp.get("parallel") if isinstance(isp, Mapping) else None
+    if not isinstance(block, Mapping) or not block.get("enabled"):
+        return None
+    try:
+        count = int(block.get("chunk_count"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "stages.isp.parallel.chunk_count must be an integer of at least 2."
+        ) from exc
+    if count < 2:
+        raise ValueError(
+            "Parallel ISP needs stages.isp.parallel.chunk_count of at least 2. "
+            "Leave parallel.enabled false for the single process."
+        )
+    return count
+
+
+def _listed_genes(isp_cfg: Mapping) -> list[str]:
+    raw = (isp_cfg.get("perturbation") or {}).get("genes_to_perturb") or []
+    return [str(gene).strip() for gene in raw if str(gene).strip()]
+
+
+def isp_stage_plan(
+    pipeline: Mapping,
+    isp_cfg: Mapping,
+    cfg_path: Path,
+    run_dir: Path,
+) -> list[tuple[str, list[str], dict[str, str]]]:
+    """Commands for the ISP stage. One accelerate launch, or N chunks plus a merge.
+
+    Parallel chunks do not use accelerate. Each chunk gets one visible GPU, reused
+    round-robin when there are more chunks than GPUs.
+    """
+    base = [
+        "--config",
+        str(cfg_path),
+        "--no-output-time-subdir",
+        "--no-output-date-subdir",
+        "--skip-isp-umap",
+    ]
+    count = parallel_chunk_count(pipeline)
+    if count is None:
+        nproc = os.environ.get("ISP_NUM_GPUS", "1")
+        return [
+            (
+                "ISP",
+                [
+                    "accelerate",
+                    "launch",
+                    "--num_processes",
+                    str(nproc),
+                    str(ROOT / "run_isp.py"),
+                    *base,
+                ],
+                {},
+            )
+        ]
+    if _listed_genes(isp_cfg):
+        raise ValueError(
+            "Parallel ISP is genome-wide only (empty genes_to_perturb). "
+            "A gene list is one group perturbation and stays on the single process. "
+            "Clear the gene list, or set stages.isp.parallel.enabled to false."
+        )
+    devices = cuda_device_ids()
+    plan: list[tuple[str, list[str], dict[str, str]]] = []
+    for index in range(count):
+        overlay: dict[str, str] = {}
+        if devices:
+            overlay["CUDA_VISIBLE_DEVICES"] = devices[index % len(devices)]
+        plan.append(
+            (
+                f"ISP chunk {index + 1}/{count}",
+                [
+                    sys.executable,
+                    str(ROOT / "run_isp.py"),
+                    *base,
+                    "--chunk-id",
+                    str(index),
+                    "--chunk-count",
+                    str(count),
+                ],
+                overlay,
+            )
+        )
+    plan.append(
+        (
+            "ISP merge",
+            [
+                sys.executable,
+                str(ROOT / "run_isp_merge.py"),
+                "--config",
+                str(cfg_path),
+                "--chunk-count",
+                str(count),
+                "--run-dir",
+                str(run_dir),
+                "--skip-isp-umap",
+            ],
+            {},
+        )
+    )
+    return plan
+
+
+def _relay_prefixed(proc: subprocess.Popen, prefix: str) -> None:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    pending = ""
+    assert proc.stdout is not None
+    while True:
+        chunk = proc.stdout.read1(65536)
+        if not chunk:
+            break
+        pending += decoder.decode(chunk)
+        lines = pending.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            pending = lines.pop()
+        else:
+            pending = ""
+        if lines:
+            with _STDOUT_LOCK:
+                for line in lines:
+                    sys.stdout.write(f"{prefix}{line}")
+                sys.stdout.flush()
+    tail = pending + decoder.decode(b"", final=True)
+    if tail:
+        with _STDOUT_LOCK:
+            sys.stdout.write(f"{prefix}{tail}")
+            if not tail.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.flush()
+
+
+_STDOUT_LOCK = threading.Lock()
+
+
+def _kill_running(procs: list[subprocess.Popen], lock: threading.Lock) -> None:
+    with lock:
+        current = list(procs)
+    for proc in current:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def _run_bounded_commands(
+    items: list[tuple[str, list[str], dict[str, str]]],
+    env: dict[str, str],
+    width: int,
+) -> None:
+    """Run items with at most ``width`` alive at once. width 1 stays sequential."""
+    if width < 1:
+        width = 1
+    if width == 1 or len(items) <= 1:
+        for label, cmd, overlay in items:
+            child = dict(env)
+            child.update(overlay)
+            _run_subprocess(cmd, child, label)
+        return
+
+    results: queue.Queue = queue.Queue()
+    procs: list[subprocess.Popen] = []
+    procs_lock = threading.Lock()
+    threads: list[threading.Thread] = []
+
+    def launch(item: tuple[str, list[str], dict[str, str]]) -> None:
+        label, cmd, overlay = item
+        child = dict(env)
+        child.update(overlay)
+        child.setdefault("PYTHONUNBUFFERED", "1")
+        print(f"\n>>> Starting {label}: {' '.join(str(part) for part in cmd)}\n", flush=True)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT),
+            env=child,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        with procs_lock:
+            procs.append(proc)
+
+        def relay() -> None:
+            outcome: object
+            try:
+                _relay_prefixed(proc, f"[{label}] ")
+                outcome = proc.wait()
+                if outcome == 0:
+                    with _STDOUT_LOCK:
+                        print(f"\n>>> {label} finished OK.\n", flush=True)
+            except BaseException as exc:
+                proc.kill()
+                proc.wait()
+                outcome = exc
+            finally:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            results.put((label, cmd, outcome))
+
+        thread = threading.Thread(target=relay, name=f"isp-{label}", daemon=True)
+        thread.start()
+        threads.append(thread)
+
+    pending = list(items)
+    outstanding = 0
+    failed: BaseException | None = None
+    try:
+        while pending or outstanding:
+            while pending and outstanding < width and failed is None:
+                launch(pending.pop(0))
+                outstanding += 1
+            if outstanding == 0:
+                break
+            _label, cmd, result = results.get()
+            outstanding -= 1
+            if isinstance(result, BaseException):
+                if failed is None:
+                    failed = result
+                _kill_running(procs, procs_lock)
+            elif result != 0:
+                if failed is None:
+                    failed = subprocess.CalledProcessError(int(result), cmd)
+                _kill_running(procs, procs_lock)
+        while outstanding:
+            results.get()
+            outstanding -= 1
+        if failed is not None:
+            raise failed
+    finally:
+        _kill_running(procs, procs_lock)
+        for thread in threads:
+            thread.join(timeout=5)
+
+
+def _run_isp_plan(
+    plan: list[tuple[str, list[str], dict[str, str]]],
+    env: dict[str, str],
+) -> None:
+    if len(plan) == 1:
+        label, cmd, overlay = plan[0]
+        child = dict(env)
+        child.update(overlay)
+        _run_subprocess(cmd, child, label)
+        return
+    chunks, merge = plan[:-1], plan[-1]
+    devices = []
+    for _label, _cmd, overlay in chunks:
+        device = overlay.get("CUDA_VISIBLE_DEVICES")
+        if device and device not in devices:
+            devices.append(device)
+    width = len(devices) or 1
+    shown = ", ".join(devices) if devices else "no GPU id"
+    print(
+        f"Parallel ISP: {len(chunks)} processes, {width} at a time ({shown}).",
+        flush=True,
+    )
+    _run_bounded_commands(chunks, env, width)
+    label, cmd, overlay = merge
+    child = dict(env)
+    child.update(overlay)
+    _run_subprocess(cmd, child, label)
 
 
 def _ortholog_approval_stop_message(tokenized_dir: Path) -> str | None:
@@ -538,25 +833,15 @@ def main() -> None:
         write_yaml(isp_cfg_path, isp_cfg)
 
         if not args.skip_isp:
-            nproc = os.environ.get("ISP_NUM_GPUS", "1")
             env = os.environ.copy()
             env["ISP_CONFIG"] = str(isp_cfg_path)
-            _run_subprocess(
-                [
-                    "accelerate",
-                    "launch",
-                    "--num_processes",
-                    str(nproc),
-                    str(ROOT / "run_isp.py"),
-                    "--config",
-                    str(isp_cfg_path),
-                    "--no-output-time-subdir",
-                    "--no-output-date-subdir",
-                    "--skip-isp-umap",
-                ],
-                env,
-                "ISP",
+            plan = isp_stage_plan(
+                pipeline,
+                isp_cfg,
+                isp_cfg_path,
+                Path(resolved["pipeline_run_dir"]),
             )
+            _run_isp_plan(plan, env)
         else:
             print("Skipping ISP (--skip-isp).")
 

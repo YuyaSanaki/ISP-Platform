@@ -14,7 +14,10 @@ Speed on DGX / large GPUs:
   - Imports apply TF32-friendly matmul settings (see in_silico_perturber._configure_cuda_performance).
   - Tune forward_batch_size in config until just below OOM.
   - Optional: GENEFORMER_TORCH_COMPILE=1 for torch.compile (PyTorch 2+).
-  - Multi-GPU: accelerate launch --num_processes <ngpu> run_isp.py [--config ...]
+  - Multi-GPU inside one launch: accelerate launch --num_processes <ngpu> run_isp.py [--config ...]
+  - Parallel mode (opt-in, one process per chunk): --chunk-id / --chunk-count, then core/run_isp_merge.py.
+    The default, with both unset, is still a single process that writes stats itself.
+    Chunks share a folder via --output-subdir, or by turning the time subfolder off.
 """
 from __future__ import annotations
 
@@ -45,6 +48,16 @@ from geneformer.species_context import (
     species_from_config,
 )
 
+from isp_parallel import (
+    chunk_config_sha256,
+    chunk_shares_output_folder,
+    chunk_tag,
+    clear_chunk_outputs,
+    parse_chunk_spec,
+    reject_parallel_mode,
+    write_chunk_marker,
+    yaml_chunk_pair,
+)
 from run_pipeline_log import format_isp_run_banner, install_rotating_stdio_tee
 
 
@@ -197,10 +210,13 @@ def _write_run_provenance(
     cli_nproc: int | None,
     input_fingerprints: dict[str, Any] | None = None,
     legacy_padding_mean: bool = False,
+    config_name: str = "isp_config_used.yaml",
+    metadata_name: str = "isp_run_metadata.yaml",
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Copy the ISP YAML and record metadata next to dated outputs (reproducibility)."""
     run_root.mkdir(parents=True, exist_ok=True)
-    dest_cfg = run_root / "isp_config_used.yaml"
+    dest_cfg = run_root / config_name
     shutil.copy2(config_path, dest_cfg)
 
     meta: dict[str, Any] = {
@@ -242,14 +258,20 @@ def _write_run_provenance(
     from run_provenance import environment_versions
 
     meta["environment"] = environment_versions()
+    if extra:
+        meta.update(extra)
 
-    with open(run_root / "isp_run_metadata.yaml", "w", encoding="utf-8") as f:
+    with open(run_root / metadata_name, "w", encoding="utf-8") as f:
         yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
 
 
-def _merge_isp_run_metadata(run_root: Path, updates: dict[str, Any]) -> None:
-    """Append keys to isp_run_metadata.yaml if it exists (e.g. finished_at_utc)."""
-    path = run_root / "isp_run_metadata.yaml"
+def _merge_isp_run_metadata(
+    run_root: Path,
+    updates: dict[str, Any],
+    metadata_name: str = "isp_run_metadata.yaml",
+) -> None:
+    """Append keys to the run metadata file if it exists (e.g. finished_at_utc)."""
+    path = run_root / metadata_name
     if not path.is_file():
         return
     with open(path, encoding="utf-8") as f:
@@ -259,6 +281,156 @@ def _merge_isp_run_metadata(run_root: Path, updates: dict[str, Any]) -> None:
     meta.update(updates)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(meta, f, default_flow_style=False, sort_keys=False)
+
+
+def resolve_forward_batch_size_setting(cfg: Mapping[str, Any], cli_value: Any, backend: Any) -> tuple[Any, str]:
+    """CLI, then YAML, then env, then the species default. Returns the coerced value and its source."""
+    if cli_value is not None:
+        chosen: Any = cli_value
+        source = "cli"
+    else:
+        rt_fb = _deep_get(cfg, "runtime", "forward_batch_size")
+        if rt_fb is not None:
+            chosen = rt_fb
+            source = "yaml"
+        elif os.environ.get("ISP_FORWARD_BATCH_SIZE"):
+            chosen = os.environ["ISP_FORWARD_BATCH_SIZE"]
+            source = "env"
+        else:
+            chosen = default_isp_forward_batch_size(backend.max_input_size)
+            source = "species_default"
+    species_default = default_isp_forward_batch_size(backend.max_input_size)
+    return coerce_batch_size(chosen, default=species_default), source
+
+
+def resolve_shared_run_dir(
+    cfg: Mapping[str, Any],
+    *,
+    output_date: str | None,
+    output_subdir: str | None,
+    no_output_date_subdir: bool,
+) -> Path:
+    """Folder shared by every chunk. Requires paths.output_root and one output subdir."""
+    paths = cfg.get("paths") or {}
+    output_root = paths.get("output_root")
+    if not output_root:
+        raise ValueError(
+            "Parallel ISP needs paths.output_root so every chunk writes the same run folder."
+        )
+    subdir = _resolve_output_subdir(output_subdir, os.environ.get("ISP_OUTPUT_SUBDIR"), paths)
+    if not subdir:
+        raise ValueError(
+            "Parallel ISP needs one shared run folder. Pass --output-subdir NAME "
+            "(or ISP_OUTPUT_SUBDIR, or paths.output_subdir)."
+        )
+    root = Path(output_root)
+    if _want_date_subdir(paths, os.environ.get("ISP_OUTPUT_DATE_SUBDIR"), no_output_date_subdir):
+        date_used = (output_date or os.environ.get("ISP_OUTPUT_DATE") or datetime.now().strftime("%Y%m%d")).strip()
+        if len(date_used) != 8 or not date_used.isdigit():
+            raise ValueError(
+                "output date must be YYYYMMDD (8 digits). "
+                "Set --output-date, ISP_OUTPUT_DATE, or use default today."
+            )
+        root = root / date_used
+    return root / subdir
+
+
+def run_stats_and_downstream(
+    cfg: dict[str, Any],
+    *,
+    stats_mode: str,
+    genes_to_perturb_list: list,
+    combos: int,
+    anchor_gene: Any,
+    state_key: str,
+    start_state: str,
+    end_state: str,
+    alt_state: list,
+    backend: Any,
+    isp_dir: str,
+    stats_out: str,
+    output_prefix: str,
+    run_root: Path | None,
+    perturb_gene_labels: dict[str, str],
+    skip_analysis: bool,
+    skip_isp_umap: bool,
+) -> None:
+    """Statistics, figures, targeted UMAP and rank enrichment. One process, after all pickles exist."""
+    print("Perturbation complete. Generating stats...")
+    ispstats = InSilicoPerturberStats(
+        mode=stats_mode,
+        genes_perturbed=("all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list),
+        combos=combos,
+        anchor_gene=anchor_gene,
+        cell_states_to_model={
+            "state_key": state_key,
+            "start_state": start_state,
+            "goal_state": end_state,
+            "alt_states": alt_state,
+        },
+        **isp_stats_dictionary_kwargs(backend),
+    )
+
+    stats_dir = _ensure_dir_suffix(str(stats_out))
+    os.makedirs(stats_dir, exist_ok=True)
+
+    ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
+    print("Stats generation complete. Check the parquet file.")
+
+    stats_parent = Path(stats_dir.rstrip(os.sep))
+    analysis_cfg = cfg.get("analysis") or {}
+    run_figures = analysis_cfg.get("enabled", True) and not skip_analysis
+    if run_figures:
+        from isp_analysis import run_isp_figure_analysis
+
+        parquet_file = os.path.join(stats_dir.rstrip(os.sep), f"{output_prefix}.parquet")
+        figures_dir = stats_parent.parent / "figures"
+        figures_dir.mkdir(parents=True, exist_ok=True)
+        print("Running ISP figure analysis (isp_analysis.py)...")
+        isp_max_ncells = (cfg.get("isp") or {}).get("max_ncells")
+        try:
+            isp_max_ncells = int(isp_max_ncells) if isp_max_ncells is not None else None
+        except (TypeError, ValueError):
+            isp_max_ncells = None
+        run_isp_figure_analysis(
+            parquet_file,
+            figures_dir,
+            stats_parent,
+            label_start=start_state,
+            label_end=end_state,
+            n_isp_cells=isp_max_ncells,
+        )
+        print(f"Figures directory: {figures_dir}")
+
+    if (
+        not skip_isp_umap
+        and genes_to_perturb_list
+        and (cfg.get("umap") or {}).get("enabled", True)
+    ):
+        from run_isp_umap import run_isp_umap_for_targeted_genes
+
+        umap_root = (run_root if run_root is not None else stats_parent.parent) / "isp_umap"
+        print(f"Running ISP UMAP for {len(genes_to_perturb_list)} targeted gene(s)...")
+        umap_dirs = run_isp_umap_for_targeted_genes(
+            cfg,
+            genes_to_perturb_list,
+            gene_labels=perturb_gene_labels,
+            output_root=umap_root,
+        )
+        print(f"ISP UMAP outputs: {umap_dirs[0].parent if umap_dirs else umap_root}")
+
+    if pps.rank_enrichment_enabled(cfg):
+        import run_isp_rank_enrichment
+
+        print("Running rank enrichment (postprocess.rank_enrichment)...")
+        try:
+            run_isp_rank_enrichment.run(
+                run_root if run_root is not None else stats_parent.parent,
+                pps.rank_enrichment_settings(cfg),
+                isp_config=cfg,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARNING: rank enrichment failed: {exc}", flush=True)
 
 
 def main() -> None:
@@ -282,6 +454,20 @@ def main() -> None:
         type=int,
         default=None,
         help="Override config runtime.nproc.",
+    )
+    p.add_argument(
+        "--chunk-id",
+        type=int,
+        default=None,
+        help="Parallel mode: this process's chunk index, from 0 through chunk-count - 1. "
+        "Omit both chunk flags for the default single-process run.",
+    )
+    p.add_argument(
+        "--chunk-count",
+        type=int,
+        default=None,
+        help="Parallel mode: how many chunks split the start-state cells. "
+        "Omit both chunk flags for the default single-process run.",
     )
     p.add_argument(
         "--output-date",
@@ -319,6 +505,21 @@ def main() -> None:
     args = p.parse_args()
 
     cfg = pps.apply_postprocess_args(load_isp_config(args.config), args)
+    yaml_chunk_id, yaml_chunk_count = yaml_chunk_pair(cfg)
+    chunk = parse_chunk_spec(
+        args.chunk_id,
+        args.chunk_count,
+        os.environ.get("ISP_CHUNK_ID"),
+        os.environ.get("ISP_CHUNK_COUNT"),
+        yaml_chunk_id,
+        yaml_chunk_count,
+    )
+    n_processes = int(getattr(accelerator, "num_processes", 1) or 1)
+    if chunk is not None and n_processes > 1:
+        raise ValueError(
+            "Parallel chunks are separate processes. Do not combine --chunk-id with "
+            "accelerate launch --num_processes greater than 1."
+        )
 
     species = species_from_config(cfg)
     backend = backend_from_config(cfg)
@@ -331,21 +532,14 @@ def main() -> None:
             f"(from species backend {species.get('model')})"
         )
 
-    forward_batch_size = args.forward_batch_size
-    if forward_batch_size is None:
-        rt_fb = _deep_get(cfg, "runtime", "forward_batch_size")
-        if rt_fb is not None:
-            forward_batch_size = rt_fb
-        elif os.environ.get("ISP_FORWARD_BATCH_SIZE"):
-            forward_batch_size = os.environ["ISP_FORWARD_BATCH_SIZE"]
-        else:
-            forward_batch_size = default_isp_forward_batch_size(backend.max_input_size)
-            print(
-                f"  NOTE: runtime.forward_batch_size default → {forward_batch_size} "
-                f"(from backend max_input_size {backend.max_input_size})"
-            )
-    species_default = default_isp_forward_batch_size(backend.max_input_size)
-    forward_batch_size = coerce_batch_size(forward_batch_size, default=species_default)
+    forward_batch_size, batch_source = resolve_forward_batch_size_setting(
+        cfg, args.forward_batch_size, backend
+    )
+    if batch_source == "species_default":
+        print(
+            f"  NOTE: runtime.forward_batch_size default → {forward_batch_size} "
+            f"(from backend max_input_size {backend.max_input_size})"
+        )
     nproc = args.nproc
     if nproc is None:
         nproc = int(_deep_get(cfg, "runtime", "nproc", default=os.environ.get("ISP_NPROC", "8")))
@@ -384,6 +578,13 @@ def main() -> None:
             os.environ.get("ISP_OUTPUT_TIME_SUBDIR"),
             args.no_output_time_subdir,
         )
+        if chunk is not None and not chunk_shares_output_folder(explicit_subdir, use_auto_time):
+            raise ValueError(
+                "Parallel ISP needs one shared run folder. Pass --output-subdir NAME "
+                "(or ISP_OUTPUT_SUBDIR, or paths.output_subdir) so every chunk writes "
+                "the same directory instead of its own time folder. "
+                "A run that already disables the time subfolder can omit the name."
+            )
         run_folder = ""
         if explicit_subdir:
             run_folder = explicit_subdir
@@ -462,6 +663,12 @@ def main() -> None:
     perturb_rank_direct_shift = isp_cfg.get("perturb_rank_direct_shift")
     filter_data = isp_cfg.get("filter_data")
     legacy_padding_mean = isp_cfg.get("legacy_padding_mean")
+    if chunk is not None:
+        reject_parallel_mode(
+            genes_to_perturb=list(pert.get("genes_to_perturb") or []),
+            combos=combos,
+            anchor_gene=anchor_gene,
+        )
 
     st = cfg.get("stats") or {}
     stats_mode = st.get("mode", "goal_state_shift")
@@ -479,7 +686,16 @@ def main() -> None:
         log_dir = run_root
     else:
         log_dir = Path(isp_out.rstrip(os.sep)).parent
-    log_path = log_dir / "isp_run.log"
+    if chunk is None:
+        log_name = "isp_run.log"
+        config_copy_name = "isp_config_used.yaml"
+        metadata_name = "isp_run_metadata.yaml"
+    else:
+        tag = chunk_tag(chunk[0], chunk[1])
+        log_name = f"isp_run_{tag}.log"
+        config_copy_name = f"isp_config_used_{tag}.yaml"
+        metadata_name = f"isp_run_metadata_{tag}.yaml"
+    log_path = log_dir / log_name
 
     input_fps: dict[str, Any] | None = None
     if accelerator.is_main_process:
@@ -495,6 +711,13 @@ def main() -> None:
         if os.environ.get("ISP_FINGERPRINT_FAST"):
             is_fast = os.environ.get("ISP_FINGERPRINT_FAST").lower() in ("1", "true", "yes")
 
+        if enable_fp and chunk is not None:
+            print(
+                "Parallel chunk: skipping input fingerprints "
+                "(single-process runs still fingerprint).",
+                flush=True,
+            )
+            enable_fp = False
         if enable_fp:
             from run_input_fingerprint import fingerprint_isp_inputs
 
@@ -529,6 +752,11 @@ def main() -> None:
                 "nproc": nproc,
                 "skip_analysis": args.skip_analysis,
                 "run_folder": banner_run_folder,
+                "parallel_chunk": (
+                    "off (single process)"
+                    if chunk is None
+                    else f"{chunk[0]} of {chunk[1]} (stats after run_isp_merge.py)"
+                ),
             },
         )
         print(banner, end="")
@@ -565,6 +793,7 @@ def main() -> None:
         model_input_size=int(backend.max_input_size),
         legacy_padding_mean=legacy_padding_mean,
         max_ncells_per_state=max_ncells_per_state,
+        cell_shard=chunk,
     )
     if isp.legacy_padding_mean:
         print("  NOTE: legacy_padding_mean on: group goal-state means include padding "
@@ -588,103 +817,92 @@ def main() -> None:
             args.nproc,
             input_fingerprints=input_fps,
             legacy_padding_mean=isp.legacy_padding_mean,
+            config_name=config_copy_name,
+            metadata_name=metadata_name,
+            extra=(
+                None
+                if chunk is None
+                else {"parallel_chunk": {"id": chunk[0], "count": chunk[1]}}
+            ),
         )
         print(
-            f"  → Provenance: {run_root / 'isp_config_used.yaml'} "
-            f"+ isp_run_metadata.yaml"
+            f"  → Provenance: {run_root / config_copy_name} "
+            f"+ {metadata_name}"
         )
 
     tracker_root: Path | None = run_root
     main_pipeline_ok = False
 
+    marker_dir = (
+        (run_root if run_root is not None else Path(str(isp_out).rstrip(os.sep)).parent) / "isp_chunks"
+    )
     try:
+        if chunk is not None:
+            removed = clear_chunk_outputs(
+                Path(str(isp_out).rstrip(os.sep)),
+                marker_dir,
+                perturb_type=select_perturb_type,
+                output_prefix=output_prefix,
+                chunk_id=chunk[0],
+                chunk_count=chunk[1],
+            )
+            if removed:
+                print(f"Removed previous files for this chunk: {removed}", flush=True)
         print("Starting perturbation...")
         isp.perturb_data(model_dir, dataset_name, isp_dir, output_prefix)
 
         # Wait for all processes to finish perturbing
         accelerator.wait_for_everyone()
 
-        # Only run analysis on the main process to avoid race conditions
-        if accelerator.is_main_process:
-            print("Perturbation complete. Generating stats...")
-            # Match token/symbol dicts to the model backend (human ENSG vs mouse ENSMUSG).
-            ispstats = InSilicoPerturberStats(
-                mode=stats_mode,
-                genes_perturbed=(
-                    "all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list
-                ),
+        if chunk is not None:
+            if isp.parallel_n_cells is None or not isp.written_pickle_names:
+                raise RuntimeError(
+                    f"Parallel chunk {chunk[0]} of {chunk[1]} finished without cell counts or pickle files."
+                )
+            marker_path = write_chunk_marker(
+                marker_dir,
+                {
+                    "version": 1,
+                    "chunk_id": chunk[0],
+                    "chunk_count": chunk[1],
+                    "n_cells": int(isp.parallel_n_cells),
+                    "n_cells_before_shard": int(isp.parallel_n_cells_before_shard),
+                    "config_sha256": chunk_config_sha256(cfg, forward_batch_size),
+                    "centroid_sha256": isp.centroid_sha256,
+                    "centroid_l2": isp.centroid_l2 or {},
+                    "output_prefix": output_prefix,
+                    "perturb_type": select_perturb_type,
+                    "pickle_files": list(isp.written_pickle_names),
+                },
+            )
+            print(
+                f"Chunk {chunk[0]} of {chunk[1]} wrote {marker_path}. "
+                "Stats run with run_isp_merge.py after every chunk finishes.",
+                flush=True,
+            )
+            main_pipeline_ok = True
+        elif accelerator.is_main_process:
+            # Single-process ISP, and the main rank of an accelerate launch, write stats here.
+            # A parallel chunk does not. Combining chunk tables would change the null pool and FDR.
+            run_stats_and_downstream(
+                cfg,
+                stats_mode=stats_mode,
+                genes_to_perturb_list=genes_to_perturb_list,
                 combos=combos,
                 anchor_gene=anchor_gene,
-                cell_states_to_model={
-                    "state_key": state_key,
-                    "start_state": start_state,
-                    "goal_state": end_state,
-                    "alt_states": alt_state,
-                },
-                **isp_stats_dictionary_kwargs(backend),
+                state_key=state_key,
+                start_state=start_state,
+                end_state=end_state,
+                alt_state=alt_state,
+                backend=backend,
+                isp_dir=isp_dir,
+                stats_out=str(stats_out),
+                output_prefix=output_prefix,
+                run_root=run_root,
+                perturb_gene_labels=perturb_gene_labels,
+                skip_analysis=args.skip_analysis,
+                skip_isp_umap=args.skip_isp_umap,
             )
-
-            stats_dir = _ensure_dir_suffix(str(stats_out))
-            os.makedirs(stats_dir, exist_ok=True)
-
-            ispstats.get_stats(isp_dir, None, stats_dir, output_prefix)
-            print("Stats generation complete. Check the parquet file.")
-
-            stats_parent = Path(stats_dir.rstrip(os.sep))
-            analysis_cfg = cfg.get("analysis") or {}
-            run_figures = analysis_cfg.get("enabled", True) and not args.skip_analysis
-            if run_figures:
-                from isp_analysis import run_isp_figure_analysis
-
-                parquet_file = os.path.join(stats_dir.rstrip(os.sep), f"{output_prefix}.parquet")
-                figures_dir = stats_parent.parent / "figures"
-                figures_dir.mkdir(parents=True, exist_ok=True)
-                print("Running ISP figure analysis (isp_analysis.py)...")
-                isp_max_ncells = (cfg.get("isp") or {}).get("max_ncells")
-                try:
-                    isp_max_ncells = int(isp_max_ncells) if isp_max_ncells is not None else None
-                except (TypeError, ValueError):
-                    isp_max_ncells = None
-                run_isp_figure_analysis(
-                    parquet_file,
-                    figures_dir,
-                    stats_parent,
-                    label_start=start_state,
-                    label_end=end_state,
-                    n_isp_cells=isp_max_ncells,
-                )
-                print(f"Figures directory: {figures_dir}")
-
-            if (
-                not args.skip_isp_umap
-                and genes_to_perturb_list
-                and (cfg.get("umap") or {}).get("enabled", True)
-            ):
-                from run_isp_umap import run_isp_umap_for_targeted_genes
-
-                umap_root = (run_root if run_root is not None else stats_parent.parent) / "isp_umap"
-                print(f"Running ISP UMAP for {len(genes_to_perturb_list)} targeted gene(s)...")
-                umap_dirs = run_isp_umap_for_targeted_genes(
-                    cfg,
-                    genes_to_perturb_list,
-                    gene_labels=perturb_gene_labels,
-                    output_root=umap_root,
-                )
-                print(f"ISP UMAP outputs: {umap_dirs[0].parent if umap_dirs else umap_root}")
-
-            if pps.rank_enrichment_enabled(cfg):
-                import run_isp_rank_enrichment
-
-                print("Running rank enrichment (postprocess.rank_enrichment)...")
-                try:
-                    run_isp_rank_enrichment.run(
-                        run_root if run_root is not None else stats_parent.parent,
-                        pps.rank_enrichment_settings(cfg),
-                        isp_config=cfg,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    print(f"WARNING: rank enrichment failed: {exc}", flush=True)
-
             main_pipeline_ok = True
     finally:
         if accelerator.is_main_process and tracker_root is not None:
@@ -694,6 +912,7 @@ def main() -> None:
                     "finished_at_utc": datetime.now(timezone.utc).isoformat(),
                     "run_status": "completed" if main_pipeline_ok else "failed",
                 },
+                metadata_name=metadata_name,
             )
 
 

@@ -155,6 +155,16 @@ stages:
         organ_major: brain
 ```
 
+Example, genome-wide ISP on several processes (Web UI **ISP execution: Parallel**). Leave this out, or set `enabled: false`, for the single process. A gene list cannot use it. The pipeline starts one process per chunk, one per visible GPU at a time, then merges statistics into the same run folder:
+
+```yaml
+stages:
+  isp:
+    parallel:
+      enabled: true
+      chunk_count: 4
+```
+
 Example — cap ISP cells:
 
 ```yaml

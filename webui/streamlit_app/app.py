@@ -88,6 +88,9 @@ _DEFAULT_FT_LABEL_COLUMN = "state"
 # Manifest and ISP menus show the state column as "State"; the dataset column is "state".
 _STATE_COLUMN_LABEL = "State"
 _DEFAULT_MAX_CELLS = 300_000
+_ISP_EXEC_SINGLE = "Single process"
+_ISP_EXEC_PARALLEL = "Parallel"
+_DEFAULT_ISP_CHUNK_COUNT = 2
 
 
 def _normalize_n_clusters_value(value: object) -> int | str:
@@ -2758,6 +2761,17 @@ def _method_form() -> dict:
         form["genes"] = _parse_genes_to_perturb_text(
             st.session_state.get("pipeline_genes_to_perturb_text")
         )
+    if "pipeline_isp_execution" in st.session_state:
+        form["isp_parallel"] = (
+            st.session_state.get("pipeline_isp_execution") == _ISP_EXEC_PARALLEL
+        )
+    if "pipeline_isp_chunk_count" in st.session_state:
+        try:
+            form["isp_chunk_count"] = int(
+                st.session_state.get("pipeline_isp_chunk_count") or 0
+            )
+        except (TypeError, ValueError):
+            form["isp_chunk_count"] = 0
     if "pipeline_isp_start_state" in st.session_state:
         column, value = _split_isp_state_token(st.session_state.get("pipeline_isp_start_state"))
         if value:
@@ -3342,6 +3356,8 @@ def _build_patched_pipeline_yaml(
     ft_task_type: str | None = None,
     ft_label_column: str | None = None,
     runtime_max_cells: int | None = None,
+    isp_parallel_enabled: bool | None = None,
+    isp_parallel_chunk_count: int | None = None,
 ) -> str:
     """Return patched pipeline YAML text without requiring a live yaml_editor widget write."""
     cfg = _read_pipeline_yaml()
@@ -3526,6 +3542,19 @@ def _build_patched_pipeline_yaml(
             if isp_postprocess_rank_enrichment is not None:
                 post["rank_enrichment"] = bool(isp_postprocess_rank_enrichment)
 
+    if isp_parallel_enabled is not None or isp_parallel_chunk_count is not None:
+        stages = cfg.setdefault("stages", {})
+        isp_stage = stages.setdefault("isp", {})
+        parallel = isp_stage.get("parallel")
+        if not isinstance(parallel, dict):
+            parallel = {}
+            isp_stage["parallel"] = parallel
+        if isp_parallel_enabled is not None:
+            parallel["enabled"] = bool(isp_parallel_enabled)
+        if isp_parallel_chunk_count is not None:
+            count = int(isp_parallel_chunk_count)
+            parallel["chunk_count"] = count if count >= 2 else _DEFAULT_ISP_CHUNK_COUNT
+
     return yaml.dump(cfg, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
@@ -3568,6 +3597,8 @@ def _patch_pipeline_yaml(
     ft_task_type: str | None = None,
     ft_label_column: str | None = None,
     runtime_max_cells: int | None = None,
+    isp_parallel_enabled: bool | None = None,
+    isp_parallel_chunk_count: int | None = None,
 ) -> bool:
     """Patch pipeline / FT-calibrate YAML fields in the editor."""
     dumped = _build_patched_pipeline_yaml(
@@ -3608,6 +3639,8 @@ def _patch_pipeline_yaml(
         ft_task_type=ft_task_type,
         ft_label_column=ft_label_column,
         runtime_max_cells=runtime_max_cells,
+        isp_parallel_enabled=isp_parallel_enabled,
+        isp_parallel_chunk_count=isp_parallel_chunk_count,
     )
     st.session_state["yaml_editor"] = dumped
     if input_dir is not None:
@@ -3710,6 +3743,13 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
             "Enter at least one gene (e.g. the genes you perturb) or turn the gate off."
         )
 
+    _sync_ft_isp_advanced_from_yaml()
+    if st.session_state.get("pipeline_isp_execution") == _ISP_EXEC_PARALLEL:
+        if _parse_genes_to_perturb_text(st.session_state.get("pipeline_genes_to_perturb_text")):
+            return None, (
+                "Parallel ISP is for a genome-wide screen (empty gene list). "
+                "Clear **genes_to_perturb**, or set **ISP execution** back to Single process."
+            )
     if (
         _selected_ft_batch_choice() != "auto"
         and _selected_ft_batch_mode() == "micro"
@@ -3722,7 +3762,6 @@ def _prepare_pipeline_yaml_for_run(upload_dir: Path) -> tuple[str | None, str | 
             f"cells on the GPU ({micro})."
         )
 
-    _sync_ft_isp_advanced_from_yaml()
     yaml_text = _build_patched_pipeline_yaml(
         input_dir=tokenize_dir,
         output_prefix=study_name,
@@ -3844,7 +3883,27 @@ def _ortholog_overlay_tsv_for_session(raw: str | None) -> Path | None:
     return _resolve_curated_overlay_tsv(pair, curated_overlay=raw)
 
 
+def _isp_parallel_from_session() -> tuple[bool, int]:
+    enabled = st.session_state.get("pipeline_isp_execution") == _ISP_EXEC_PARALLEL
+    try:
+        count = int(st.session_state.get("pipeline_isp_chunk_count") or _DEFAULT_ISP_CHUNK_COUNT)
+    except (TypeError, ValueError):
+        count = _DEFAULT_ISP_CHUNK_COUNT
+    if count < 2:
+        count = _DEFAULT_ISP_CHUNK_COUNT
+    return enabled, count
+
+
+def _isp_parallel_kwargs_from_session() -> dict:
+    enabled, count = _isp_parallel_from_session()
+    return {
+        "isp_parallel_enabled": enabled,
+        "isp_parallel_chunk_count": count,
+    }
+
+
 def _ft_isp_advanced_kwargs_from_session() -> dict:
+    enabled, count = _isp_parallel_from_session()
     return {
         "ft_epochs": st.session_state.get("pipeline_ft_epochs"),
         "ft_learning_rate": st.session_state.get("pipeline_ft_learning_rate"),
@@ -3874,6 +3933,8 @@ def _ft_isp_advanced_kwargs_from_session() -> dict:
         "pert_genes_to_perturb": _parse_genes_to_perturb_text(
             st.session_state.get("pipeline_genes_to_perturb_text")
         ),
+        "isp_parallel_enabled": enabled,
+        "isp_parallel_chunk_count": count,
     }
 
 
@@ -3890,6 +3951,7 @@ def _apply_perturbation_controls_to_yaml() -> None:
         ),
         isp_start_state=_split_isp_state_token(st.session_state.get("pipeline_isp_start_state"))[1],
         isp_end_state=_split_isp_state_token(st.session_state.get("pipeline_isp_end_state"))[1],
+        **_isp_parallel_kwargs_from_session(),
     )
 
 
@@ -3992,6 +4054,21 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
         "pipeline_pert_state_key", str(state_key or _DEFAULT_STATE_KEY)
     )
     st.session_state.setdefault("pipeline_genes_to_perturb_text", genes_text)
+    parallel = isp_stage.get("parallel") if isinstance(isp_stage, dict) else None
+    if not isinstance(parallel, dict):
+        parallel = {}
+    enabled = bool(parallel.get("enabled"))
+    try:
+        chunk_count = int(parallel.get("chunk_count") or _DEFAULT_ISP_CHUNK_COUNT)
+    except (TypeError, ValueError):
+        chunk_count = _DEFAULT_ISP_CHUNK_COUNT
+    if chunk_count < 2:
+        chunk_count = _DEFAULT_ISP_CHUNK_COUNT
+    st.session_state.setdefault(
+        "pipeline_isp_execution",
+        _ISP_EXEC_PARALLEL if enabled else _ISP_EXEC_SINGLE,
+    )
+    st.session_state.setdefault("pipeline_isp_chunk_count", chunk_count)
 
 
 def _render_perturbation_controls() -> None:
@@ -4021,6 +4098,42 @@ def _render_perturbation_controls() -> None:
         ),
         placeholder="Igfbp2\n# or leave empty for all genes",
     )
+    st.radio(
+        "ISP execution",
+        [_ISP_EXEC_SINGLE, _ISP_EXEC_PARALLEL],
+        horizontal=True,
+        key="pipeline_isp_execution",
+        on_change=_apply_perturbation_controls_to_yaml,
+        help=(
+            "Single process is the default and writes statistics itself. "
+            "Parallel splits a genome-wide screen across independent processes. "
+            "A gene list cannot use Parallel."
+        ),
+    )
+    if st.session_state.get("pipeline_isp_execution") == _ISP_EXEC_PARALLEL:
+        if _parse_genes_to_perturb_text(st.session_state.get("pipeline_genes_to_perturb_text")):
+            st.warning(
+                "Parallel ISP is genome-wide. Clear the gene list, "
+                "or switch ISP execution back to Single process."
+            )
+        st.number_input(
+            "chunk_count",
+            min_value=2,
+            max_value=64,
+            step=1,
+            key="pipeline_isp_chunk_count",
+            on_change=_apply_perturbation_controls_to_yaml,
+            help=(
+                "How many processes share the start cells "
+                "(`stages.isp.parallel.chunk_count`). At least 2."
+            ),
+        )
+        st.caption(
+            "Start cells are split across this many processes. "
+            "One process runs on each visible GPU at the same time, and further chunks wait. "
+            "Statistics are written once into this pipeline folder. "
+            "The Web UI container only sees the GPUs Compose assigns (one, unless you change that)."
+        )
 
 
 def _render_ft_batch_controls() -> None:
@@ -4350,6 +4463,7 @@ def _render_ft_isp_advanced_controls(upload_dir: Path | None = None) -> None:
 | **perturbation.type** | delete / overexpress |
 | **ISP start / goal** | Any Manifest value. The column of those two values is `state_key` |
 | **genes_to_perturb** | Empty = all genes; list = targeted ISP |
+| **ISP execution** | Single process (default) or Parallel. Parallel is genome-wide only and writes `stages.isp.parallel` |
 | **task_type / label_column** | What the fine-tune classifier learns |
 | **tokenize max_cells** | Cells per tokenized shard (RAM). All shards are used. Cross-species: also cells kept per sample file |
 | **max_ncells** | How many cells ISP uses. Lower ≈ faster; **results change**. |
