@@ -142,6 +142,19 @@ def stride_cell_indices(n_cells: int, shard_index: int, shard_count: int) -> lis
     return [i for i in range(n_cells) if i % shard_count == shard_index]
 
 
+def apply_backend_input_size(cfg: dict, max_input_size: int):
+    """Write the species backend window into ``cfg`` before the chunk hash.
+
+    ``run_isp.py`` does this before it writes ``config_sha256``. Merge must do
+    the same. A YAML that omits ``model.max_input_size`` would otherwise hash
+    as null on the merge and never match the markers.
+    """
+    model = cfg.setdefault("model", {})
+    previous = model.get("max_input_size")
+    model["max_input_size"] = int(max_input_size)
+    return previous
+
+
 def chunk_config_sha256(cfg: Mapping[str, Any], forward_batch_size: Any) -> str:
     """Hash the settings that change perturbation outputs. Chunk id is not included."""
     paths = cfg.get("paths") or {}

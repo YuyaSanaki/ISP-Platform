@@ -8,6 +8,7 @@ set -euo pipefail
 H100_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${H100_DIR}/env.sh"
+h100_install_fail_trace
 h100_activate
 
 : "${ISP_CONFIG:?Set ISP_CONFIG to the same host YAML the chunks used.}"

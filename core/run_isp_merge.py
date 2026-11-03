@@ -18,7 +18,13 @@ from pathlib import Path
 import postprocess_switch as pps
 from geneformer.in_silico_perturber import check_perturb_type_implemented
 from geneformer.species_context import backend_from_config, species_from_config
-from isp_parallel import ChunkMergeError, chunk_config_sha256, validate_parallel_run, yaml_chunk_pair
+from isp_parallel import (
+    ChunkMergeError,
+    apply_backend_input_size,
+    chunk_config_sha256,
+    validate_parallel_run,
+    yaml_chunk_pair,
+)
 from run_isp import (
     load_isp_config,
     resolve_forward_batch_size_setting,
@@ -65,8 +71,15 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = pps.apply_postprocess_args(load_isp_config(args.config), args)
-    species_from_config(cfg)
+    species = species_from_config(cfg)
     backend = backend_from_config(cfg)
+    yaml_mis = apply_backend_input_size(cfg, backend.max_input_size)
+    if yaml_mis is not None and int(yaml_mis) != int(backend.max_input_size):
+        print(
+            f"  NOTE: model.max_input_size {yaml_mis} → {backend.max_input_size} "
+            f"(from species backend {species.get('model')})",
+            flush=True,
+        )
     forward_batch_size, _source = resolve_forward_batch_size_setting(
         cfg, args.forward_batch_size, backend
     )
@@ -85,8 +98,12 @@ def main() -> None:
     markers = validate_parallel_run(isp_dir, run_root / "isp_chunks", count)
     expected = chunk_config_sha256(cfg, forward_batch_size)
     if any(marker.get("config_sha256") != expected for marker in markers):
+        seen = sorted({str(marker.get("config_sha256")) for marker in markers})
         raise ChunkMergeError(
             "This config does not match the chunk markers. "
+            f"Markers have config_sha256 {seen}, this process computed {expected} "
+            f"(forward_batch_size={forward_batch_size}, "
+            f"model.max_input_size={cfg.get('model', {}).get('max_input_size')}). "
             "Use the same YAML and the same forward batch size the chunks used."
         )
 
