@@ -13,7 +13,7 @@ for _p in (ROOT / "core", ROOT / "contracts"):
 
 try:
     from geneformer.backends.registry import get_backend
-    from run_isp import isp_stats_dictionary_kwargs
+    from run_isp import genes_perturbed_for_stats, isp_stats_dictionary_kwargs
 
     DEPS_MISSING = None
 except Exception as exc:  # pragma: no cover
@@ -22,6 +22,12 @@ except Exception as exc:  # pragma: no cover
 
 @unittest.skipIf(DEPS_MISSING, f"deps unavailable: {DEPS_MISSING}")
 class TestIspStatsDictionaryKwargs(unittest.TestCase):
+    def test_targeted_list_stats_modes(self):
+        genes = ["ENSG1", "ENSG2"]
+        self.assertEqual(genes_perturbed_for_stats(genes, False), genes)
+        self.assertEqual(genes_perturbed_for_stats(genes, True), "all")
+        self.assertEqual(genes_perturbed_for_stats([], True), "all")
+
     def test_mouse_backend_uses_mouse_dicts(self):
         backend = get_backend(
             {"model_organism": "mouse", "model": "mouse_geneformer", "mouse_variant": "base"}

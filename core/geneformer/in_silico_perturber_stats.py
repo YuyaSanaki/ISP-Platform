@@ -100,8 +100,15 @@ def get_gene_list(dict_list,mode):
     gene_list.sort()
     return gene_list
 
-def token_tuple_to_ensembl_ids(token_tuple, gene_token_id_dict):
-    return tuple([gene_token_id_dict.get(i, np.nan) for i in token_tuple])
+def token_tuple_to_ensembl_ids(token_or_tuple, gene_token_id_dict):
+    """Map a perturbation key to Ensembl IDs without assuming group mode.
+
+    Grouped perturbations are stored as tuples, whereas a targeted list scored
+    one gene at a time is stored as integer keys.
+    """
+    if isinstance(token_or_tuple, tuple):
+        return tuple(gene_token_id_dict.get(i, np.nan) for i in token_or_tuple)
+    return gene_token_id_dict.get(token_or_tuple, np.nan)
 
 def n_detections(token, dict_list, mode, anchor_token):
     cos_sim_megalist = []

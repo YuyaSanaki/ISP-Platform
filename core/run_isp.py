@@ -143,6 +143,13 @@ def isp_stats_dictionary_kwargs(backend: Any) -> dict[str, Any]:
     return kwargs
 
 
+def genes_perturbed_for_stats(genes: list, score_each_gene: bool) -> str | list:
+    """Select individual-gene or grouped-list statistics semantics."""
+    if not genes or score_each_gene:
+        return "all"
+    return genes
+
+
 def _broadcast_run_folder_from_main(accelerator: Any, value_on_main: str) -> str:
     """
     Replicate the run folder name from the global main process on all ranks.
@@ -358,9 +365,12 @@ def run_stats_and_downstream(
 ) -> None:
     """Statistics, figures, targeted UMAP and rank enrichment. One process, after all pickles exist."""
     print("Perturbation complete. Generating stats...")
+    score_each_gene = bool((cfg.get("isp") or {}).get("score_each_gene", False))
     ispstats = InSilicoPerturberStats(
         mode=stats_mode,
-        genes_perturbed=("all" if len(genes_to_perturb_list) == 0 else genes_to_perturb_list),
+        genes_perturbed=genes_perturbed_for_stats(
+            genes_to_perturb_list, score_each_gene
+        ),
         combos=combos,
         anchor_gene=anchor_gene,
         cell_states_to_model={

@@ -14,7 +14,10 @@ for _p in (ROOT / "core", ROOT / "contracts"):
 try:
     import pandas as pd
 
-    from geneformer.in_silico_perturber_stats import isp_stats_to_goal_state
+    from geneformer.in_silico_perturber_stats import (
+        isp_stats_to_goal_state,
+        token_tuple_to_ensembl_ids,
+    )
 
     DEPS_MISSING = None
 except Exception as exc:  # pragma: no cover
@@ -40,6 +43,13 @@ def _genome_wide_input(n_alt):
 
 @unittest.skipIf(DEPS_MISSING is not None, f"deps missing: {DEPS_MISSING}")
 class TestGoalStateStatsAltStates(unittest.TestCase):
+    def test_ensembl_conversion_supports_individual_and_group_keys(self):
+        mapping = {10: "E10", 11: "E11"}
+        self.assertEqual(token_tuple_to_ensembl_ids(10, mapping), "E10")
+        self.assertEqual(
+            token_tuple_to_ensembl_ids((10, 11), mapping), ("E10", "E11")
+        )
+
     def test_genome_wide_without_alt_states(self):
         cos_sims_df, dict_list = _genome_wide_input(0)
         df = isp_stats_to_goal_state(cos_sims_df, dict_list, _states([]), "all")
