@@ -91,6 +91,12 @@ _DEFAULT_MAX_CELLS = 300_000
 _ISP_EXEC_SINGLE = "Single process"
 _ISP_EXEC_PARALLEL = "Parallel"
 _DEFAULT_ISP_CHUNK_COUNT = 2
+_ISP_GENE_EACH = "each"
+_ISP_GENE_GROUP = "group"
+_ISP_GENE_MODE_LABELS = {
+    _ISP_GENE_EACH: "Each gene separately",
+    _ISP_GENE_GROUP: "All listed genes together",
+}
 
 
 def _normalize_n_clusters_value(value: object) -> int | str:
@@ -3353,6 +3359,7 @@ def _build_patched_pipeline_yaml(
     pert_type: str | None = None,
     pert_state_key: str | None = None,
     pert_genes_to_perturb: list[str] | None = None,
+    isp_score_each_gene: bool | None = None,
     ft_task_type: str | None = None,
     ft_label_column: str | None = None,
     runtime_max_cells: int | None = None,
@@ -3384,6 +3391,10 @@ def _build_patched_pipeline_yaml(
             cfg["perturbation"]["state_key"] = str(pert_state_key).strip() or _DEFAULT_STATE_KEY
         if pert_genes_to_perturb is not None:
             cfg["perturbation"]["genes_to_perturb"] = list(pert_genes_to_perturb)
+    if isp_score_each_gene is not None:
+        stages = cfg.setdefault("stages", {})
+        isp_block = stages.setdefault("isp", {}).setdefault("isp", {})
+        isp_block["score_each_gene"] = bool(isp_score_each_gene)
     if (
         model_organism is not None
         or model is not None
@@ -3594,6 +3605,7 @@ def _patch_pipeline_yaml(
     pert_type: str | None = None,
     pert_state_key: str | None = None,
     pert_genes_to_perturb: list[str] | None = None,
+    isp_score_each_gene: bool | None = None,
     ft_task_type: str | None = None,
     ft_label_column: str | None = None,
     runtime_max_cells: int | None = None,
@@ -3636,6 +3648,7 @@ def _patch_pipeline_yaml(
         pert_type=pert_type,
         pert_state_key=pert_state_key,
         pert_genes_to_perturb=pert_genes_to_perturb,
+        isp_score_each_gene=isp_score_each_gene,
         ft_task_type=ft_task_type,
         ft_label_column=ft_label_column,
         runtime_max_cells=runtime_max_cells,
@@ -3883,6 +3896,16 @@ def _ortholog_overlay_tsv_for_session(raw: str | None) -> Path | None:
     return _resolve_curated_overlay_tsv(pair, curated_overlay=raw)
 
 
+def _isp_score_each_gene_from_session() -> bool:
+    """True only when a gene list is scored one gene at a time."""
+    genes = _parse_genes_to_perturb_text(
+        st.session_state.get("pipeline_genes_to_perturb_text")
+    )
+    if not genes:
+        return False
+    return st.session_state.get("pipeline_isp_gene_mode") == _ISP_GENE_EACH
+
+
 def _isp_parallel_from_session() -> tuple[bool, int]:
     enabled = st.session_state.get("pipeline_isp_execution") == _ISP_EXEC_PARALLEL
     try:
@@ -3933,6 +3956,7 @@ def _ft_isp_advanced_kwargs_from_session() -> dict:
         "pert_genes_to_perturb": _parse_genes_to_perturb_text(
             st.session_state.get("pipeline_genes_to_perturb_text")
         ),
+        "isp_score_each_gene": _isp_score_each_gene_from_session(),
         "isp_parallel_enabled": enabled,
         "isp_parallel_chunk_count": count,
     }
@@ -3949,6 +3973,7 @@ def _apply_perturbation_controls_to_yaml() -> None:
         pert_genes_to_perturb=_parse_genes_to_perturb_text(
             st.session_state.get("pipeline_genes_to_perturb_text")
         ),
+        isp_score_each_gene=_isp_score_each_gene_from_session(),
         isp_start_state=_split_isp_state_token(st.session_state.get("pipeline_isp_start_state"))[1],
         isp_end_state=_split_isp_state_token(st.session_state.get("pipeline_isp_end_state"))[1],
         **_isp_parallel_kwargs_from_session(),
@@ -4054,6 +4079,13 @@ def _sync_ft_isp_advanced_from_yaml() -> None:
         "pipeline_pert_state_key", str(state_key or _DEFAULT_STATE_KEY)
     )
     st.session_state.setdefault("pipeline_genes_to_perturb_text", genes_text)
+    nested_isp = isp_stage.get("isp") if isinstance(isp_stage, dict) else None
+    if not isinstance(nested_isp, dict):
+        nested_isp = {}
+    gene_mode = (
+        _ISP_GENE_EACH if nested_isp.get("score_each_gene") is True else _ISP_GENE_GROUP
+    )
+    st.session_state.setdefault("pipeline_isp_gene_mode", gene_mode)
     parallel = isp_stage.get("parallel") if isinstance(isp_stage, dict) else None
     if not isinstance(parallel, dict):
         parallel = {}
@@ -4093,11 +4125,26 @@ def _render_perturbation_controls() -> None:
         height=90,
         on_change=_apply_perturbation_controls_to_yaml,
         help=(
-            "Symbol or Ensembl IDs. Empty list runs genome-wide ISP. "
-            "Targeted lists (e.g. Igfbp2) are needed for ISP UMAP trajectories."
+            "Symbol or Ensembl IDs. Empty list runs genome-wide ISP, one gene at a time. "
+            "A list uses the choice below."
         ),
         placeholder="Igfbp2\n# or leave empty for all genes",
     )
+    if _parse_genes_to_perturb_text(st.session_state.get("pipeline_genes_to_perturb_text")):
+        st.radio(
+            "How to perturb the gene list",
+            [_ISP_GENE_EACH, _ISP_GENE_GROUP],
+            horizontal=True,
+            key="pipeline_isp_gene_mode",
+            format_func=lambda v: _ISP_GENE_MODE_LABELS.get(v, v),
+            on_change=_apply_perturbation_controls_to_yaml,
+            help=(
+                "Each gene separately writes `stages.isp.isp.score_each_gene: true` "
+                "and scores every listed gene on its own. "
+                "All listed genes together perturbs the list as one group. "
+                "A group delete keeps only cells that contain every listed gene."
+            ),
+        )
     st.radio(
         "ISP execution",
         [_ISP_EXEC_SINGLE, _ISP_EXEC_PARALLEL],

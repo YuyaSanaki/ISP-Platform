@@ -83,6 +83,7 @@ perturbation:
 # Per-stage overrides (optional; merged onto default stage YAML templates).
 # Web UI (Pipeline E2E) writes common knobs here when you change the form:
 #   perturbation.{type,state_key,genes_to_perturb,start_state,end_state}
+#   stages.isp.isp.score_each_gene (true = each listed gene on its own; false = the list as one group)
 #   stages.finetune.finetune.{task_type,label_column}
 #   stages.finetune.training.{epochs,learning_rate,num_runs,warmup_steps,warmup_ratio}
 #   runtime.max_cells

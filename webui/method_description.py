@@ -76,6 +76,7 @@ class MethodFacts:
     isp_mode: str | None = None
     genes: tuple[str, ...] = ()
     genome_wide: bool = False
+    score_each_gene: bool = False
     parallel_chunks: int | None = None
     state_key: str | None = None
     start: str | None = None
@@ -234,6 +235,17 @@ def _parallel_chunks(cfg: Mapping[str, Any]) -> int | None:
     return count if count >= 2 else None
 
 
+def _score_each_gene(cfg: Mapping[str, Any]) -> bool:
+    """True when a gene list is scored one gene at a time."""
+    isp = cfg.get("isp") if isinstance(cfg.get("isp"), Mapping) else None
+    if isinstance(isp, Mapping) and isp.get("score_each_gene") is True:
+        return True
+    stages = cfg.get("stages") if isinstance(cfg.get("stages"), Mapping) else None
+    stage = stages.get("isp") if isinstance(stages, Mapping) else None
+    nested = stage.get("isp") if isinstance(stage, Mapping) else None
+    return isinstance(nested, Mapping) and nested.get("score_each_gene") is True
+
+
 def facts_from_config(
     cfg: Mapping[str, Any] | None,
     *,
@@ -277,6 +289,7 @@ def facts_from_config(
         facts.isp_mode = mode or None
         facts.genes = _clean_genes(pert.get("genes_to_perturb"))
         facts.genome_wide = not facts.genes
+        facts.score_each_gene = _score_each_gene(cfg)
         facts.parallel_chunks = _parallel_chunks(cfg) if facts.genome_wide else None
         facts.state_key = str(pert.get("state_key") or "").strip() or None
         facts.start = str(pert.get("start_state") or "").strip() or None
@@ -421,7 +434,11 @@ def _isp_sentences(facts: MethodFacts) -> list[str]:
     if facts.run_kind == RUN_KIND_ISP_UMAP:
         return sentences
     if facts.genes and not facts.genome_wide:
-        sentences.append(f"The genes perturbed together were {_join_genes(facts.genes)}.")
+        joined = _join_genes(facts.genes)
+        if facts.score_each_gene:
+            sentences.append(f"Each listed gene was perturbed on its own: {joined}.")
+        else:
+            sentences.append(f"The genes perturbed together were {joined}.")
     return sentences
 
 

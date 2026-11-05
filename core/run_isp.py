@@ -793,7 +793,13 @@ def main() -> None:
         legacy_padding_mean=legacy_padding_mean,
         max_ncells_per_state=max_ncells_per_state,
         cell_shard=chunk,
+        score_each_gene=bool(isp_cfg.get("score_each_gene", False)),
     )
+    if isp.score_each_gene:
+        print(
+            f"  score_each_gene: {len(genes_to_perturb_list)} genes, one at a time",
+            flush=True,
+        )
     if isp.legacy_padding_mean:
         print("  NOTE: legacy_padding_mean on: group goal-state means include padding "
               "(reproduces earlier releases)", flush=True)

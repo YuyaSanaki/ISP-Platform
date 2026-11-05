@@ -255,7 +255,7 @@ Also on the main form (not under Advanced):
 
 | UI                                               | Writes                                                                                               |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| perturbation.type / state_key / genes_to_perturb | `perturbation.*`                                                                                     |
+| perturbation.type / state_key / genes_to_perturb | `perturbation.*`. Empty list = each gene in each cell. A list shows **Each gene separately** (`stages.isp.isp.score_each_gene: true`) or **All listed genes together** (one group; a group delete keeps only cells that contain every listed gene). |
 | ISP execution | **Single process** (default) or **Parallel**. Parallel writes `stages.isp.parallel.enabled` and `chunk_count` (at least 2). Genome-wide only: a gene list is refused. One chunk runs on each GPU the container can see, and further chunks wait. Statistics are merged into the same pipeline folder before the TOP1 UMAP. |
 | task_type / label_column                         | `stages.finetune.finetune.*` (`label_column` dropdown from sample-folder metadata + tokenizer attrs) |
 | Cluster / cell-type / enrichment analysis | Above **ISP model**, not inside Advanced. `stages.isp.postprocess.enabled` (default **off**), `n_clusters` (default **auto**), `celltype_prediction`, `rank_enrichment`. Rank enrichment of the top Start, Goal and ISP genes goes to `rank_enrichment/` and is shown in **Output browser** ([pipeline.md](pipeline.md)) |

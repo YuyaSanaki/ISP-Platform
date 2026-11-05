@@ -33,6 +33,21 @@ class TestPerturbTypeUnimplemented(unittest.TestCase):
         for perturb_type in ("delete", "overexpress"):
             check_perturb_type_implemented(perturb_type)
 
+    def test_gene_list_is_a_group_unless_score_each_gene(self):
+        grouped = InSilicoPerturber(
+            perturb_type="delete",
+            genes_to_perturb=["ENSG00000134333", "ENSG00000111640"],
+        )
+        self.assertTrue(grouped.perturb_group)
+        self.assertFalse(grouped.score_each_gene)
+        separate = InSilicoPerturber(
+            perturb_type="delete",
+            genes_to_perturb=["ENSG00000134333", "ENSG00000111640"],
+            score_each_gene=True,
+        )
+        self.assertFalse(separate.perturb_group)
+        self.assertTrue(separate.score_each_gene)
+
     def test_perturber_rejects_activate_even_with_direct_shift(self):
         with self.assertRaisesRegex(ValueError, "not implemented"):
             InSilicoPerturber(

@@ -36,7 +36,8 @@ perturbation:
   # stats write alt columns per state (Shift_to_alt_end_<state>, ...).
   alt_states: []
   # Empty list = perturb each gene of each cell separately (genome-wide). Otherwise a list of
-  # gene symbols or Ensembl IDs perturbed together in every cell (group mode).
+  # gene symbols or Ensembl IDs. A list is one group perturbation (every gene at once)
+  # unless isp.score_each_gene is true, which scores each listed gene on its own.
   genes_to_perturb: []
 
 model:
@@ -44,6 +45,9 @@ model:
   num_classes: 2
 
 isp:
+  # false (default): a genes_to_perturb list is deleted or overexpressed together.
+  # true: each gene in that list is its own perturbation. Ignored when the list is empty.
+  score_each_gene: false
   max_ncells: 2000
   emb_layer: 0 # 0 = last layer; -1 = second-to-last (see Geneformer docs)
   emb_mode: cell # cell | cell_and_gene

@@ -846,7 +846,13 @@ def quant_cos_sims(model,
                 if perturb_type == "overexpress" :
                     max_len = _max_len
                 elif perturb_type == "delete" :
-                    max_len = _max_len + len(tokens_to_perturb)
+                    # "all" keeps len("all") == 3. A gene list scored one gene at a
+                    # time removes one token. A group delete removes every gene.
+                    if tokens_to_perturb == "all" or perturb_group:
+                        n_removed = len(tokens_to_perturb)
+                    else:
+                        n_removed = 1
+                    max_len = _max_len + n_removed
                 elif perturb_type == "inhibit":
                     max_len = _max_len
                 elif perturb_type == "active" :
@@ -1234,6 +1240,7 @@ class InSilicoPerturber:
         legacy_padding_mean=None,
         max_ncells_per_state=None,
         cell_shard=None,
+        score_each_gene=False,
     ):
         """
         Initialize in silico perturber.
@@ -1337,8 +1344,9 @@ class InSilicoPerturber:
         self.genes_to_perturb = genes_to_perturb
         self.combos = combos
         self.anchor_gene = anchor_gene
-        if self.genes_to_perturb == "all":
-            self.perturb_group = False  
+        self.score_each_gene = bool(score_each_gene) and self.genes_to_perturb != "all"
+        if self.genes_to_perturb == "all" or self.score_each_gene:
+            self.perturb_group = False
         else:
             self.perturb_group = True
             if (self.anchor_gene is not None) or (self.combos != 0):
@@ -1676,10 +1684,21 @@ class InSilicoPerturber:
             else:
                 logger.info(f"# cells with anchor gene: {len(filtered_input_data)}")
             
-        if (self.tokens_to_perturb != "all") and (self.perturb_type != "overexpress") and (self.perturb_type != "active") and (self.perturb_type != "inhibit"): # delete の時に実行
+        if self.score_each_gene and self.tokens_to_perturb != "all":
+            gene_set = set(self.tokens_to_perturb)
+
+            def has_any_listed_gene(example):
+                return len(gene_set.intersection(example["input_ids"])) >= 1
+
+            filtered_input_data = filtered_input_data.filter(has_any_listed_gene, num_proc=self.nproc)
+            if len(filtered_input_data) == 0:
+                logger.error(
+                    "No cells contain any gene in genes_to_perturb.")
+                raise
+        elif (self.tokens_to_perturb != "all") and (self.perturb_type != "overexpress") and (self.perturb_type != "active") and (self.perturb_type != "inhibit"): # delete の時に実行
             # minimum # genes needed for perturbation test
             min_genes = len(self.tokens_to_perturb)
-            
+
             def if_has_tokens_to_perturb(example):
                 return (len(set(example["input_ids"]).intersection(self.tokens_to_perturb))>=min_genes)
             filtered_input_data = filtered_input_data.filter(if_has_tokens_to_perturb, num_proc=self.nproc)
@@ -1895,17 +1914,25 @@ class InSilicoPerturber:
                                 #cos_sims_data = cos_sims_data.to("cuda")
                                 cos_sims_data = _tensor_to_device(cos_sims_data)
                                 for j in range(cos_sims_data.shape[0]):
-                                    if self.tokens_to_perturb != "all":
+                                    if self.score_each_gene:
+                                        j_index = torch.tensor(indices_to_perturb[j])
+                                        if j_index.shape[0] > 1:
+                                            j_index = torch.squeeze(j_index)
+                                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
+                                    elif self.tokens_to_perturb != "all":
                                         j_index = torch.tensor(indices_to_perturb[j])
                                         if j_index.shape[0]>1:
                                             j_index = torch.squeeze(j_index)
+                                        if self.perturb_type in ("overexpress", "activate"):
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
+                                        else:
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index)
                                     else:
                                         j_index = torch.tensor([j])
-
-                                    if self.perturb_type in ("overexpress", "activate"):
-                                        perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
-                                    else:
-                                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
+                                        if self.perturb_type in ("overexpress", "activate"):
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
+                                        else:
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index)
 
                                     if perturbed_gene.shape[0]==1:
                                         perturbed_gene = perturbed_gene.item()
@@ -1930,17 +1957,25 @@ class InSilicoPerturber:
                                 cos_sims_origin = cos_sims_data[origin_state_key]
 
                                 for j in range(cos_sims_origin.shape[0]):
-                                    if (self.tokens_to_perturb != "all") or (combo_lvl>0):
+                                    if self.score_each_gene:
+                                        j_index = torch.tensor(indices_to_perturb[j])
+                                        if j_index.shape[0] > 1:
+                                            j_index = torch.squeeze(j_index)
+                                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
+                                    elif (self.tokens_to_perturb != "all") or (combo_lvl>0):
                                         j_index = torch.tensor(indices_to_perturb[j])
                                         if j_index.shape[0]>1:
                                             j_index = torch.squeeze(j_index)
+                                        if self.perturb_type in ("overexpress", "activate"):
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
+                                        else:
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index)
                                     else:
                                         j_index = torch.tensor([j])
-
-                                    if self.perturb_type in ("overexpress", "activate"):
-                                        perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
-                                    else:
-                                        perturbed_gene = torch.index_select(gene_list, 0, j_index)
+                                        if self.perturb_type in ("overexpress", "activate"):
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index + 1)
+                                        else:
+                                            perturbed_gene = torch.index_select(gene_list, 0, j_index)
 
                                     if perturbed_gene.shape[0]==1:
                                         perturbed_gene = perturbed_gene.item()

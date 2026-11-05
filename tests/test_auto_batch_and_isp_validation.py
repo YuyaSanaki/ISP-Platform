@@ -1254,5 +1254,45 @@ class TestParallelIspYamlControls(unittest.TestCase):
             _restore_modules(saved)
 
 
+class TestIspGeneListModeYaml(unittest.TestCase):
+    def test_empty_list_does_not_score_each_gene(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = "data:\n  input_dir: /app/data/x\n"
+            st.session_state["pipeline_genes_to_perturb_text"] = ""
+            st.session_state["pipeline_isp_gene_mode"] = app._ISP_GENE_EACH
+            app._apply_perturbation_controls_to_yaml()
+            cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            self.assertFalse(cfg["stages"]["isp"]["isp"]["score_each_gene"])
+            self.assertEqual(cfg["perturbation"]["genes_to_perturb"], [])
+        finally:
+            _restore_modules(saved)
+
+    def test_each_gene_and_group_write_score_each_gene(self):
+        app, st, saved = _load_streamlit_app_helpers()
+        try:
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = "data:\n  input_dir: /app/data/x\n"
+            st.session_state["pipeline_genes_to_perturb_text"] = "LDHA\nPGK1\n"
+            st.session_state["pipeline_isp_gene_mode"] = app._ISP_GENE_EACH
+            app._apply_perturbation_controls_to_yaml()
+            cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            self.assertEqual(cfg["perturbation"]["genes_to_perturb"], ["LDHA", "PGK1"])
+            self.assertTrue(cfg["stages"]["isp"]["isp"]["score_each_gene"])
+
+            st.session_state["pipeline_isp_gene_mode"] = app._ISP_GENE_GROUP
+            app._apply_perturbation_controls_to_yaml()
+            cfg = __import__("yaml").safe_load(st.session_state["yaml_editor"])
+            self.assertFalse(cfg["stages"]["isp"]["isp"]["score_each_gene"])
+
+            st.session_state.clear()
+            st.session_state["yaml_editor"] = __import__("yaml").dump(cfg)
+            app._sync_ft_isp_advanced_from_yaml()
+            self.assertEqual(st.session_state["pipeline_isp_gene_mode"], app._ISP_GENE_GROUP)
+        finally:
+            _restore_modules(saved)
+
+
 if __name__ == "__main__":
     unittest.main()
