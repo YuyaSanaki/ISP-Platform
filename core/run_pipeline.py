@@ -851,19 +851,20 @@ def main() -> None:
         # We intentionally disable auto ISP UMAP in stages.isp.umap (handled via
         # Web UI "ISP UMAP" run type), but for Pipeline (E2E) we still want a
         # quick "top hit" per run. Genome-wide runs project the TOP1 significant
-        # gene (largest shift toward goal among Sig == 1 with N_Detections >= 20);
-        # gene-list runs project
-        # the listed genes perturbed together, since group stats have no per-gene
-        # ranking to pick from.
+        # gene (largest shift toward goal among Sig == 1 with N_Detections >= 20),
+        # and so do gene lists scored one gene at a time (isp.score_each_gene).
+        # Grouped gene lists project the listed genes perturbed together, since
+        # group stats have no per-gene ranking to pick from.
         if not args.skip_isp:
             run_dir_path = Path(resolved["pipeline_run_dir"])
             ispstats_dir = run_dir_path / "ispstats_results"
             isp_umap_dir = run_dir_path / "isp_umap"
             perturbation = isp_cfg.get("perturbation") or {}
             listed_genes = [str(g) for g in (perturbation.get("genes_to_perturb") or [])]
+            score_each_gene = bool((isp_cfg.get("isp") or {}).get("score_each_gene", False))
             perturb_type = str(perturbation.get("type") or "delete").lower()
             umap_done = isp_umap_dir.is_dir() and any(isp_umap_dir.glob("umap_*.png"))
-            if not umap_done and listed_genes:
+            if not umap_done and listed_genes and not score_each_gene:
                 if perturb_type in ("delete", "overexpress"):
                     print(f"Running E2E ISP UMAP for the perturbed gene set: {', '.join(listed_genes)}")
                     # Without --gene, run_isp_umap.py perturbs the stage config's genes_to_perturb as one group.

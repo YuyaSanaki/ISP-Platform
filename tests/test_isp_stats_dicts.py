@@ -28,6 +28,38 @@ class TestIspStatsDictionaryKwargs(unittest.TestCase):
         self.assertEqual(genes_perturbed_for_stats(genes, True), "all")
         self.assertEqual(genes_perturbed_for_stats([], True), "all")
 
+    def test_each_gene_umap_targets_sig_detected_largest_shift(self):
+        import tempfile
+
+        import pandas as pd
+
+        from run_isp import each_gene_umap_targets
+
+        df = pd.DataFrame(
+            {
+                "Ensembl_ID": ["E1", "E2", "E3", "E4", "E5"],
+                "Shift_to_goal_end": [0.01, -0.2, 0.3, 0.5, 0.05],
+                "Sig": [1, 1, 1, 0, 1],
+                "N_Detections": [50, 40, 5, 60, 30],
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stats.parquet"
+            df.to_parquet(path)
+            genes = ["E1", "E2", "E3", "E4"]
+            self.assertEqual(each_gene_umap_targets(path, genes, max_genes=10), ["E2", "E1"])
+            self.assertEqual(each_gene_umap_targets(path, genes, max_genes=1), ["E2"])
+
+    def test_umap_config_keeps_isp_filter_data(self):
+        from run_isp_umap import build_isp_umap_config
+
+        cfg = {
+            "paths": {"dataset": "/d", "geneformer_model": "/m"},
+            "perturbation": {"type": "delete", "state_key": "state", "start_state": "A", "end_state": "B"},
+            "isp": {"filter_data": {"leiden013": ["5"]}},
+        }
+        self.assertEqual(build_isp_umap_config(cfg, ["E1"])["filter_data"], {"leiden013": ["5"]})
+
     def test_mouse_backend_uses_mouse_dicts(self):
         backend = get_backend(
             {"model_organism": "mouse", "model": "mouse_geneformer", "mouse_variant": "base"}

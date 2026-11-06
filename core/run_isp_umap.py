@@ -463,6 +463,7 @@ def build_isp_umap_config(
             "dataset": paths["dataset"],
             "geneformer_model": paths["geneformer_model"],
         },
+        "filter_data": dict(isp_section.get("filter_data") or {}),
         "species": dict(isp_cfg.get("species") or {}),
         "perturbation": {
             "genes_to_perturb": gene_list,
@@ -918,6 +919,12 @@ def run_isp_umap(cfg: Mapping[str, Any], output_dir: Path | str) -> Path:
     dataset_path = cfg["paths"]["dataset"]
     logger.info("Loading dataset from: %s", dataset_path)
     dataset = load_from_disk(dataset_path)
+    for key, values in (cfg.get("filter_data") or {}).items():
+        allowed = values if isinstance(values, list) else [values]
+        dataset = dataset.filter(lambda x, key=key, allowed=allowed: x.get(key) in allowed)
+        logger.info("filter_data %s in %s: %d cells", key, allowed, len(dataset))
+    if len(dataset) == 0:
+        raise ValueError(f"No cells remain after filter_data {cfg.get('filter_data')}.")
 
     state_key = pert["state_key"]
     start_state = pert["start_state"]
@@ -1058,7 +1065,7 @@ def run_isp_umap_for_targeted_genes(
     gene_labels = gene_labels or {}
     out_dirs: list[Path] = []
 
-    if per_gene and len(genes_resolved) > 1:
+    if per_gene:
         for gene in genes_resolved:
             label = gene_labels.get(gene, gene)
             gene_dir = output_root / label

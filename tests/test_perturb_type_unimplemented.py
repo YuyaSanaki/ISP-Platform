@@ -34,9 +34,13 @@ class TestPerturbTypeUnimplemented(unittest.TestCase):
             check_perturb_type_implemented(perturb_type)
 
     def test_gene_list_is_a_group_unless_score_each_gene(self):
+        human_tokens = ROOT / "core/geneformer/dicts/human/token_dictionary_gc104M.pkl"
+        if not human_tokens.is_file():
+            self.skipTest(f"missing {human_tokens}")
         grouped = InSilicoPerturber(
             perturb_type="delete",
             genes_to_perturb=["ENSG00000134333", "ENSG00000111640"],
+            token_dictionary_file=human_tokens,
         )
         self.assertTrue(grouped.perturb_group)
         self.assertFalse(grouped.score_each_gene)
@@ -44,6 +48,7 @@ class TestPerturbTypeUnimplemented(unittest.TestCase):
             perturb_type="delete",
             genes_to_perturb=["ENSG00000134333", "ENSG00000111640"],
             score_each_gene=True,
+            token_dictionary_file=human_tokens,
         )
         self.assertFalse(separate.perturb_group)
         self.assertTrue(separate.score_each_gene)

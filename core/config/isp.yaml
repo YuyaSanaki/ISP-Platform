@@ -78,8 +78,12 @@ analysis:
   enabled: true
 
 # Per-cell UMAP trajectories (run_isp_umap.py). Auto-runs when genes_to_perturb is non-empty.
+# Cells are limited by isp.filter_data, as in ISP. A grouped list gives one UMAP of all genes
+# perturbed together. With isp.score_each_gene, each listed gene with Sig == 1 and
+# N_Detections >= 20 gets its own UMAP, largest |Shift_to_goal_end| first, up to max_genes_each.
 umap:
   enabled: true
+  max_genes_each: 10
   seed: 42
   n_neighbors: 15
   min_dist: 0.1

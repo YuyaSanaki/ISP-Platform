@@ -265,7 +265,7 @@ def run_isp_figure_analysis(
     plt.close(fig)
 
     # --- 3. Top genes bar ---
-    n_top = 25
+    n_top = min(25, len(df))
     fig, axes = plt.subplots(1, 2, figsize=(14, 10))
     top_pos = df.nlargest(n_top, "Shift_to_goal_end")
     colors_pos = ["red" if s == 1 else "steelblue" for s in top_pos["Sig"]]

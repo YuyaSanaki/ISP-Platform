@@ -150,6 +150,24 @@ def genes_perturbed_for_stats(genes: list, score_each_gene: bool) -> str | list:
     return genes
 
 
+def each_gene_umap_targets(
+    stats_table: Path,
+    genes: list[str],
+    *,
+    max_genes: int,
+    min_n_detections: int = 20,
+) -> list[str]:
+    """Listed genes to draw one UMAP each: Sig == 1, detected in enough cells, largest |shift| first."""
+    import pandas as pd
+
+    df = pd.read_parquet(stats_table)
+    df = df[df["Ensembl_ID"].isin(genes) & (df["Sig"] == 1)]
+    if "N_Detections" in df.columns:
+        df = df[pd.to_numeric(df["N_Detections"], errors="coerce").fillna(0) >= min_n_detections]
+    df = df.reindex(df["Shift_to_goal_end"].abs().sort_values(ascending=False).index)
+    return [str(g) for g in df["Ensembl_ID"].head(max(0, int(max_genes)))]
+
+
 def _broadcast_run_folder_from_main(accelerator: Any, value_on_main: str) -> str:
     """
     Replicate the run folder name from the global main process on all ranks.
@@ -421,13 +439,29 @@ def run_stats_and_downstream(
         from run_isp_umap import run_isp_umap_for_targeted_genes
 
         umap_root = (run_root if run_root is not None else stats_parent.parent) / "isp_umap"
-        print(f"Running ISP UMAP for {len(genes_to_perturb_list)} targeted gene(s)...")
-        umap_dirs = run_isp_umap_for_targeted_genes(
-            cfg,
-            genes_to_perturb_list,
-            gene_labels=perturb_gene_labels,
-            output_root=umap_root,
-        )
+        umap_genes = genes_to_perturb_list
+        if score_each_gene:
+            max_genes = int((cfg.get("umap") or {}).get("max_genes_each", 10))
+            umap_genes = each_gene_umap_targets(
+                Path(stats_dir.rstrip(os.sep)) / f"{output_prefix}.parquet",
+                genes_to_perturb_list,
+                max_genes=max_genes,
+            )
+            print(
+                f"ISP UMAP: {len(umap_genes)} of {len(genes_to_perturb_list)} listed genes "
+                f"(Sig == 1, N_Detections >= 20, up to umap.max_genes_each={max_genes}), one UMAP each"
+            )
+        else:
+            print(f"Running ISP UMAP for {len(umap_genes)} targeted gene(s) as one group...")
+        umap_dirs = []
+        if umap_genes:
+            umap_dirs = run_isp_umap_for_targeted_genes(
+                cfg,
+                umap_genes,
+                gene_labels=perturb_gene_labels,
+                output_root=umap_root,
+                per_gene=score_each_gene,
+            )
         print(f"ISP UMAP outputs: {umap_dirs[0].parent if umap_dirs else umap_root}")
 
     if pps.rank_enrichment_enabled(cfg):
